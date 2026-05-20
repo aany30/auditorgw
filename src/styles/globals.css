@@ -1,0 +1,27 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  @apply m-0 p-0 box-border;
+}
+
+body {
+  @apply bg-gray-50 text-gray-900;
+}
+
+.health-score {
+  @apply text-4xl font-bold;
+}
+
+.health-healthy {
+  @apply text-healthy;
+}
+
+.health-warning {
+  @apply text-warning;
+}
+
+.health-critical {
+  @apply text-critical;
+}

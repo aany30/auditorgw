@@ -1,0 +1,40 @@
+name = "auditor-worker"
+main = "src/worker/index.ts"
+compatibility_date = "2024-01-01"
+
+# API Bindings
+[env.production]
+routes = [
+  { pattern = "api.auditor.dev/*", zone_name = "auditor.dev" }
+]
+
+# D1 Database Binding
+[[d1_databases]]
+binding = "DB"
+database_name = "auditor"
+database_id = "your-db-id"
+
+# R2 Object Storage Binding
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "auditor-data"
+
+# Durable Objects for Real-time
+[[durable_objects.bindings]]
+name = "EVENT_STREAM"
+class_name = "EventStream"
+script_name = "auditor-worker"
+
+# Environment Variables
+[env.production.vars]
+ENVIRONMENT = "production"
+LOG_LEVEL = "info"
+
+[env.development.vars]
+ENVIRONMENT = "development"
+LOG_LEVEL = "debug"
+
+# Secrets (set via wrangler secret put)
+# STRIPE_SECRET_KEY
+# DATABASE_URL
+# OPENAI_API_KEY
