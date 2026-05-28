@@ -6,3 +6,6 @@ dist
 .DS_Store
 *.log
 .wrangler
+
+# Claude Code local settings can contain leaked URLs with tokens — don't push.
+.claude/settings.local.json

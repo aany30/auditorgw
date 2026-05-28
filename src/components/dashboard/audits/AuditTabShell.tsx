@@ -1,0 +1,146 @@
+import { useState, useEffect, useMemo, type ReactNode } from "react";
+import { useAuthStore } from "@/store/auth";
+import type { CampaignData } from "@/types";
+import { objectiveMatches } from "../CampaignObjectiveFilter";
+import { TermText } from "@/components/shared/Term";
+
+interface Props {
+  platform: "meta" | "google" | "both";
+  selectedObjectives: Set<string>;
+  title: string;
+  description: string;
+  Icon: React.ComponentType<{ className?: string }>;
+  /** sub-tabs: each gets the filtered campaigns + loading state */
+  subTabs: Array<{
+    id: string;
+    label: string;
+    description: string;
+    render: (args: { campaigns: CampaignData[]; loading: boolean; platform: "meta" | "google" | "both" }) => ReactNode;
+  }>;
+  defaultSubTab: string;
+}
+
+export default function AuditTabShell({
+  platform,
+  selectedObjectives,
+  title,
+  description,
+  Icon,
+  subTabs,
+  defaultSubTab,
+}: Props) {
+  const {
+    metaAccessToken,
+    metaBusinessId,
+    googleAccessToken,
+    googleCustomerId,
+    googleAdsDeveloperToken,
+    googleAdsLoginCustomerId,
+  } = useAuthStore();
+  const [campaigns, setCampaigns] = useState<CampaignData[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [active, setActive] = useState<string>(defaultSubTab);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchCampaigns = async () => {
+      setLoading(true);
+      const all: CampaignData[] = [];
+      try {
+        if ((platform === "meta" || platform === "both") && metaAccessToken && metaBusinessId) {
+          const r = await fetch("/api/naming/campaigns/meta", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ accessToken: metaAccessToken, businessId: metaBusinessId }),
+          });
+          if (r.ok) all.push(...(await r.json()));
+        }
+        if (
+          (platform === "google" || platform === "both") &&
+          googleAccessToken &&
+          googleCustomerId &&
+          googleAdsDeveloperToken
+        ) {
+          const r = await fetch("/api/naming/campaigns/google", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              accessToken: googleAccessToken,
+              customerId: googleCustomerId,
+              developerToken: googleAdsDeveloperToken,
+              loginCustomerId: googleAdsLoginCustomerId || googleCustomerId,
+            }),
+          });
+          if (r.ok) all.push(...(await r.json()));
+        }
+      } catch (e) {
+        console.error(e);
+      } finally {
+        if (!cancelled) {
+          setCampaigns(all);
+          setLoading(false);
+        }
+      }
+    };
+    fetchCampaigns();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    platform,
+    metaAccessToken,
+    metaBusinessId,
+    googleAccessToken,
+    googleCustomerId,
+    googleAdsDeveloperToken,
+    googleAdsLoginCustomerId,
+  ]);
+
+  const filteredCampaigns = useMemo(() => {
+    if (!selectedObjectives || selectedObjectives.size === 0) return campaigns;
+    return campaigns.filter((c) => objectiveMatches(c.objective, selectedObjectives));
+  }, [campaigns, selectedObjectives]);
+
+  const activeSub = subTabs.find((t) => t.id === active) || subTabs[0];
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center gap-3">
+        <Icon className="w-8 h-8 text-blue-600" />
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900">{title}</h1>
+          <p className="text-gray-600 mt-1"><TermText>{description}</TermText></p>
+        </div>
+      </div>
+
+      {selectedObjectives && selectedObjectives.size > 0 && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-2 text-sm text-blue-900">
+          Filtered by objective:{" "}
+          <span className="font-semibold">
+            {Array.from(selectedObjectives).filter((s) => s !== "__none__").join(", ") || "(none)"}
+          </span>{" "}
+          — {filteredCampaigns.length} of {campaigns.length} campaigns
+        </div>
+      )}
+
+      <div className="flex gap-2 border-b border-gray-200 overflow-x-auto">
+        {subTabs.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setActive(t.id)}
+            className={`px-4 py-3 font-semibold border-b-2 transition whitespace-nowrap ${
+              active === t.id
+                ? "border-blue-600 text-blue-600"
+                : "border-transparent text-gray-600 hover:text-gray-900"
+            }`}
+          >
+            <div>{t.label}</div>
+            <div className="text-xs text-gray-500 font-normal">{t.description}</div>
+          </button>
+        ))}
+      </div>
+
+      {activeSub.render({ campaigns: filteredCampaigns, loading, platform })}
+    </div>
+  );
+}

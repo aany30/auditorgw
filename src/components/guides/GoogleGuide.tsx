@@ -1,135 +1,206 @@
-import { useState } from "react";
+import CredentialInput from "@/components/forms/CredentialInput";
+import GuideSection, { GuideLink, GuideButton, GuideCode } from "./GuideSection";
 
-export default function GoogleGuide() {
-  const [expandedStep, setExpandedStep] = useState<number | null>(0);
+interface Props {
+  onClose?: () => void;
+}
 
-  const steps = [
-    {
-      number: 1,
-      title: "Access Google Cloud Console",
-      description: "Set up a project to manage your API credentials.",
-      details: [
-        "Go to https://console.cloud.google.com",
-        "Sign in with your Google account",
-        "Create a new project or select an existing one",
-      ],
-    },
-    {
-      number: 2,
-      title: "Enable Required APIs",
-      description: "Enable the APIs needed for Google Ads, GA4, and GTM auditing.",
-      details: [
-        "Go to APIs & Services → Library",
-        "Search for and enable: Google Ads API, Analytics Data API, Tag Manager API",
-        "Wait for APIs to be enabled (may take a few minutes)",
-      ],
-    },
-    {
-      number: 3,
-      title: "Get Google Ads Customer ID",
-      description: "Locate your Google Ads account ID for conversion tracking audits.",
-      details: [
-        "Go to https://ads.google.com and sign in",
-        "Click the Tools & Settings icon (⚙) in the top right",
-        "Select 'Access and security' → 'Access levels'",
-        "Your Customer ID is displayed at the top (format: 123-456-7890)",
-      ],
-    },
-    {
-      number: 4,
-      title: "Get GA4 Property ID",
-      description: "Find your GA4 property ID for event tracking audits.",
-      details: [
-        "Go to https://analytics.google.com",
-        "Select your property from the list",
-        "Go to Admin (bottom left) → Property Settings",
-        "Your Property ID is displayed (format: 123456789)",
-      ],
-    },
-    {
-      number: 5,
-      title: "Get GTM Container ID",
-      description: "Retrieve your Google Tag Manager container ID.",
-      details: [
-        "Go to https://tagmanager.google.com",
-        "Select your account and container",
-        "The Container ID is shown at the top right (format: GTM-XXXXXX)",
-        "You can also find it in your GTM installation code",
-      ],
-    },
-    {
-      number: 6,
-      title: "Create Service Account (OAuth)",
-      description: "Generate API credentials for secure API access.",
-      details: [
-        "In Google Cloud Console → APIs & Services → Credentials",
-        "Click 'Create Credentials' → 'Service Account'",
-        "Fill in the service account name and description",
-        "Click 'Create and Continue'",
-        "Grant roles: Editor (or custom: Ads API Editor, Analytics Editor, Tag Manager Editor)",
-        "Click 'Continue' and then 'Done'",
-        "Click on your service account → Keys → Add Key → Create new key → JSON",
-        "Download and securely store the JSON file",
-      ],
-    },
-    {
-      number: 7,
-      title: "(Alternative) Use OAuth 2.0",
-      description: "Use OAuth flow for direct authentication without storing credentials.",
-      details: [
-        "Click 'Create Credentials' → 'OAuth client ID'",
-        "Select 'Web application'",
-        "Add authorized redirect URI: Your app's callback URL",
-        "Copy the Client ID and Client Secret",
-        "Your users can then authenticate directly via Google",
-      ],
-    },
-  ];
-
+/**
+ * Google connection guide — fully click-by-click manual flow.
+ * Six sections (Developer Token → Refresh Token → Customer ID → Login Customer ID →
+ * GA4 Property ID → GTM Container ID) plus the inline credential form at the bottom.
+ */
+export default function GoogleGuide({ onClose }: Props) {
   return (
-    <div className="space-y-3">
-      {steps.map((step) => (
-        <div key={step.number} className="border border-slate-600 rounded-lg overflow-hidden">
-          <button
-            onClick={() =>
-              setExpandedStep(expandedStep === step.number ? null : step.number)
-            }
-            className="w-full bg-slate-700/50 hover:bg-slate-700 p-4 flex items-start justify-between transition"
-          >
-            <div className="flex items-start gap-4 flex-1 text-left">
-              <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center font-bold text-white">
-                {step.number}
-              </div>
-              <div>
-                <h4 className="font-semibold text-white">{step.title}</h4>
-                <p className="text-sm text-slate-300 mt-1">{step.description}</p>
-              </div>
-            </div>
-            <span className="text-slate-300">
-              {expandedStep === step.number ? "▼" : "▶"}
-            </span>
-          </button>
-
-          {expandedStep === step.number && (
-            <div className="bg-slate-800 px-4 py-3 border-t border-slate-600">
-              <ul className="space-y-2">
-                {step.details.map((detail, idx) => (
-                  <li key={idx} className="text-sm text-slate-300 flex gap-2">
-                    <span className="text-blue-400">•</span>
-                    <span>{detail}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      ))}
-
-      <div className="bg-blue-900/20 border border-blue-700/50 rounded-lg p-4 mt-4">
-        <p className="text-sm text-blue-200">
-          💡 <strong>Pro Tip:</strong> For security, use a service account with minimal required
-          permissions. We recommend OAuth for user-facing integrations.
+    <div className="space-y-4">
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-900">
+        <p className="font-semibold mb-0.5">~10 minutes (after Developer Token is approved) · Manual paste, no GCP project setup</p>
+        <p className="text-blue-800">
+          You'll collect: Developer Token, Refresh Token, Customer ID, GA4 Property ID, GTM Container ID. One Refresh Token unlocks all three (Ads + GA4 + GTM).
         </p>
+      </div>
+
+      <GuideSection
+        number={1}
+        title="Get your Developer Token"
+        summary="Google Ads API access — 1 to 3 day approval"
+        yieldsLabel="Developer Token"
+        defaultOpen
+        subSteps={[
+          {
+            heading: "Skip this section if you already have a Developer Token",
+            steps: [],
+          },
+          {
+            steps: [
+              <>
+                Open <GuideLink href="https://ads.google.com">ads.google.com</GuideLink> → sign in with the Google account that owns your Google Ads.
+              </>,
+              <>
+                Top right → wrench icon <GuideButton>Tools</GuideButton> → under <strong>"Setup"</strong> column → click <GuideButton>API Center</GuideButton>. (Direct link: <GuideLink href="https://ads.google.com/aw/apicenter">ads.google.com/aw/apicenter</GuideLink>)
+              </>,
+              <>
+                If API Center is missing: you're on a non-manager account. Create a Manager (MCC) first at{" "}
+                <GuideLink href="https://ads.google.com/intl/en_us/home/tools/manager-accounts/">ads.google.com/home/tools/manager-accounts</GuideLink>{" "}
+                → <GuideButton>Create a manager account</GuideButton> → fill details → link your existing ad account to the new manager.
+              </>,
+              <>
+                In API Center: read the terms → accept → click <GuideButton>Apply</GuideButton>.
+              </>,
+              <>
+                Fill the application form: company name = your name/agency, intended use = <em>"internal reporting and audit"</em>, contact email. Submit.
+              </>,
+              <>Wait for Google's approval email (typically 1–3 business days).</>,
+              <>
+                Once approved, return to API Center → your <strong>Developer Token</strong> is shown at the top. Copy it.
+              </>,
+            ],
+          },
+        ]}
+      />
+
+      <GuideSection
+        number={2}
+        title="Get your Refresh Token"
+        summary="5-minute one-time mint via OAuth Playground (no GCP project needed)"
+        yieldsLabel="Refresh Token"
+        defaultOpen
+        subSteps={[
+          {
+            heading: "This is the magic step — no GCP setup required",
+            steps: [
+              <>
+                Open <GuideLink href="https://developers.google.com/oauthplayground">developers.google.com/oauthplayground</GuideLink> in a new tab.
+              </>,
+              <>
+                Top right → click the <GuideButton>⚙ gear icon</GuideButton>.
+              </>,
+              <>
+                In the panel that opens: <strong>leave "Use your own OAuth credentials" UNCHECKED</strong> (we want Google's default playground client). Close the gear panel.
+              </>,
+              <>
+                Left side <strong>"Step 1 Select & authorize APIs"</strong> → in the scope input box at the bottom, paste these three (one at a time, hitting Enter after each), or scroll the list and check the boxes:
+                <ul className="list-disc list-outside ml-5 mt-1 space-y-0.5 text-gray-700">
+                  <li><GuideCode>https://www.googleapis.com/auth/adwords</GuideCode> <em>(Google Ads)</em></li>
+                  <li><GuideCode>https://www.googleapis.com/auth/analytics.readonly</GuideCode> <em>(GA4)</em></li>
+                  <li><GuideCode>https://www.googleapis.com/auth/tagmanager.readonly</GuideCode> <em>(GTM)</em></li>
+                </ul>
+              </>,
+              <>
+                Click the blue <GuideButton>Authorize APIs</GuideButton> button.
+              </>,
+              <>
+                Sign in with the Google account that has access to Google Ads + GA4 + GTM (usually the same email).
+              </>,
+              <>
+                Grant permissions for all three APIs (click <GuideButton>Continue</GuideButton> through the consent screens).
+              </>,
+              <>
+                You return to the playground — <strong>Step 2 "Exchange authorization code for tokens"</strong> is now highlighted, with an authorization code pre-filled.
+              </>,
+              <>
+                Click the blue <GuideButton>Exchange authorization code for tokens</GuideButton> button.
+              </>,
+              <>
+                A panel appears showing <strong>"Refresh token"</strong> (a long string starting with <GuideCode>1//</GuideCode>) and <strong>"Access token"</strong>.
+              </>,
+              <>
+                <strong>Copy the Refresh token</strong> — the access token expires in 1 hour, but the refresh token lasts forever. We only need the refresh token.
+              </>,
+            ],
+          },
+        ]}
+      />
+
+      <GuideSection
+        number={3}
+        title="Find your Customer ID"
+        summary="The Google Ads account you want to audit"
+        yieldsLabel="Customer ID"
+        subSteps={[
+          {
+            steps: [
+              <>
+                Open <GuideLink href="https://ads.google.com">ads.google.com</GuideLink> → top right corner, next to your account name → a number formatted like <GuideCode>123-456-7890</GuideCode>.
+              </>,
+              <>That's your Customer ID. Copy it (with or without dashes — both work).</>,
+            ],
+          },
+        ]}
+      />
+
+      <GuideSection
+        number={4}
+        title="(Optional) Login Customer ID"
+        summary="Only if you have a Manager (MCC) account"
+        yieldsLabel="Login Customer ID"
+        subSteps={[
+          {
+            steps: [
+              <>Skip if you have a single Google Ads account.</>,
+              <>
+                If you have a Manager (MCC) account managing multiple sub-accounts → the <strong>MCC's</strong> Customer ID is your Login Customer ID.
+              </>,
+              <>
+                To find it: switch to MCC view in Google Ads → the ID shown top-right while in MCC view is the Login Customer ID.
+              </>,
+            ],
+          },
+        ]}
+      />
+
+      <GuideSection
+        number={5}
+        title="Find your GA4 Property ID"
+        summary="Required for GA4 event auditing"
+        yieldsLabel="GA4 Property ID"
+        subSteps={[
+          {
+            steps: [
+              <>
+                Open <GuideLink href="https://analytics.google.com">analytics.google.com</GuideLink> → sign in with the same Google account as Section 2.
+              </>,
+              <>
+                Bottom-left → <GuideButton>⚙ Admin</GuideButton>.
+              </>,
+              <>
+                Under the <strong>"Property"</strong> column (right side) → click <GuideButton>Property details</GuideButton> (or <GuideButton>Property Settings</GuideButton> depending on UI version).
+              </>,
+              <>
+                <strong>Property ID</strong> shown at the top — a 9-digit number like <GuideCode>123456789</GuideCode>. Copy.
+              </>,
+            ],
+          },
+        ]}
+      />
+
+      <GuideSection
+        number={6}
+        title="Find your GTM Container ID"
+        summary="Required for GTM container health audit"
+        yieldsLabel="GTM Container ID"
+        subSteps={[
+          {
+            steps: [
+              <>
+                Open <GuideLink href="https://tagmanager.google.com">tagmanager.google.com</GuideLink> → sign in with the same Google account.
+              </>,
+              <>
+                You see a list of containers — each shows its ID directly: format <GuideCode>GTM-XXXXXXX</GuideCode>.
+              </>,
+              <>Copy the ID of the container you want to audit.</>,
+            ],
+          },
+        ]}
+      />
+
+      {/* Inline credential form */}
+      <div className="border-t-2 border-gray-200 pt-5 mt-6">
+        <h4 className="text-lg font-bold text-gray-900 mb-1">7 · Paste & Verify</h4>
+        <p className="text-sm text-gray-600 mb-4">
+          Paste the Refresh Token (as Access Token), Developer Token, Customer ID, GA4 Property ID, and GTM Container ID you collected above.
+        </p>
+        <CredentialInput platform="google" onClose={onClose || (() => {})} />
       </div>
     </div>
   );

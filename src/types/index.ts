@@ -102,3 +102,98 @@ export interface CustomDateRange {
   startDate: Date;
   endDate: Date;
 }
+
+// Naming Convention Types
+export interface NamingRule {
+  id: string;
+  label: string;
+  placeholder: string;
+  description: string;
+  required: boolean;
+  position: number;
+  examples?: string[];
+  /**
+   * UI input type. "select" renders a dropdown built from `examples`.
+   * Defaults to "text" when omitted.
+   */
+  inputType?: "text" | "select";
+}
+
+export interface NamingConvention {
+  id: string;
+  name: string;
+  description?: string;
+  enabled: boolean;
+  rules: NamingRule[];
+  separator: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface CampaignData {
+  id: string;
+  name: string;
+  objective?: string;
+  status: string;
+  platform: "meta" | "google";
+  createdTime?: string;
+  /** Campaign end / stop time (ISO). Null/undefined means ongoing. */
+  endTime?: string;
+  /** Budget + spend fields (optional — populated when Insights data is available). */
+  dailyBudget?: number;
+  lifetimeBudget?: number;
+  spend?: number;
+  impressions?: number;
+  clicks?: number;
+  conversions?: number;
+  conversionValue?: number;
+  /** 0-100, Google Ads only (search_impression_share). */
+  impressionShare?: number;
+  /** ISO currency code: "USD", "INR", etc. */
+  currency?: string;
+}
+
+export interface AdSetData {
+  id: string;
+  name: string;
+  status: string;
+}
+
+export interface AdData {
+  id: string;
+  name: string;
+  creativeType?: string;
+}
+
+export interface GoogleCampaignData {
+  id: string;
+  name: string;
+  status: string;
+  createdTime: string;
+}
+
+export interface GoogleAdGroupData {
+  id: string;
+  name: string;
+  status: string;
+}
+
+export interface NamingComponent {
+  position: number;
+  label: string;
+  expectedPattern: string;
+  actualValue: string | null;
+  isPresent: boolean;
+  isValid: boolean;
+}
+
+export interface NamingComplianceResult {
+  campaignId: string;
+  campaignName: string;
+  platform: "meta" | "google";
+  status: "compliant" | "non-compliant";
+  /** % of REQUIRED components missing (0-100). >65 → non-compliant. */
+  missingPct: number;
+  components: NamingComponent[];
+  suggestions?: string;
+}
