@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useAuthStore } from "@/store/auth";
 import { isDemoCredential } from "@/lib/demo-data";
 import { Sparkles, Loader2, Wrench, TrendingUp, Pencil, RotateCcw } from "lucide-react";
@@ -163,9 +163,84 @@ const RAW_KEY_LABELS: Record<string, string> = {
 const DEFAULT_UNKNOWN_BENCHMARK = { min: 50, max: 70, impact: "Medium" as const,
   recommendation: "No standard benchmark — edit to set your team's target." };
 
+// Shape of a Match-Key Coverage row — declared at module scope so the
+// top-level `useMemo` and the deeper render branch can both reference it.
+type MatchKeyRow = {
+  label: string;
+  coverage: number;
+  benchmarkMin: number;
+  benchmarkMax: number;
+  impact: "High" | "Medium-High" | "Medium" | "Low";
+  recommendation: string;
+  status: { label: "Healthy" | "Moderate" | "Critical" | "Low"; tone: "good" | "warn" | "bad" };
+  isOverride: boolean;
+};
+
 export default function EventQualityTab({ platform = "both", dateRange = "30d", customStart, customEnd }: Props) {
   const { customBenchmarks, metaAccessToken, addAiCredits, emqKeyBenchmarks, setEmqKeyBenchmark, resetEmqKeyBenchmark } = useAuthStore();
   const { meta, loading } = useAudit(platform, dateRange, customStart, customEnd);
+
+  // ALL hooks must run unconditionally on every render — React enforces this.
+  // We compute matchKeyRows + run useSort at the TOP of the component, then
+  // the render branches below just READ the already-computed values. (Prev bug:
+  // useSort was inside `if (isRealMeta)`, after an early-return for `loading`,
+  // which crashed in production with React error #310 / minified hook order.)
+  const isRealMeta = !!metaAccessToken && !isDemoCredential(metaAccessToken);
+  const matchKeyRows = useMemo<MatchKeyRow[]>(() => {
+    if (!isRealMeta) return [];
+    const pixels = meta?.pixels || [];
+    const rawAgg = new Map<string, { sum: number; n: number }>();
+    for (const p of pixels) {
+      for (const k of p.emq.matchKeys) {
+        const cur = rawAgg.get(k.key.toLowerCase()) || { sum: 0, n: 0 };
+        cur.sum += k.coverage;
+        cur.n += 1;
+        rawAgg.set(k.key.toLowerCase(), cur);
+      }
+    }
+    const rawCoverage = (key: string): number => {
+      const a = rawAgg.get(key.toLowerCase());
+      return a ? a.sum / a.n : 0;
+    };
+    const resolveBenchmark = (label: string, defaultMin: number, defaultMax: number) => {
+      const override = emqKeyBenchmarks[label];
+      if (override) return { min: override.min, max: override.max, isOverride: true };
+      return { min: defaultMin, max: defaultMax, isOverride: false };
+    };
+    const canonicalRows: MatchKeyRow[] = MATCH_KEY_CONFIG.map((cfg) => {
+      const coverage = Math.round(Math.max(0, ...cfg.apiKeys.map((k) => rawCoverage(k))));
+      const b = resolveBenchmark(cfg.label, cfg.benchmarkMin, cfg.benchmarkMax);
+      return {
+        label: cfg.label, coverage,
+        benchmarkMin: b.min, benchmarkMax: b.max,
+        impact: cfg.impact, recommendation: cfg.recommendation,
+        status: statusForCoverage(coverage, b.min, b.max),
+        isOverride: b.isOverride,
+      };
+    });
+    const claimedKeys = new Set(MATCH_KEY_CONFIG.flatMap((c) => c.apiKeys.map((k) => k.toLowerCase())));
+    const extraRows: MatchKeyRow[] = Array.from(rawAgg.entries())
+      .filter(([rawKey]) => !claimedKeys.has(rawKey))
+      .map(([rawKey, { sum, n }]) => {
+        const coverage = Math.round(n > 0 ? sum / n : 0);
+        const cfg = EXTRA_KEY_CONFIG[rawKey];
+        const label = cfg?.label || RAW_KEY_LABELS[rawKey] || rawKey;
+        const defaultMin = cfg?.benchmarkMin ?? DEFAULT_UNKNOWN_BENCHMARK.min;
+        const defaultMax = cfg?.benchmarkMax ?? DEFAULT_UNKNOWN_BENCHMARK.max;
+        const b = resolveBenchmark(label, defaultMin, defaultMax);
+        return {
+          label, coverage,
+          benchmarkMin: b.min, benchmarkMax: b.max,
+          impact: cfg?.impact ?? DEFAULT_UNKNOWN_BENCHMARK.impact,
+          recommendation: cfg?.recommendation ?? DEFAULT_UNKNOWN_BENCHMARK.recommendation,
+          status: statusForCoverage(coverage, b.min, b.max),
+          isOverride: b.isOverride,
+        };
+      })
+      .sort((a, b) => b.coverage - a.coverage);
+    return [...canonicalRows, ...extraRows];
+  }, [isRealMeta, meta, emqKeyBenchmarks]);
+  const { sorted: sortedMatchKeys, sort: mkSort, toggle: mkToggle } = useSort(matchKeyRows, "coverage", "desc");
 
   // Inline-edit state for the Recommended Benchmark column. `editingLabel` is
   // the row currently in edit mode; `draftMin` / `draftMax` hold the in-progress
@@ -226,7 +301,8 @@ export default function EventQualityTab({ platform = "both", dateRange = "30d", 
   // But REAL match-key coverage + PII coverage ARE (aggregation=match_keys /
   // had_pii). For a real Meta connection we show that real coverage data; the
   // proprietary EMQ score + dedup rate still point to Events Manager.
-  const isRealMeta = !!metaAccessToken && !isDemoCredential(metaAccessToken);
+  // (isRealMeta + matchKeyRows + useSort moved to the top of the component
+  //  above — Rules of Hooks. See comment there.)
   if (isRealMeta) {
     if (loading) {
       return (
@@ -238,91 +314,6 @@ export default function EventQualityTab({ platform = "both", dateRange = "30d", 
     }
 
     const pixels = meta?.pixels || [];
-    // Aggregate raw match-key coverage from every pixel (average % per raw key
-    // code as Meta returned it — e.g. "em", "external_id", "client_ip_address").
-    const rawAgg = new Map<string, { sum: number; n: number }>();
-    for (const p of pixels) {
-      for (const k of p.emq.matchKeys) {
-        const cur = rawAgg.get(k.key.toLowerCase()) || { sum: 0, n: 0 };
-        cur.sum += k.coverage;
-        cur.n += 1;
-        rawAgg.set(k.key.toLowerCase(), cur);
-      }
-    }
-    const rawCoverage = (key: string): number => {
-      const a = rawAgg.get(key.toLowerCase());
-      return a ? a.sum / a.n : 0;
-    };
-
-    // Roll up raw keys into the seven canonical Match-Key rows. If multiple
-    // raw aliases exist (e.g. "em" + "email"), take the higher coverage —
-    // Meta returns the same data under either name in different accounts.
-    type Row = {
-      label: string;
-      coverage: number;
-      benchmarkMin: number;
-      benchmarkMax: number;
-      impact: "High" | "Medium-High" | "Medium" | "Low";
-      recommendation: string;
-      status: { label: "Healthy" | "Moderate" | "Critical" | "Low"; tone: "good" | "warn" | "bad" };
-      /** True when the user has overridden the recommended benchmark. */
-      isOverride: boolean;
-    };
-    // Resolve a row's benchmark: user override (from Zustand) takes precedence
-    // over the default from EXTRA_KEY_CONFIG / MATCH_KEY_CONFIG.
-    const resolveBenchmark = (label: string, defaultMin: number, defaultMax: number) => {
-      const override = emqKeyBenchmarks[label];
-      if (override) return { min: override.min, max: override.max, isOverride: true };
-      return { min: defaultMin, max: defaultMax, isOverride: false };
-    };
-
-    const canonicalRows: (Row & { isOverride: boolean })[] = MATCH_KEY_CONFIG.map((cfg) => {
-      const coverage = Math.round(
-        Math.max(0, ...cfg.apiKeys.map((k) => rawCoverage(k)))
-      );
-      const b = resolveBenchmark(cfg.label, cfg.benchmarkMin, cfg.benchmarkMax);
-      return {
-        label: cfg.label,
-        coverage,
-        benchmarkMin: b.min,
-        benchmarkMax: b.max,
-        impact: cfg.impact,
-        recommendation: cfg.recommendation,
-        status: statusForCoverage(coverage, b.min, b.max),
-        isOverride: b.isOverride,
-      };
-    });
-
-    // Every raw key Meta returned that isn't in the canonical seven now gets a
-    // recommended benchmark from EXTRA_KEY_CONFIG (or the unknown-key default).
-    // Users can edit any row inline — overrides persist in Zustand.
-    const claimedKeys = new Set(MATCH_KEY_CONFIG.flatMap((c) => c.apiKeys.map((k) => k.toLowerCase())));
-    const extraRows: (Row & { isOverride: boolean })[] = Array.from(rawAgg.entries())
-      .filter(([rawKey]) => !claimedKeys.has(rawKey))
-      .map(([rawKey, { sum, n }]) => {
-        const coverage = Math.round(n > 0 ? sum / n : 0);
-        const cfg = EXTRA_KEY_CONFIG[rawKey];
-        const label = cfg?.label || RAW_KEY_LABELS[rawKey] || rawKey;
-        const defaultMin = cfg?.benchmarkMin ?? DEFAULT_UNKNOWN_BENCHMARK.min;
-        const defaultMax = cfg?.benchmarkMax ?? DEFAULT_UNKNOWN_BENCHMARK.max;
-        const b = resolveBenchmark(label, defaultMin, defaultMax);
-        return {
-          label,
-          coverage,
-          benchmarkMin: b.min,
-          benchmarkMax: b.max,
-          impact: cfg?.impact ?? DEFAULT_UNKNOWN_BENCHMARK.impact,
-          recommendation: cfg?.recommendation ?? DEFAULT_UNKNOWN_BENCHMARK.recommendation,
-          status: statusForCoverage(coverage, b.min, b.max),
-          isOverride: b.isOverride,
-        };
-      })
-      .sort((a, b) => b.coverage - a.coverage);
-
-    const matchKeyRows: Row[] = [...canonicalRows, ...extraRows];
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    const { sorted: sortedMatchKeys, sort: mkSort, toggle: mkToggle } = useSort(matchKeyRows, "coverage", "desc");
-
     const piiPcts = pixels.map((p) => p.emq.piiCoveragePct ?? 0).filter((v) => v > 0);
     const avgPii = piiPcts.length > 0 ? Math.round(piiPcts.reduce((a, b) => a + b, 0) / piiPcts.length) : 0;
     const avgKeyCoverage =
