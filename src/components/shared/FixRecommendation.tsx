@@ -14,7 +14,7 @@ interface FixApiResponse {
   title: string;
   platform: "meta" | "google" | "both";
   steps: FixStep[];
-  source: "ai" | "fallback";
+  source: "ai" | "fallback"; creditsUsedUsd?: number;
 }
 
 interface Props {
@@ -72,7 +72,7 @@ export default function FixRecommendation({
   // Determine whether the user is in demo mode (no real credentials).
   // Real-data connections must NOT fall back to static recipes per user
   // direction — AI is mandatory for real data.
-  const { metaAccessToken, googleAccessToken } = useAuthStore();
+  const { metaAccessToken, googleAccessToken, addAiCredits } = useAuthStore();
   const isDemo = useMemo(
     () =>
       (!metaAccessToken || isDemoCredential(metaAccessToken)) &&
@@ -118,7 +118,7 @@ export default function FixRecommendation({
       }
       const json = (await res.json()) as FixApiResponse;
       SESSION_CACHE.set(cacheKey, json);
-      setData(json);
+      setData(json); if (json.creditsUsedUsd) addAiCredits(json.creditsUsedUsd);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load fix");
     } finally {
@@ -140,6 +140,7 @@ export default function FixRecommendation({
       >
         <Sparkles className="w-3 h-3" />
         {open ? "Hide fix" : "How to fix this"}
+        {!open && !data && <span className="text-[10px] text-blue-400 ml-1">~$0.0003</span>}
         {open ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
       </button>
 

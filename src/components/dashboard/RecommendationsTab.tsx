@@ -2,6 +2,8 @@ import { useAudit } from "@/hooks/useAudit";
 import { useState } from "react";
 import type { DateRange } from "@/components/shared/DateRangePicker";
 import { RefreshCw, Bot, Filter } from "lucide-react";
+import { useSort } from "@/hooks/useSort";
+import SortTh from "@/components/shared/SortTh";
 
 interface Props {
   platform?: "meta" | "google" | "both";
@@ -30,6 +32,7 @@ export default function RecommendationsTab({ platform = "both", dateRange = "30d
       (priorityFilter === "All" || r.priority === priorityFilter) &&
       (platformFilter === "All" || r.platform === platformFilter)
   );
+  const { sorted: sortedRecs, sort: recSort, toggle: recToggle } = useSort(filtered, "priority", "asc");
 
   const priorityColor = (p: string) =>
     p === "Critical" ? "bg-red-100 text-red-700 border-red-300" :
@@ -113,17 +116,17 @@ export default function RecommendationsTab({ platform = "both", dateRange = "30d
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
-                <th className="px-6 py-3 text-left font-semibold text-gray-700">Priority</th>
-                <th className="px-6 py-3 text-left font-semibold text-gray-700">Platform</th>
+                <SortTh col="priority" sort={recSort} onToggle={recToggle} className="px-6 py-3">Priority</SortTh>
+                <SortTh col="platform" sort={recSort} onToggle={recToggle} className="px-6 py-3">Platform</SortTh>
                 <th className="px-6 py-3 text-left font-semibold text-gray-700">Recommendation</th>
-                <th className="px-6 py-3 text-left font-semibold text-gray-700">Category</th>
-                <th className="px-6 py-3 text-right font-semibold text-gray-700">Effort</th>
-                <th className="px-6 py-3 text-right font-semibold text-gray-700">Confidence</th>
-                <th className="px-6 py-3 text-right font-semibold text-gray-700">Impact</th>
+                <SortTh col="category" sort={recSort} onToggle={recToggle} className="px-6 py-3">Category</SortTh>
+                <SortTh col="effort" sort={recSort} onToggle={recToggle} className="px-6 py-3" align="right">Effort</SortTh>
+                <SortTh col="confidence" sort={recSort} onToggle={recToggle} className="px-6 py-3" align="right">Confidence</SortTh>
+                <SortTh col="impact" sort={recSort} onToggle={recToggle} className="px-6 py-3" align="right">Impact</SortTh>
               </tr>
             </thead>
             <tbody>
-              {filtered.map((r) => (
+              {sortedRecs.map((r) => (
                 <tr key={r.id} className="border-b border-gray-100 hover:bg-gray-50">
                   <td className="px-6 py-4">
                     <span className={`px-3 py-1 rounded-full text-xs font-semibold border ${priorityColor(r.priority)}`}>{r.priority}</span>

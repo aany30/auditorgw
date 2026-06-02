@@ -16,7 +16,7 @@ interface Props {
   setActiveTab: (id: string) => void;
 }
 
-export default function PlatformAuditTab({ platform, selectedObjectives }: Props) {
+export default function PlatformAuditTab({ platform, dateRange, customStart, customEnd, selectedObjectives }: Props) {
   const { isMetaConnected, isGoogleConnected } = useAuthStore();
   const metaOn = isMetaConnected();
   const googleOn = isGoogleConnected();
@@ -65,6 +65,9 @@ export default function PlatformAuditTab({ platform, selectedObjectives }: Props
   return (
     <AuditTabShell
       platform={platform}
+      dateRange={dateRange}
+      customStart={customStart}
+      customEnd={customEnd}
       selectedObjectives={selectedObjectives}
       title="Platform Audit"
       description="Meta and Google platform-specific checks"

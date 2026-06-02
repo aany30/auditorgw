@@ -1,8 +1,14 @@
+import { useState } from "react";
 import { useAuthStore } from "@/store/auth";
 import { isDemoCredential } from "@/lib/demo-data";
+import { Sparkles, Loader2, Wrench, TrendingUp, Pencil, RotateCcw } from "lucide-react";
 import { useAudit } from "@/hooks/useAudit";
 import type { DateRange } from "@/components/shared/DateRangePicker";
 import { Info, ExternalLink, RefreshCw } from "lucide-react";
+import { useSort } from "@/hooks/useSort";
+import SortTh from "@/components/shared/SortTh";
+import { TermText } from "@/components/shared/Term";
+import EMQBenchmarkTable from "@/components/dashboard/EMQBenchmarkTable";
 
 interface Props {
   platform?: "meta" | "google" | "both";
@@ -11,28 +17,210 @@ interface Props {
   customEnd?: string;
 }
 
-// Friendly labels for Meta's match-key codes.
-const KEY_LABELS: Record<string, string> = {
-  em: "Email (em)",
-  ph: "Phone (ph)",
-  fn: "First Name (fn)",
-  ln: "Last Name (ln)",
-  ge: "Gender (ge)",
-  db: "Date of Birth (db)",
-  ct: "City (ct)",
-  st: "State (st)",
-  zp: "Zip (zp)",
-  country: "Country",
-  external_id: "External ID",
-  client_ip_address: "Client IP",
-  client_user_agent: "User Agent",
-  fbc: "FB Click ID (fbc)",
-  fbp: "FB Browser ID (fbp)",
+// Canonical match-key configuration — the seven keys Meta actually uses for
+// EMQ scoring, with recommended benchmark ranges, business impact, and
+// actionable recommendations. Each row aggregates multiple raw Meta API keys
+// (e.g. `em` and `email` both feed Email Hash).
+interface MatchKeyConfig {
+  /** Display label shown in the table. */
+  label: string;
+  /** Raw Meta API keys that should be summed into this row's coverage. */
+  apiKeys: string[];
+  /** Inclusive benchmark range for Healthy status. */
+  benchmarkMin: number;
+  benchmarkMax: number;
+  /** How much this key contributes to Meta's match quality. */
+  impact: "High" | "Medium-High" | "Medium" | "Low";
+  /** Plain-English fix for low coverage. */
+  recommendation: string;
+}
+
+const MATCH_KEY_CONFIG: MatchKeyConfig[] = [
+  {
+    label: "Email Hash",
+    apiKeys: ["em", "email"],
+    benchmarkMin: 70,
+    benchmarkMax: 90,
+    impact: "Medium-High",
+    recommendation: "Improve email capture during signup & checkout",
+  },
+  {
+    label: "Phone Number Hash",
+    apiKeys: ["ph", "phone"],
+    benchmarkMin: 60,
+    benchmarkMax: 85,
+    impact: "High",
+    recommendation: "Optimize phone collection & consent flow",
+  },
+  {
+    label: "External ID",
+    apiKeys: ["external_id"],
+    benchmarkMin: 70,
+    benchmarkMax: 90,
+    impact: "Medium",
+    recommendation: "Improve CRM / user ID syncing",
+  },
+  {
+    label: "Client IP",
+    apiKeys: ["client_ip_address", "client_ip"],
+    benchmarkMin: 90,
+    benchmarkMax: 100,
+    impact: "High",
+    recommendation: "Strong network-level signal — no action needed",
+  },
+  {
+    label: "User Agent",
+    apiKeys: ["client_user_agent", "user_agent"],
+    benchmarkMin: 95,
+    benchmarkMax: 100,
+    impact: "High",
+    recommendation: "Proper browser/device signal coverage",
+  },
+  {
+    label: "FB Click ID (fbc)",
+    apiKeys: ["fbc"],
+    benchmarkMin: 60,
+    benchmarkMax: 80,
+    impact: "Medium-High",
+    recommendation: "Ensure fbc parameter capture on landing pages",
+  },
+  {
+    label: "FB Browser ID (fbp)",
+    apiKeys: ["fbp"],
+    benchmarkMin: 85,
+    benchmarkMax: 100,
+    impact: "High",
+    recommendation: "Strong browser-level attribution signal",
+  },
+];
+
+function statusForCoverage(coverage: number, min: number, max: number): {
+  label: "Healthy" | "Moderate" | "Critical" | "Low";
+  tone: "good" | "warn" | "bad";
+} {
+  if (coverage >= min) return { label: "Healthy", tone: "good" };
+  if (coverage >= Math.max(0, min - 20)) return { label: "Moderate", tone: "warn" };
+  if (coverage <= 5) return { label: "Low", tone: "bad" };
+  return { label: "Critical", tone: "bad" };
+}
+
+// Friendly labels + recommended benchmarks for "extra" raw Meta match-key
+// codes that aren't in the canonical seven (Email/Phone/External ID/Client IP/
+// User Agent/fbc/fbp). Ranges are industry-standard EMQ guidance based on
+// Meta's match-quality documentation — users can override any row inline.
+interface ExtraKeyConfig {
+  label: string;
+  benchmarkMin: number;
+  benchmarkMax: number;
+  impact: "High" | "Medium-High" | "Medium" | "Low";
+  recommendation: string;
+}
+const EXTRA_KEY_CONFIG: Record<string, ExtraKeyConfig> = {
+  fn: { label: "First Name (fn)", benchmarkMin: 60, benchmarkMax: 80, impact: "Medium",
+        recommendation: "Capture first name during signup / checkout — strong signal pair with email" },
+  ln: { label: "Last Name (ln)", benchmarkMin: 60, benchmarkMax: 80, impact: "Medium",
+        recommendation: "Capture last name during signup / checkout — pairs with email for stronger match" },
+  ge: { label: "Gender (ge)", benchmarkMin: 30, benchmarkMax: 60, impact: "Low",
+        recommendation: "Optional field — only collect if relevant to your product" },
+  db: { label: "Date of Birth (db)", benchmarkMin: 30, benchmarkMax: 60, impact: "Medium",
+        recommendation: "Collect for age-gated / personalised products; otherwise low priority" },
+  ct: { label: "City (ct)", benchmarkMin: 50, benchmarkMax: 75, impact: "Medium",
+        recommendation: "Capture at checkout / address form — supplements IP-based location" },
+  st: { label: "State (st)", benchmarkMin: 50, benchmarkMax: 75, impact: "Medium",
+        recommendation: "Capture at checkout / address form — pairs with city for stronger match" },
+  zp: { label: "Zip (zp)", benchmarkMin: 60, benchmarkMax: 85, impact: "Medium-High",
+        recommendation: "High-value match signal — capture at checkout and pass with every conversion event" },
+  zip: { label: "Zip", benchmarkMin: 60, benchmarkMax: 85, impact: "Medium-High",
+         recommendation: "High-value match signal — capture at checkout and pass with every conversion event" },
+  country: { label: "Country", benchmarkMin: 90, benchmarkMax: 100, impact: "Medium",
+             recommendation: "Should be near-universal — auto-derived from IP or checkout address" },
+  fr_cookie: { label: "FR Cookie (fr_cookie)", benchmarkMin: 70, benchmarkMax: 90, impact: "High",
+               recommendation: "Meta-set cookie for logged-in users — verify Pixel/CAPI consent settings allow it" },
+  true_fr_cookie: { label: "True FR Cookie", benchmarkMin: 70, benchmarkMax: 90, impact: "High",
+                    recommendation: "Meta-set cookie — verify consent + cookie policy allows third-party Meta cookies" },
+  c_user_cookie: { label: "C-User Cookie", benchmarkMin: 70, benchmarkMax: 90, impact: "High",
+                   recommendation: "Meta-set user-identity cookie — confirm cookie consent flow allows it" },
+  subscription_id: { label: "Subscription ID", benchmarkMin: 50, benchmarkMax: 80, impact: "Medium-High",
+                     recommendation: "For subscription businesses, pass subscription_id with renewal / cancellation events" },
+  fb_login_id: { label: "FB Login ID", benchmarkMin: 5, benchmarkMax: 25, impact: "Medium",
+                 recommendation: "Only available when users log in via Facebook — coverage naturally low" },
+  lead_id: { label: "Lead ID", benchmarkMin: 60, benchmarkMax: 90, impact: "High",
+             recommendation: "For lead-gen accounts, pass lead_id with every Meta lead-form conversion event" },
 };
 
+// Friendly fallback labels for raw keys that Meta returned but aren't in
+// EXTRA_KEY_CONFIG. The benchmark cell will fall back to the global defaults
+// (50-70%, Medium impact) until the user edits it.
+const RAW_KEY_LABELS: Record<string, string> = {
+  em: "Email (em)", email: "Email (email)", ph: "Phone (ph)", phone: "Phone (phone)",
+  external_id: "External ID", client_ip: "Client IP", client_ip_address: "Client IP",
+  client_user_agent: "User Agent", user_agent: "User Agent",
+  fbc: "FB Click ID (fbc)", fbp: "FB Browser ID (fbp)",
+  ...Object.fromEntries(Object.entries(EXTRA_KEY_CONFIG).map(([k, c]) => [k, c.label])),
+};
+
+// Default benchmarks for any unknown raw key (user can still override).
+const DEFAULT_UNKNOWN_BENCHMARK = { min: 50, max: 70, impact: "Medium" as const,
+  recommendation: "No standard benchmark — edit to set your team's target." };
+
 export default function EventQualityTab({ platform = "both", dateRange = "30d", customStart, customEnd }: Props) {
-  const { customBenchmarks, metaAccessToken } = useAuthStore();
+  const { customBenchmarks, metaAccessToken, addAiCredits, emqKeyBenchmarks, setEmqKeyBenchmark, resetEmqKeyBenchmark } = useAuthStore();
   const { meta, loading } = useAudit(platform, dateRange, customStart, customEnd);
+
+  // Inline-edit state for the Recommended Benchmark column. `editingLabel` is
+  // the row currently in edit mode; `draftMin` / `draftMax` hold the in-progress
+  // input values before Save persists them to Zustand.
+  const [editingLabel, setEditingLabel] = useState<string | null>(null);
+  const [draftMin, setDraftMin] = useState<string>("");
+  const [draftMax, setDraftMax] = useState<string>("");
+  const startEditBenchmark = (label: string, min: number, max: number) => {
+    setEditingLabel(label);
+    setDraftMin(String(min));
+    setDraftMax(String(max));
+  };
+  const saveBenchmark = (label: string) => {
+    const min = Math.max(0, Math.min(100, parseFloat(draftMin) || 0));
+    const max = Math.max(min, Math.min(100, parseFloat(draftMax) || 0));
+    setEmqKeyBenchmark(label, { min, max });
+    setEditingLabel(null);
+  };
+
+  // AI recommendations for match-key coverage rows
+  const [mkAiStatus, setMkAiStatus] = useState<Record<string, "idle" | "loading" | "done" | "error">>({});
+  const [mkAiRec, setMkAiRec] = useState<Record<string, { summary: string; technicalFixes: Array<{step:string;impact:string}>; businessActions: Array<{step:string;impact:string}> }>>({});
+
+  const fetchMkRec = async (
+    label: string,
+    coverage: number,
+    benchmarkMin: number | null,
+    benchmarkMax: number | null,
+    siblingMetrics: Record<string, string | number>
+  ) => {
+    setMkAiStatus((s) => ({ ...s, [label]: "loading" }));
+    try {
+      const r = await fetch("/api/recommendations/emq-fix", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "match_key",
+          subject: label,
+          currentValue: coverage,
+          benchmark: benchmarkMin ?? 70,
+          variance: benchmarkMin !== null ? coverage - benchmarkMin : 0,
+          tableContext: siblingMetrics,
+        }),
+      });
+      const data = await r.json();
+      if (r.ok && data.summary) {
+        setMkAiRec((s) => ({ ...s, [label]: data })); if (data.creditsUsedUsd) addAiCredits(data.creditsUsedUsd);;
+        setMkAiStatus((s) => ({ ...s, [label]: "done" }));
+      } else {
+        setMkAiStatus((s) => ({ ...s, [label]: "error" }));
+      }
+    } catch {
+      setMkAiStatus((s) => ({ ...s, [label]: "error" }));
+    }
+  };
 
   // Exact EMQ score (0–10) + dedup rate are NOT exposed by Meta's Graph API.
   // But REAL match-key coverage + PII coverage ARE (aggregation=match_keys /
@@ -50,24 +238,104 @@ export default function EventQualityTab({ platform = "both", dateRange = "30d", 
     }
 
     const pixels = meta?.pixels || [];
-    // Aggregate match-key coverage across pixels (average % per key).
-    const keyAgg = new Map<string, { sum: number; n: number }>();
+    // Aggregate raw match-key coverage from every pixel (average % per raw key
+    // code as Meta returned it — e.g. "em", "external_id", "client_ip_address").
+    const rawAgg = new Map<string, { sum: number; n: number }>();
     for (const p of pixels) {
       for (const k of p.emq.matchKeys) {
-        const cur = keyAgg.get(k.key) || { sum: 0, n: 0 };
+        const cur = rawAgg.get(k.key.toLowerCase()) || { sum: 0, n: 0 };
         cur.sum += k.coverage;
         cur.n += 1;
-        keyAgg.set(k.key, cur);
+        rawAgg.set(k.key.toLowerCase(), cur);
       }
     }
-    const matchKeyRows = Array.from(keyAgg.entries())
-      .map(([key, { sum, n }]) => ({ key, label: KEY_LABELS[key] || key, coverage: Math.round(sum / n) }))
+    const rawCoverage = (key: string): number => {
+      const a = rawAgg.get(key.toLowerCase());
+      return a ? a.sum / a.n : 0;
+    };
+
+    // Roll up raw keys into the seven canonical Match-Key rows. If multiple
+    // raw aliases exist (e.g. "em" + "email"), take the higher coverage —
+    // Meta returns the same data under either name in different accounts.
+    type Row = {
+      label: string;
+      coverage: number;
+      benchmarkMin: number;
+      benchmarkMax: number;
+      impact: "High" | "Medium-High" | "Medium" | "Low";
+      recommendation: string;
+      status: { label: "Healthy" | "Moderate" | "Critical" | "Low"; tone: "good" | "warn" | "bad" };
+      /** True when the user has overridden the recommended benchmark. */
+      isOverride: boolean;
+    };
+    // Resolve a row's benchmark: user override (from Zustand) takes precedence
+    // over the default from EXTRA_KEY_CONFIG / MATCH_KEY_CONFIG.
+    const resolveBenchmark = (label: string, defaultMin: number, defaultMax: number) => {
+      const override = emqKeyBenchmarks[label];
+      if (override) return { min: override.min, max: override.max, isOverride: true };
+      return { min: defaultMin, max: defaultMax, isOverride: false };
+    };
+
+    const canonicalRows: (Row & { isOverride: boolean })[] = MATCH_KEY_CONFIG.map((cfg) => {
+      const coverage = Math.round(
+        Math.max(0, ...cfg.apiKeys.map((k) => rawCoverage(k)))
+      );
+      const b = resolveBenchmark(cfg.label, cfg.benchmarkMin, cfg.benchmarkMax);
+      return {
+        label: cfg.label,
+        coverage,
+        benchmarkMin: b.min,
+        benchmarkMax: b.max,
+        impact: cfg.impact,
+        recommendation: cfg.recommendation,
+        status: statusForCoverage(coverage, b.min, b.max),
+        isOverride: b.isOverride,
+      };
+    });
+
+    // Every raw key Meta returned that isn't in the canonical seven now gets a
+    // recommended benchmark from EXTRA_KEY_CONFIG (or the unknown-key default).
+    // Users can edit any row inline — overrides persist in Zustand.
+    const claimedKeys = new Set(MATCH_KEY_CONFIG.flatMap((c) => c.apiKeys.map((k) => k.toLowerCase())));
+    const extraRows: (Row & { isOverride: boolean })[] = Array.from(rawAgg.entries())
+      .filter(([rawKey]) => !claimedKeys.has(rawKey))
+      .map(([rawKey, { sum, n }]) => {
+        const coverage = Math.round(n > 0 ? sum / n : 0);
+        const cfg = EXTRA_KEY_CONFIG[rawKey];
+        const label = cfg?.label || RAW_KEY_LABELS[rawKey] || rawKey;
+        const defaultMin = cfg?.benchmarkMin ?? DEFAULT_UNKNOWN_BENCHMARK.min;
+        const defaultMax = cfg?.benchmarkMax ?? DEFAULT_UNKNOWN_BENCHMARK.max;
+        const b = resolveBenchmark(label, defaultMin, defaultMax);
+        return {
+          label,
+          coverage,
+          benchmarkMin: b.min,
+          benchmarkMax: b.max,
+          impact: cfg?.impact ?? DEFAULT_UNKNOWN_BENCHMARK.impact,
+          recommendation: cfg?.recommendation ?? DEFAULT_UNKNOWN_BENCHMARK.recommendation,
+          status: statusForCoverage(coverage, b.min, b.max),
+          isOverride: b.isOverride,
+        };
+      })
       .sort((a, b) => b.coverage - a.coverage);
+
+    const matchKeyRows: Row[] = [...canonicalRows, ...extraRows];
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    const { sorted: sortedMatchKeys, sort: mkSort, toggle: mkToggle } = useSort(matchKeyRows, "coverage", "desc");
+
     const piiPcts = pixels.map((p) => p.emq.piiCoveragePct ?? 0).filter((v) => v > 0);
     const avgPii = piiPcts.length > 0 ? Math.round(piiPcts.reduce((a, b) => a + b, 0) / piiPcts.length) : 0;
-    const avgKeyCoverage = matchKeyRows.length > 0 ? Math.round(matchKeyRows.reduce((s, r) => s + r.coverage, 0) / matchKeyRows.length) : 0;
+    const avgKeyCoverage =
+      matchKeyRows.length > 0
+        ? Math.round(matchKeyRows.reduce((s, r) => s + r.coverage, 0) / matchKeyRows.length)
+        : 0;
 
-    const covColor = (c: number) => (c >= 70 ? "text-green-700 bg-green-100" : c >= 40 ? "text-yellow-700 bg-yellow-100" : "text-red-700 bg-red-100");
+    const toneClass = (tone: "good" | "warn" | "bad") =>
+      tone === "good"
+        ? "text-green-700 bg-green-100"
+        : tone === "warn"
+        ? "text-yellow-700 bg-yellow-100"
+        : "text-red-700 bg-red-100";
 
     return (
       <div className="space-y-6">
@@ -76,9 +344,10 @@ export default function EventQualityTab({ platform = "both", dateRange = "30d", 
           <p className="text-gray-600 mt-1">Real match-key &amp; PII coverage from your pixel (Meta Graph API)</p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="bg-white rounded-lg border border-gray-200 p-5 shadow-sm">
-            <div className="text-sm text-gray-600">Avg. Match-Key Coverage</div>
+            <div className="text-sm text-gray-600"><TermText>Avg. Match-Key Coverage</TermText></div>
             <div className="text-3xl font-bold text-gray-900 mt-1">{avgKeyCoverage}%</div>
             <div className="text-xs text-gray-500 mt-1">Across {matchKeyRows.length} keys</div>
           </div>
@@ -87,66 +356,163 @@ export default function EventQualityTab({ platform = "both", dateRange = "30d", 
             <div className="text-3xl font-bold text-gray-900 mt-1">{avgPii}%</div>
             <div className="text-xs text-gray-500 mt-1">Higher = better matching</div>
           </div>
-          <div className="bg-white rounded-lg border border-gray-200 p-5 shadow-sm">
-            <div className="text-sm text-gray-600">EMQ Score (0–10)</div>
-            <div className="text-3xl font-bold text-gray-400 mt-1">—</div>
-            <div className="text-xs text-gray-500 mt-1">Events Manager only</div>
-          </div>
         </div>
+
+        <EMQBenchmarkTable />
 
         <div className="bg-white rounded-lg border border-gray-200 shadow-sm">
           <div className="p-6 border-b border-gray-200">
-            <h2 className="text-lg font-bold text-gray-900">Match-Key Coverage</h2>
+            <h2 className="text-lg font-bold text-gray-900"><TermText>Match-Key Coverage</TermText></h2>
             <p className="text-sm text-gray-600 mt-1">% of events that carried each customer-matching parameter — real data from Meta.</p>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
-                  <th className="px-6 py-3 text-left font-semibold text-gray-700">Match Key</th>
-                  <th className="px-6 py-3 text-right font-semibold text-gray-700">Coverage</th>
-                  <th className="px-6 py-3 text-right font-semibold text-gray-700">Status</th>
+                  <SortTh col="label" sort={mkSort} onToggle={mkToggle} className="px-4 py-3">Match Key</SortTh>
+                  <SortTh col="coverage" sort={mkSort} onToggle={mkToggle} className="px-4 py-3">Your Coverage</SortTh>
+                  <th className="px-4 py-3 text-left font-semibold text-gray-700">Recommended Benchmark</th>
+                  <SortTh col="status" sort={mkSort} onToggle={mkToggle} className="px-4 py-3">Status</SortTh>
+                  <SortTh col="impact" sort={mkSort} onToggle={mkToggle} className="px-4 py-3">Impact on Match Quality</SortTh>
+                  <th className="px-4 py-3 text-left font-semibold text-gray-700">Recommendation</th>
                 </tr>
               </thead>
               <tbody>
-                {matchKeyRows.map((r) => (
-                  <tr key={r.key} className="border-b border-gray-100 hover:bg-gray-50">
-                    <td className="px-6 py-4 font-semibold text-gray-900">{r.label}</td>
-                    <td className="px-6 py-4 text-right text-gray-900 font-semibold">{r.coverage}%</td>
-                    <td className="px-6 py-4 text-right">
-                      <span className={`px-3 py-1 rounded-full text-xs font-semibold ${covColor(r.coverage)}`}>
-                        {r.coverage >= 70 ? "Strong" : r.coverage >= 40 ? "Moderate" : "Low"}
+                {sortedMatchKeys.map((r) => (
+                  <tr key={r.label} className="border-b border-gray-100 hover:bg-gray-50 align-top">
+                    <td className="px-4 py-3 font-semibold text-gray-900 whitespace-nowrap">{r.label}</td>
+                    <td className="px-4 py-3 text-gray-900 font-semibold">{r.coverage}%</td>
+                    <td className="px-4 py-3 text-gray-700 whitespace-nowrap">
+                      {editingLabel === r.label ? (
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="number" min={0} max={100}
+                            value={draftMin}
+                            onChange={(e) => setDraftMin(e.target.value)}
+                            className="w-14 px-1.5 py-0.5 border border-blue-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                          <span className="text-gray-400 text-xs">–</span>
+                          <input
+                            type="number" min={0} max={100}
+                            value={draftMax}
+                            onChange={(e) => setDraftMax(e.target.value)}
+                            className="w-14 px-1.5 py-0.5 border border-blue-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                          <span className="text-gray-400 text-[10px]">%</span>
+                          <button
+                            onClick={() => saveBenchmark(r.label)}
+                            className="ml-1 px-2 py-0.5 rounded bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700"
+                          >Save</button>
+                          <button
+                            onClick={() => setEditingLabel(null)}
+                            className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 text-xs hover:bg-gray-200"
+                          >Cancel</button>
+                        </div>
+                      ) : (
+                        <div className="inline-flex items-center gap-1 group">
+                          <span className={r.isOverride ? "font-semibold text-blue-700" : ""}>
+                            {r.benchmarkMin}–{r.benchmarkMax}%
+                          </span>
+                          {r.isOverride && (
+                            <span
+                              className="text-[10px] px-1 py-0.5 bg-blue-50 text-blue-700 rounded font-semibold"
+                              title="Custom benchmark — edited from default"
+                            >custom</span>
+                          )}
+                          <button
+                            onClick={() => startEditBenchmark(r.label, r.benchmarkMin!, r.benchmarkMax!)}
+                            className="opacity-30 group-hover:opacity-100 transition text-gray-500 hover:text-blue-600"
+                            title="Edit benchmark"
+                          >
+                            <Pencil className="w-3 h-3" />
+                          </button>
+                          {r.isOverride && (
+                            <button
+                              onClick={() => resetEmqKeyBenchmark(r.label)}
+                              className="opacity-30 group-hover:opacity-100 transition text-gray-500 hover:text-red-600"
+                              title="Reset to recommended"
+                            >
+                              <RotateCcw className="w-3 h-3" />
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${toneClass(r.status.tone)}`}>
+                        {r.status.label}
                       </span>
+                    </td>
+                    <td className="px-4 py-3 text-gray-700 whitespace-nowrap">
+                      {r.impact || <span className="text-gray-400 italic">—</span>}
+                    </td>
+                    <td className="px-4 py-3">
+                      {(() => {
+                        const isBelow = r.benchmarkMin !== null && r.coverage < r.benchmarkMin;
+                        const status = mkAiStatus[r.label] ?? "idle";
+                        const rec = mkAiRec[r.label];
+                        const siblingMetrics: Record<string, string | number> = {};
+                        matchKeyRows.forEach((mr) => { siblingMetrics[`${mr.label} coverage`] = `${mr.coverage}%`; });
+
+                        if (!isBelow) {
+                          return <span className="text-xs text-green-700">✓ Coverage is within benchmark — no action needed</span>;
+                        }
+                        if (status === "idle") {
+                          return (
+                            <button
+                              onClick={() => fetchMkRec(r.label, r.coverage, r.benchmarkMin, r.benchmarkMax, siblingMetrics)}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100"
+                            >
+                              <Sparkles className="w-3 h-3" /> Get recommendations <span className="text-[10px] opacity-60 ml-0.5">~$0.0003</span>
+                            </button>
+                          );
+                        }
+                        if (status === "loading") {
+                          return <span className="inline-flex items-center gap-1 text-[11px] text-gray-500"><Loader2 className="w-3 h-3 animate-spin" /> Analyzing…</span>;
+                        }
+                        if (rec) {
+                          return (
+                            <div className="space-y-2 text-[11px]">
+                              <div className="text-gray-700 font-semibold">{rec.summary}</div>
+                              {rec.technicalFixes.length > 0 && (
+                                <div>
+                                  <div className="flex items-center gap-1 text-orange-700 font-semibold mb-1"><Wrench className="w-3 h-3" /> Technical fixes</div>
+                                  <ul className="space-y-0.5">
+                                    {rec.technicalFixes.map((f, i) => (
+                                      <li key={i} className="flex gap-1.5 text-gray-700">
+                                        <span className={`shrink-0 font-bold ${f.impact === "high" ? "text-red-600" : f.impact === "medium" ? "text-yellow-600" : "text-gray-400"}`}>●</span>
+                                        {f.step}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+                              {rec.businessActions.length > 0 && (
+                                <div>
+                                  <div className="flex items-center gap-1 text-blue-700 font-semibold mb-1"><TrendingUp className="w-3 h-3" /> Business actions</div>
+                                  <ul className="space-y-0.5">
+                                    {rec.businessActions.map((a, i) => (
+                                      <li key={i} className="flex gap-1.5 text-gray-700">
+                                        <span className={`shrink-0 font-bold ${a.impact === "high" ? "text-red-600" : a.impact === "medium" ? "text-yellow-600" : "text-gray-400"}`}>●</span>
+                                        {a.step}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        }
+                        return <span className="text-red-500 text-[11px]">Failed to load — try again</span>;
+                      })()}
                     </td>
                   </tr>
                 ))}
-                {matchKeyRows.length === 0 && (
-                  <tr>
-                    <td colSpan={3} className="px-6 py-8 text-center text-gray-500">
-                      No match-key data returned for this pixel in the selected range.
-                    </td>
-                  </tr>
-                )}
               </tbody>
             </table>
           </div>
         </div>
 
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-start gap-3">
-          <Info className="w-5 h-5 text-blue-600 mt-0.5 shrink-0" />
-          <div className="text-sm text-blue-900">
-            <span className="font-semibold">EMQ score (0–10) and deduplication rate</span> aren&apos;t exposed by Meta&apos;s API —
-            only the match-key coverage above is. View the official EMQ &amp; dedup numbers in Events Manager.
-            <a
-              href="https://business.facebook.com/events_manager2/overview"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 ml-2 font-semibold underline"
-            >
-              Open Events Manager <ExternalLink className="w-3.5 h-3.5" />
-            </a>
-          </div>
-        </div>
       </div>
     );
   }
@@ -188,7 +554,7 @@ export default function EventQualityTab({ platform = "both", dateRange = "30d", 
           <div className="text-xs text-gray-500 mt-1">Target: {(customBenchmarks.metaEMQScore * 10).toFixed(1)}+</div>
         </div>
         <div className="bg-white rounded-lg border border-gray-200 p-5 shadow-sm">
-          <div className="text-sm text-gray-600">Avg. Match Key Coverage</div>
+          <div className="text-sm text-gray-600"><TermText>Avg. Match Key Coverage</TermText></div>
           <div className="text-3xl font-bold text-gray-900 mt-1">75%</div>
           <div className="text-xs text-yellow-600 mt-1">↓ 5% below benchmark</div>
         </div>
@@ -242,7 +608,7 @@ export default function EventQualityTab({ platform = "both", dateRange = "30d", 
 
       <div className="bg-white rounded-lg border border-gray-200 shadow-sm">
         <div className="p-6 border-b border-gray-200">
-          <h2 className="text-lg font-bold text-gray-900">Match Key Coverage</h2>
+          <h2 className="text-lg font-bold text-gray-900"><TermText>Match Key Coverage</TermText></h2>
           <p className="text-sm text-gray-600 mt-1">Quality of advanced matching parameters passed with each event</p>
         </div>
         <div className="overflow-x-auto">
@@ -285,6 +651,9 @@ export default function EventQualityTab({ platform = "both", dateRange = "30d", 
           </table>
         </div>
       </div>
+
+      {/* EMQ Benchmark table available in demo mode too */}
+      <EMQBenchmarkTable />
     </div>
   );
 }

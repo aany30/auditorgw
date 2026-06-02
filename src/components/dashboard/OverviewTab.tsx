@@ -99,10 +99,10 @@ export default function OverviewTab({ platform, dateRange, customStart, customEn
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {meta && (
-          <HealthScoreCard title="Meta Health" score={metaHealth} trend={5} lastUpdated={new Date()} />
+          <HealthScoreCard title="Meta Health" score={metaHealth} trend={0} lastUpdated={new Date()} />
         )}
         {google && (
-          <HealthScoreCard title="Google Health" score={googleHealth} trend={3} lastUpdated={new Date()} />
+          <HealthScoreCard title="Google Health" score={googleHealth} trend={0} lastUpdated={new Date()} />
         )}
         <HealthScoreCard title="Total Recommendations" score={Math.min(100, allRecs.length * 10)} trend={0} lastUpdated={new Date()} />
         <HealthScoreCard title="Potential Lift" score={Math.min(100, parseFloat(totalLift) * 2)} trend={0} lastUpdated={new Date()} />
@@ -220,28 +220,14 @@ export default function OverviewTab({ platform, dateRange, customStart, customEn
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-white p-4 rounded-lg border border-gray-200">
-          <div className="text-sm text-gray-600 mb-1">Data Freshness</div>
-          <div className="text-xl font-bold text-green-600 flex items-center gap-2">
-            <CheckCircle2 className="w-5 h-5" /> Current
-          </div>
-          <p className="text-xs text-gray-500 mt-2">Updated just now</p>
-        </div>
-        <div className="bg-white p-4 rounded-lg border border-gray-200">
-          <div className="text-sm text-gray-600 mb-1">API Health</div>
-          <div className="text-xl font-bold text-green-600 flex items-center gap-2">
-            <CheckCircle2 className="w-5 h-5" /> Operational
-          </div>
-          <p className="text-xs text-gray-500 mt-2">All connections stable</p>
-        </div>
-        <div className="bg-white p-4 rounded-lg border border-gray-200">
+      <div className="grid grid-cols-1 md:grid-cols-1 gap-4">
+        <div className="bg-white p-4 rounded-lg border border-gray-200 max-w-md">
           <div className="text-sm text-gray-600 mb-1">Events Tracked</div>
           <div className="text-xl font-bold text-gray-900 flex items-center gap-2">
             <Activity className="w-5 h-5 text-blue-600" />
             {(totalMetaEvents + (googleAudit?.ga4.totalEvents || 0)).toLocaleString()}
           </div>
-          <p className="text-xs text-gray-500 mt-2">In current date range</p>
+          <p className="text-xs text-gray-500 mt-2">In current date range — real pixel/GA4 count</p>
         </div>
       </div>
     </div>

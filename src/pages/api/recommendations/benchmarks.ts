@@ -11,6 +11,7 @@
 
 import type { NextApiRequest, NextApiResponse } from "next";
 import Anthropic from "@anthropic-ai/sdk";
+import { calcCost } from "@/lib/ai-cost";
 
 interface BenchmarkRequest {
   industry: string;
@@ -23,7 +24,7 @@ interface BenchmarkRequest {
 interface BenchmarkResponse {
   industry: string;
   values: Record<string, number>;
-  source: "ai";
+  source: "ai"; creditsUsedUsd?: number;
   rationale?: string;
 }
 
@@ -146,11 +147,13 @@ export default async function handler(
       throw new Error("AI response missing benchmark values");
     }
 
+    const creditsUsedUsd = calcCost(response.usage);
     res.status(200).json({
       industry: parsed.industry,
       values: parsed.values,
       source: "ai",
       rationale: parsed.rationale,
+      creditsUsedUsd,
     });
   } catch (error) {
     console.error("Industry-benchmark AI call failed:", error);

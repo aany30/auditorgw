@@ -7,7 +7,6 @@ import EventQualityTab from "@/components/dashboard/EventQualityTab";
 import FunnelAuditTab from "@/components/dashboard/FunnelAuditTab";
 import AttributionTab from "@/components/dashboard/AttributionTab";
 import RecommendationsTab from "@/components/dashboard/RecommendationsTab";
-import AlertCenterTab from "@/components/dashboard/AlertCenterTab";
 import AccountStructureTab from "@/components/dashboard/AccountStructureTab";
 import AudienceAuditTab from "@/components/dashboard/AudienceAuditTab";
 import CreativeAuditTab from "@/components/dashboard/CreativeAuditTab";
@@ -26,7 +25,6 @@ import {
   Target,
   Settings2,
   Bot,
-  AlertTriangle,
   LogOut,
   LayoutDashboard,
   Layers,
@@ -84,7 +82,6 @@ const NAV: NavGroup[] = [
     Icon: Lightbulb,
     children: [
       { id: "recommendations", label: "AI Recommendations", Icon: Bot },
-      { id: "alerts", label: "Alert Center", Icon: AlertTriangle },
     ],
   },
 ];
@@ -99,6 +96,7 @@ export default function Dashboard() {
     setMetaPixelList,
     setGoogleCredentials,
     setGoogleAccountsList,
+    totalAiCreditsUsd,
   } = useAuthStore();
   const [activeTab, setActiveTab] = useState<string>("overview");
   const [platformFilter, setPlatformFilter] = useState<PlatformValue>("all");
@@ -214,13 +212,11 @@ export default function Dashboard() {
       case "event-quality":
         return <EventQualityTab {...props} />;
       case "funnel":
-        return <FunnelAuditTab />;
+        return <FunnelAuditTab {...props} />;
       case "attribution":
-        return <AttributionTab />;
+        return <AttributionTab {...props} />;
       case "recommendations":
         return <RecommendationsTab {...props} />;
-      case "alerts":
-        return <AlertCenterTab />;
       case "account-structure":
         return <AccountStructureTab {...audit} />;
       case "audience-audit":
@@ -286,9 +282,18 @@ export default function Dashboard() {
             />
           </div>
 
-          {/* Right: Account Selector + Logout */}
+          {/* Right: Account Selector + AI Credits counter + Logout */}
           <div className="flex items-center gap-3">
             <AccountSelector />
+
+            {/* Running AI API cost counter — always visible, accumulates every AI call */}
+            <div
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-50 border border-indigo-200 text-xs font-semibold text-indigo-800"
+              title="Total Claude AI API cost used this session (Haiku 4.5 pricing). Resets on logout."
+            >
+              <span>✦ AI Credits</span>
+              <span className="font-mono">${totalAiCreditsUsd.toFixed(4)}</span>
+            </div>
 
             <button
               onClick={handleLogout}

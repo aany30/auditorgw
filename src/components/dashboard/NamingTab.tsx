@@ -6,6 +6,7 @@ import NamingMaker from "./NamingMaker";
 import NamingChecker from "./NamingChecker";
 import RenamingAgent from "./RenamingAgent";
 import { objectiveMatches } from "./CampaignObjectiveFilter";
+import { rangeToDates } from "@/lib/date-range";
 
 interface Props {
   platform: "meta" | "google" | "both";
@@ -17,7 +18,7 @@ interface Props {
 
 type TabType = "maker" | "checker" | "agent";
 
-export default function NamingTab({ platform, selectedObjectives }: Props) {
+export default function NamingTab({ platform, dateRange = "30d", customStart, customEnd, selectedObjectives }: Props) {
   const {
     metaAccessToken,
     metaBusinessId,
@@ -37,6 +38,7 @@ export default function NamingTab({ platform, selectedObjectives }: Props) {
     const fetchCampaigns = async () => {
       setLoading(true);
       const allCampaigns: CampaignData[] = [];
+      const { startDate, endDate } = rangeToDates(dateRange, customStart, customEnd);
 
       try {
         // Fetch Meta campaigns
@@ -52,6 +54,8 @@ export default function NamingTab({ platform, selectedObjectives }: Props) {
             body: JSON.stringify({
               accessToken: metaAccessToken,
               businessId: metaBusinessId,
+              startDate,
+              endDate,
             }),
           });
 
@@ -76,6 +80,8 @@ export default function NamingTab({ platform, selectedObjectives }: Props) {
               customerId: googleCustomerId,
               developerToken: googleAdsDeveloperToken,
               loginCustomerId: googleAdsLoginCustomerId || googleCustomerId,
+              startDate,
+              endDate,
             }),
           });
 
@@ -94,10 +100,13 @@ export default function NamingTab({ platform, selectedObjectives }: Props) {
       }
     };
 
-    // Fetch campaigns when component mounts or platform changes
+    // Fetch campaigns when component mounts, platform changes, or date range changes
     fetchCampaigns();
   }, [
     platform,
+    dateRange,
+    customStart,
+    customEnd,
     metaAccessToken,
     metaBusinessId,
     metaPixelIds,
@@ -112,6 +121,7 @@ export default function NamingTab({ platform, selectedObjectives }: Props) {
     const fetchCampaigns = async () => {
       setLoading(true);
       const allCampaigns: CampaignData[] = [];
+      const { startDate, endDate } = rangeToDates(dateRange, customStart, customEnd);
 
       try {
         if (
@@ -125,6 +135,8 @@ export default function NamingTab({ platform, selectedObjectives }: Props) {
             body: JSON.stringify({
               accessToken: metaAccessToken,
               businessId: metaBusinessId,
+              startDate,
+              endDate,
             }),
           });
 
@@ -147,6 +159,8 @@ export default function NamingTab({ platform, selectedObjectives }: Props) {
               customerId: googleCustomerId,
               developerToken: googleAdsDeveloperToken,
               loginCustomerId: googleAdsLoginCustomerId || googleCustomerId,
+              startDate,
+              endDate,
             }),
           });
 

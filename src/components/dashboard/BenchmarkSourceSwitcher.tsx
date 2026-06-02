@@ -26,7 +26,7 @@ export default function BenchmarkSourceSwitcher({ stages, platform = "both" }: P
     activeBenchmarkId,
     addBenchmarkSnapshot,
     setActiveBenchmark,
-    removeBenchmarkSnapshot,
+    removeBenchmarkSnapshot, addAiCredits,
   } = useAuthStore();
 
   const [open, setOpen] = useState(false);
@@ -35,6 +35,13 @@ export default function BenchmarkSourceSwitcher({ stages, platform = "both" }: P
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+
+  // Manual-benchmark editor state (My Past tab). Sliders 0-100 per stage.
+  const [manualLabel, setManualLabel] = useState("");
+  const [manualValues, setManualValues] = useState<Record<string, number>>(() =>
+    Object.fromEntries(stages.map((s) => [s, 50]))
+  );
+  const [manualNotice, setManualNotice] = useState<string | null>(null);
 
   // Click-outside close
   useEffect(() => {
@@ -54,6 +61,15 @@ export default function BenchmarkSourceSwitcher({ stages, platform = "both" }: P
     (s) => s.source !== "meta" || s.id !== META_BENCHMARKS.id
   );
   const activeSnapshot = benchmarkSnapshots.find((s) => s.id === activeBenchmarkId);
+
+  // Whenever the popover opens, pre-fill the Industry input with whatever the
+  // user previously activated — so they instantly see what's currently in use
+  // and can tweak rather than retype from scratch.
+  useEffect(() => {
+    if (open && activeSnapshot?.source === "industry" && activeSnapshot.industry) {
+      setIndustryInput(activeSnapshot.industry);
+    }
+  }, [open, activeSnapshot]);
 
   const handleSelectMeta = () => {
     // Make sure Meta default exists in store; activate it.
@@ -88,7 +104,7 @@ export default function BenchmarkSourceSwitcher({ stages, platform = "both" }: P
         const body = await res.json().catch(() => ({}));
         throw new Error(body?.error || `HTTP ${res.status}`);
       }
-      const json = (await res.json()) as { industry: string; values: Record<string, number>; rationale?: string };
+      const json = (await res.json()) as { industry: string; values: Record<string, number>; rationale?: string; creditsUsedUsd?: number };
       const snapshot: BenchmarkSnapshot = {
         id: `industry-${Date.now()}`,
         label: json.industry,
@@ -98,7 +114,7 @@ export default function BenchmarkSourceSwitcher({ stages, platform = "both" }: P
         values: json.values,
         notes: json.rationale,
       };
-      addBenchmarkSnapshot(snapshot);
+      addBenchmarkSnapshot(snapshot); if (json.creditsUsedUsd) addAiCredits(json.creditsUsedUsd);
       setIndustryInput("");
       setOpen(false);
     } catch (e) {
@@ -220,13 +236,84 @@ export default function BenchmarkSourceSwitcher({ stages, platform = "both" }: P
 
             {tab === "past" && (
               <div>
-                <h4 className="text-sm font-bold text-gray-900 mb-1">Your past benchmarks</h4>
+                <h4 className="text-sm font-bold text-gray-900 mb-1">Your benchmarks</h4>
                 <p className="text-xs text-gray-600 mb-3">
-                  Industry benchmarks you've previously generated. Most recent first.
+                  Set custom benchmark percentages (0–100) per funnel stage, or pick a previously saved set.
                 </p>
+
+                {/* Manual benchmark editor — sliders for each stage */}
+                <div className="bg-gray-50 border border-gray-200 rounded p-3 mb-3 space-y-2">
+                  <div className="text-[11px] font-semibold text-gray-700 uppercase tracking-wide">Set manually</div>
+                  {stages.map((stage) => {
+                    const v = manualValues[stage] ?? 50;
+                    return (
+                      <div key={stage} className="space-y-0.5">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-mono text-gray-700">{stage}</span>
+                          <input
+                            type="number"
+                            min={0}
+                            max={100}
+                            value={v}
+                            onChange={(e) => {
+                              const n = Math.max(0, Math.min(100, parseInt(e.target.value, 10) || 0));
+                              setManualValues((m) => ({ ...m, [stage]: n }));
+                            }}
+                            className="w-14 px-1.5 py-0.5 border border-gray-300 rounded text-xs text-right font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          />
+                          <span className="text-gray-400 ml-0.5">%</span>
+                        </div>
+                        <input
+                          type="range"
+                          min={0}
+                          max={100}
+                          value={v}
+                          onChange={(e) =>
+                            setManualValues((m) => ({ ...m, [stage]: parseInt(e.target.value, 10) }))
+                          }
+                          className="w-full h-1 accent-blue-600 cursor-pointer"
+                        />
+                      </div>
+                    );
+                  })}
+                  <input
+                    type="text"
+                    placeholder="Label (e.g. 'Q2 2026 target')"
+                    value={manualLabel}
+                    onChange={(e) => setManualLabel(e.target.value)}
+                    className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <button
+                    onClick={() => {
+                      const label = manualLabel.trim() || `Custom — ${new Date().toLocaleDateString()}`;
+                      const snap: BenchmarkSnapshot = {
+                        id: `manual-${Date.now()}`,
+                        label,
+                        source: "past",
+                        fetchedAt: new Date().toISOString(),
+                        values: { ...manualValues },
+                      };
+                      addBenchmarkSnapshot(snap);
+                      setActiveBenchmark(snap.id);
+                      setManualLabel("");
+                      setManualNotice(`Saved & activated: ${label}`);
+                      setTimeout(() => setManualNotice(null), 2500);
+                    }}
+                    className="w-full px-3 py-1.5 bg-blue-600 text-white rounded font-semibold text-xs hover:bg-blue-700 transition"
+                  >
+                    Save &amp; use these values
+                  </button>
+                  {manualNotice && (
+                    <div className="text-[10px] text-green-700 bg-green-50 border border-green-200 rounded px-2 py-1">
+                      ✓ {manualNotice}
+                    </div>
+                  )}
+                </div>
+
+                <div className="text-[11px] font-semibold text-gray-700 uppercase tracking-wide mb-1.5">Saved sets</div>
                 {pastSnapshots.length === 0 ? (
-                  <div className="text-xs text-gray-500 text-center py-6">
-                    No past benchmarks yet. Generate one from the <strong>Industry</strong> tab to save it here.
+                  <div className="text-xs text-gray-500 text-center py-3">
+                    No saved sets yet. Use the manual editor above, or the <strong>Industry</strong> tab to generate one.
                   </div>
                 ) : (
                   <div className="space-y-1 max-h-60 overflow-y-auto">

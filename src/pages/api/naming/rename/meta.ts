@@ -1,5 +1,9 @@
 /**
- * Rename a Meta campaign via the Graph API.
+ * Rename a Meta object (campaign / ad set / ad) via the Graph API.
+ *
+ * Meta's `POST /{object_id}` accepts the same `{ name }` body for any
+ * campaign / ad-set / ad — so one endpoint covers all three for the naming
+ * audit. Accepts either `nodeId` (preferred) or legacy `campaignId`.
  *
  * Demo mode (token starts with `demo-` etc): no-op success — UI shows the
  * queued banner without hitting Meta's API. Real tokens: live rename call.
@@ -11,7 +15,10 @@ import { isDemoCredential } from "@/lib/demo-data";
 
 interface RenameRequest {
   accessToken: string;
-  campaignId: string;
+  /** Object ID to rename — campaign, ad set, or ad. */
+  nodeId?: string;
+  /** Legacy alias kept for backward compatibility with existing callers. */
+  campaignId?: string;
   newName: string;
 }
 
@@ -30,15 +37,16 @@ export default async function handler(
     return;
   }
 
-  const { accessToken, campaignId, newName } = req.body as RenameRequest;
-  if (!accessToken || !campaignId || !newName?.trim()) {
-    res.status(400).json({ error: "accessToken, campaignId, and newName are required" });
+  const { accessToken, newName } = req.body as RenameRequest;
+  const id = (req.body as RenameRequest).nodeId || (req.body as RenameRequest).campaignId;
+  if (!accessToken || !id || !newName?.trim()) {
+    res.status(400).json({ error: "accessToken, nodeId, and newName are required" });
     return;
   }
 
-  // Length validation — Meta caps campaign names at 400 chars.
+  // Length validation — Meta caps names at 400 chars across object types.
   if (newName.length > 400) {
-    res.status(400).json({ error: "Campaign name exceeds Meta's 400-character limit" });
+    res.status(400).json({ error: "Name exceeds Meta's 400-character limit" });
     return;
   }
 
@@ -48,9 +56,10 @@ export default async function handler(
     return;
   }
 
-  // Live: call Meta Graph API.
+  // Live: call Meta Graph API. `renameCampaign` POSTs to `/{id}` which works
+  // for ANY Meta object — same endpoint for campaigns, ad sets, and ads.
   const client = new MetaApiClient(accessToken);
-  const result = await client.renameCampaign(campaignId, newName);
+  const result = await client.renameCampaign(id, newName);
 
   if (!result.success) {
     res.status(502).json({ error: result.error || "Rename failed" });

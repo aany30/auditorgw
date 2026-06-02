@@ -37,6 +37,14 @@ interface CustomBenchmarks {
   eventFiringHealthThreshold: number;
 }
 
+/**
+ * Per-match-key benchmark overrides for the EMQ Match-Key Coverage table.
+ * Keyed by the canonical row label ("Email Hash", "Phone Number Hash", etc.)
+ * or the friendly extra-key label ("First Name (fn)", etc.). Persisted via
+ * the existing Zustand `persist` middleware so user edits survive reload.
+ */
+export interface EmqKeyBenchmark { min: number; max: number }
+
 const DEFAULT_BENCHMARKS: CustomBenchmarks = {
   metaEMQScore: 0.88,
   metaDedupRate: 0.95,
@@ -88,18 +96,14 @@ const DEFAULT_NAMING_CONVENTIONS: NamingConvention[] = [
         required: false,
         position: 3,
         examples: [
-          "Awareness",
-          "Reach",
-          "Traffic",
-          "Engagement",
-          "App Promotion",
-          "Video Views",
-          "Lead Generation",
-          "Conversions",
-          "Sales",
-          "Store Visits",
-          "Brand Consideration",
-          "Catalog Sales",
+          "Awareness . Reach",
+          "Awareness . Views",
+          "Consideration . Engagement",
+          "Consideration . Clicks",
+          "Preference . Leads",
+          "Preference . Store Visits",
+          "Purchase . Sales",
+          "Preference . App Installs",
         ],
         inputType: "select",
       },
@@ -136,15 +140,9 @@ const DEFAULT_NAMING_CONVENTIONS: NamingConvention[] = [
         position: 5,
         examples: [
           "Static",
-          "Carousel",
+          "Carousels",
+          "Gif",
           "Video",
-          "Reel",
-          "Story",
-          "Collection",
-          "Slideshow",
-          "GIF",
-          "UGC",
-          "Animation",
         ],
         inputType: "select",
       },
@@ -170,6 +168,16 @@ interface AuthState {
   // sessions so the user only sets it once.
   alertEmail: string | null;
 
+  // Optional user-set monthly budget cap (in their account's currency units).
+  // Drives the Monthly Budget Tracking card on the Budget Allocation audit —
+  // MTD spend vs MTD expected pace, daily cap maths, headroom for new campaigns.
+  monthlyBudget: number | null;
+
+  // User-entered current EMQ scores per event (1–10 scale).
+  // Persisted in localStorage so they survive page refreshes.
+  // Key = event id (e.g. "pageView", "atc"), value = 0–10 or null (not entered).
+  emqInputs: Record<string, number | null>;
+
   // Meta Credentials
   metaAccessToken: string | null;
   metaBusinessId: string | null;
@@ -192,6 +200,12 @@ interface AuthState {
   // Custom Benchmarks
   customBenchmarks: CustomBenchmarks;
 
+  // Per-row overrides for the EMQ Match-Key Coverage table.
+  // Keyed by display label (e.g. "Email Hash", "First Name (fn)").
+  emqKeyBenchmarks: Record<string, EmqKeyBenchmark>;
+  setEmqKeyBenchmark: (label: string, value: EmqKeyBenchmark) => void;
+  resetEmqKeyBenchmark: (label: string) => void;
+
   // Date Range
   dateRange: DateRange;
   customDateRange: CustomDateRange | null;
@@ -209,6 +223,11 @@ interface AuthState {
 
   // Alerts
   setAlertEmail: (email: string | null) => void;
+  setMonthlyBudget: (amount: number | null) => void;
+  setEmqInput: (eventId: string, value: number | null) => void;
+  /** Running total of AI API costs (USD) for the current session. */
+  totalAiCreditsUsd: number;
+  addAiCredits: (usd: number) => void;
 
   // Auth Methods
   setMetaCredentials: (token: string, businessId: string, pixelIds: string[]) => void;
@@ -259,6 +278,9 @@ export const useAuthStore = create<AuthState>()(
   persist(
     (set, get) => ({
       alertEmail: null,
+      monthlyBudget: null,
+      emqInputs: {},
+      totalAiCreditsUsd: 0,
       metaAccessToken: null,
       metaBusinessId: null,
       metaPixelIds: [],
@@ -275,6 +297,7 @@ export const useAuthStore = create<AuthState>()(
       selectedGAPropertyId: null,
       selectedGTMContainerId: null,
       customBenchmarks: DEFAULT_BENCHMARKS,
+      emqKeyBenchmarks: {},
       dateRange: "30d",
       customDateRange: null,
       namingConventions: DEFAULT_NAMING_CONVENTIONS,
@@ -284,6 +307,11 @@ export const useAuthStore = create<AuthState>()(
       activeBenchmarkId: META_BENCHMARKS.id,
 
       setAlertEmail: (email) => set({ alertEmail: email }),
+      setMonthlyBudget: (amount) => set({ monthlyBudget: amount }),
+      setEmqInput: (eventId, value) =>
+        set((state) => ({ emqInputs: { ...state.emqInputs, [eventId]: value } })),
+      addAiCredits: (usd) =>
+        set((state) => ({ totalAiCreditsUsd: +(state.totalAiCreditsUsd + usd).toFixed(6) })),
 
       setMetaCredentials: (token, businessId, pixelIds) =>
         set({ metaAccessToken: token, metaBusinessId: businessId, metaPixelIds: pixelIds }),
@@ -332,6 +360,16 @@ export const useAuthStore = create<AuthState>()(
       resetBenchmarksToDefault: () =>
         set({ customBenchmarks: DEFAULT_BENCHMARKS }),
 
+      setEmqKeyBenchmark: (label, value) =>
+        set((state) => ({ emqKeyBenchmarks: { ...state.emqKeyBenchmarks, [label]: value } })),
+
+      resetEmqKeyBenchmark: (label) =>
+        set((state) => {
+          const next = { ...state.emqKeyBenchmarks };
+          delete next[label];
+          return { emqKeyBenchmarks: next };
+        }),
+
       getBenchmark: (key) => {
         const state = get();
         return state.customBenchmarks[key];
@@ -377,6 +415,7 @@ export const useAuthStore = create<AuthState>()(
           selectedGoogleCustomerId: null,
           selectedGAPropertyId: null,
           selectedGTMContainerId: null,
+          totalAiCreditsUsd: 0, // reset credit counter on logout
         }),
 
       addMetaPixelId: (pixelId) =>
@@ -461,13 +500,12 @@ export const useAuthStore = create<AuthState>()(
       name: "auth-store",
       // Bump this version any time DEFAULT_NAMING_CONVENTIONS / META_BENCHMARKS
       // change in a way that should override persisted user state.
-      version: 2,
+      version: 3,
       // On version mismatch, replace the persisted naming convention with the
-      // fresh default. Other fields (credentials, custom benchmarks, etc.)
-      // survive untouched.
+      // fresh default (v3: updated Objective/Buy Type + Creative Type options).
       migrate: (persistedState: unknown, fromVersion: number) => {
         const state = (persistedState as Partial<AuthState>) || {};
-        if (fromVersion < 2) {
+        if (fromVersion < 3) {
           return {
             ...state,
             namingConventions: DEFAULT_NAMING_CONVENTIONS,

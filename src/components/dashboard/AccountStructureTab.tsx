@@ -7,7 +7,6 @@ import NamingConventionAudit from "./audits/NamingConventionAudit";
 import FunnelSeparationAudit from "./audits/FunnelSeparationAudit";
 import BudgetAllocationAudit from "./audits/BudgetAllocationAudit";
 import LearningPhaseAudit from "./audits/LearningPhaseAudit";
-import CampaignObjectiveAudit from "./audits/CampaignObjectiveAudit";
 import AboCboAudit from "./audits/AboCboAudit";
 
 interface Props {
@@ -19,14 +18,13 @@ interface Props {
   setActiveTab: (id: string) => void;
 }
 
-type SubTab = "naming" | "funnel-sep" | "budget" | "learning" | "objective" | "abo-cbo";
+type SubTab = "naming" | "funnel-sep" | "budget" | "learning" | "abo-cbo";
 
 const SUB_TABS: Array<{ id: SubTab; label: string; description: string }> = [
   { id: "naming", label: "Naming Convention", description: "Standardized naming Pass/Fail" },
   { id: "funnel-sep", label: "Funnel Separation", description: "TOF/MOF/BOF segmentation" },
   { id: "budget", label: "Budget Allocation", description: "Budget fragmentation %" },
   { id: "learning", label: "Learning Phase", description: "Learning-limited campaigns" },
-  { id: "objective", label: "Campaign Objective", description: "Objective mismatch detection" },
   { id: "abo-cbo", label: "ABO vs CBO", description: "Correct structure usage" },
 ];
 
@@ -104,7 +102,7 @@ export default function AccountStructureTab({ platform, dateRange, customStart, 
     return campaigns.filter((c) => objectiveMatches(c.objective, selectedObjectives));
   }, [campaigns, selectedObjectives]);
 
-  const auditProps = { campaigns: filteredCampaigns, loading, platform, accountTotal: campaigns.length };
+  const auditProps = { campaigns: filteredCampaigns, loading, platform, accountTotal: campaigns.length, dateRange, customStart, customEnd };
 
   return (
     <div className="space-y-6">
@@ -142,7 +140,6 @@ export default function AccountStructureTab({ platform, dateRange, customStart, 
       {active === "funnel-sep" && <FunnelSeparationAudit {...auditProps} />}
       {active === "budget" && <BudgetAllocationAudit {...auditProps} />}
       {active === "learning" && <LearningPhaseAudit {...auditProps} />}
-      {active === "objective" && <CampaignObjectiveAudit {...auditProps} />}
       {active === "abo-cbo" && <AboCboAudit {...auditProps} />}
     </div>
   );

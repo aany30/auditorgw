@@ -120,6 +120,16 @@ export function getDemoMetaAudit(pixelId: string): MetaPixelStats {
       ],
       brokenAttributionChains: 240,
     },
+    config: {
+      createdAt: "2024-01-15T10:00:00Z",
+      dataUseSetting: "ADVERTISING_AND_ANALYTICS",
+      automaticMatchingEnabled: true,
+      automaticMatchingFields: ["em", "ph", "fn", "ln", "ct", "st", "zp"],
+      ownerBusiness: { id: "demo-business-001", name: "Demo Business" },
+      isConsolidatedContainer: false,
+      isUnavailable: false,
+      lastFiredTime: new Date(Date.now() - 15 * 60000).toISOString(),
+    },
   };
 }
 

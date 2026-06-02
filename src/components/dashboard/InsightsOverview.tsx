@@ -1,4 +1,4 @@
-import { Bot, AlertTriangle, Lightbulb } from "lucide-react";
+import { Bot, Lightbulb } from "lucide-react";
 import SectionOverview from "./SectionOverview";
 import { useAudit } from "@/hooks/useAudit";
 import type { DateRange } from "@/components/shared/DateRangePicker";
@@ -15,14 +15,11 @@ export default function InsightsOverview({ platform, dateRange, customStart, cus
   const { meta, google } = useAudit(platform, dateRange, customStart, customEnd);
 
   const recommendations = (meta?.recommendations?.length || 0) + (google?.recommendations?.length || 0);
-  const critical =
-    (meta?.recommendations?.filter((r) => r.priority === "Critical").length || 0) +
-    (google?.recommendations?.filter((r) => r.priority === "Critical").length || 0);
 
   return (
     <SectionOverview
       title="Insights"
-      description="AI-prioritised recommendations and active alerts across your accounts"
+      description="AI-prioritised recommendations from real account data"
       Icon={Lightbulb}
       onTileClick={setActiveTab}
       tiles={[
@@ -33,14 +30,6 @@ export default function InsightsOverview({ platform, dateRange, customStart, cus
           Icon: Bot,
           metric: { label: "Open recommendations", value: recommendations },
           tone: recommendations === 0 ? "good" : "warn",
-        },
-        {
-          id: "alerts",
-          label: "Alert Center",
-          description: "Active alerts requiring immediate attention",
-          Icon: AlertTriangle,
-          metric: { label: "Critical alerts", value: critical },
-          tone: critical === 0 ? "good" : "bad",
         },
       ]}
     />

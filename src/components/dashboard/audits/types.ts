@@ -11,6 +11,13 @@ export interface AuditProps {
    * the filtered subset. Falls back to `campaigns.length` when omitted.
    */
   accountTotal?: number;
+  /** Current dashboard date range — forwarded to sub-components (e.g. charts)
+   *  so they can auto-switch to "window" basis when the date changes. */
+  dateRange?: string;
+  /** Custom range start (ISO yyyy-mm-dd). Set only when dateRange === "custom". */
+  customStart?: string;
+  /** Custom range end (ISO yyyy-mm-dd). Set only when dateRange === "custom". */
+  customEnd?: string;
 }
 
 /** Account-level snapshot sent to the AI for fix recommendations. */

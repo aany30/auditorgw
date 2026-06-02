@@ -3,9 +3,15 @@ import { useAuthStore } from "@/store/auth";
 import type { CampaignData } from "@/types";
 import { objectiveMatches } from "../CampaignObjectiveFilter";
 import { TermText } from "@/components/shared/Term";
+import { rangeToDates } from "@/lib/date-range";
 
 interface Props {
   platform: "meta" | "google" | "both";
+  /** Dashboard date range — forwarded to /api/naming/campaigns so insights
+   * window matches the date picker. Default "30d" if omitted. */
+  dateRange?: string;
+  customStart?: string;
+  customEnd?: string;
   selectedObjectives: Set<string>;
   title: string;
   description: string;
@@ -22,6 +28,9 @@ interface Props {
 
 export default function AuditTabShell({
   platform,
+  dateRange = "30d",
+  customStart,
+  customEnd,
   selectedObjectives,
   title,
   description,
@@ -46,12 +55,13 @@ export default function AuditTabShell({
     const fetchCampaigns = async () => {
       setLoading(true);
       const all: CampaignData[] = [];
+      const { startDate, endDate } = rangeToDates(dateRange, customStart, customEnd);
       try {
         if ((platform === "meta" || platform === "both") && metaAccessToken && metaBusinessId) {
           const r = await fetch("/api/naming/campaigns/meta", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ accessToken: metaAccessToken, businessId: metaBusinessId }),
+            body: JSON.stringify({ accessToken: metaAccessToken, businessId: metaBusinessId, startDate, endDate }),
           });
           if (r.ok) all.push(...(await r.json()));
         }
@@ -69,6 +79,8 @@ export default function AuditTabShell({
               customerId: googleCustomerId,
               developerToken: googleAdsDeveloperToken,
               loginCustomerId: googleAdsLoginCustomerId || googleCustomerId,
+              startDate,
+              endDate,
             }),
           });
           if (r.ok) all.push(...(await r.json()));
@@ -88,6 +100,9 @@ export default function AuditTabShell({
     };
   }, [
     platform,
+    dateRange,
+    customStart,
+    customEnd,
     metaAccessToken,
     metaBusinessId,
     googleAccessToken,

@@ -4,7 +4,7 @@ import { validateCampaignName, MISSING_FAIL_THRESHOLD } from "@/lib/naming/valid
 import { previewCampaignName } from "@/lib/naming/generator";
 import { suggestCorrectedName } from "@/lib/naming/suggester";
 import { KpiCard, AuditCard, StatusBadge } from "./AuditCard";
-import { CheckCircle2, Copy, Wand2, ChevronUp, ChevronDown } from "lucide-react";
+import { CheckCircle2, Copy, Wand2, ChevronUp, ChevronDown, ChevronRight } from "lucide-react";
 import { buildAccountContext, type AuditProps } from "./types";
 import type { CampaignData } from "@/types";
 
@@ -17,12 +17,63 @@ export default function NamingConventionAudit({ campaigns }: AuditProps) {
 
   const [filter, setFilter] = useState<FilterStatus>("all");
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  // Which campaign's ad-sets/ads are drilled open (separate from the fix editor)
+  const [drillOpen, setDrillOpen] = useState<Set<string>>(new Set());
+  const toggleDrill = (id: string) => setDrillOpen((s) => {
+    const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n;
+  });
   const [editorValues, setEditorValues] = useState<Record<string, string>>({});
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   /** Rename state per row: idle | loading | success | { error } */
   const [renameStatus, setRenameStatus] = useState<
     Record<string, "loading" | "success" | { error: string } | undefined>
   >({});
+
+  // ---------- Child rename (ad sets + ads) ----------
+  // Keyed by Meta object id. Tracks: which child the user is currently editing,
+  // the draft new-name string, and per-id rename status. Lets the user rename
+  // ad sets and ads with a small inline editor below each campaign's editor.
+  const [childDraft, setChildDraft] = useState<Record<string, string>>({});
+  const [childEditing, setChildEditing] = useState<string | null>(null);
+  const [childStatus, setChildStatus] = useState<
+    Record<string, "loading" | "success" | { error: string } | undefined>
+  >({});
+
+  const handleChildRename = async (nodeId: string, currentName: string) => {
+    const newName = (childDraft[nodeId] ?? currentName).trim();
+    if (!newName) {
+      setChildStatus((s) => ({ ...s, [nodeId]: { error: "Name cannot be empty" } }));
+      return;
+    }
+    if (newName === currentName) {
+      setChildEditing(null);
+      return;
+    }
+    setChildStatus((s) => ({ ...s, [nodeId]: "loading" }));
+    try {
+      const r = await fetch("/api/naming/rename/meta", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accessToken: metaAccessToken, nodeId, newName }),
+      });
+      const data = await r.json();
+      if (r.ok && data.success) {
+        setChildStatus((s) => ({ ...s, [nodeId]: "success" }));
+        setChildEditing(null);
+        setTimeout(() => setChildStatus((s) => {
+          const { [nodeId]: _, ...rest } = s;
+          return rest;
+        }), 3000);
+      } else {
+        setChildStatus((s) => ({ ...s, [nodeId]: { error: data.error || `HTTP ${r.status}` } }));
+      }
+    } catch (e) {
+      setChildStatus((s) => ({
+        ...s,
+        [nodeId]: { error: e instanceof Error ? e.message : "Network error" },
+      }));
+    }
+  };
 
   // Validate every campaign once
   const results = useMemo(() => {
@@ -216,12 +267,13 @@ export default function NamingConventionAudit({ campaigns }: AuditProps) {
         ))}
       </div>
 
-      <AuditCard title="Naming Convention" description="Standardized naming pass/fail per campaign">
+      <AuditCard title="Naming Convention" description="Standardized naming pass/fail per campaign · click ▶ to expand ad sets and ads">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
-                <th className="px-4 py-2 text-left font-semibold text-gray-700">Campaign Name</th>
+                <th className="px-4 py-2 w-6"></th>
+                <th className="px-4 py-2 text-left font-semibold text-gray-700">Campaign / Ad Set / Ad</th>
                 <th className="px-4 py-2 text-left font-semibold text-gray-700">Platform</th>
                 <th className="px-4 py-2 text-center font-semibold text-gray-700">Missing</th>
                 <th className="px-4 py-2 text-center font-semibold text-gray-700">Status</th>
@@ -235,17 +287,44 @@ export default function NamingConventionAudit({ campaigns }: AuditProps) {
                     No campaigns to show.
                   </td>
                 </tr>
-              ) : (
-                filtered.map(({ campaign, result }) => {
+              ) : (() => {
+                // Split into Meta vs Google groups, render with platform header rows
+                const metaRows = filtered.filter(({ campaign }) => campaign.platform === "meta");
+                const googleRows = filtered.filter(({ campaign }) => campaign.platform === "google");
+
+                const PLATFORM_OPTIONS: Record<"meta" | "google", string[]> = {
+                  meta: ["Meta", "Facebook", "Instagram"],
+                  google: ["Google SEM", "Google Display", "YouTube", "DV360"],
+                };
+
+                const renderRow = ({ campaign, result }: typeof filtered[0], platformKey: "meta" | "google") => {
                   const key = rowKey(campaign);
                   const isFail = result.status === "non-compliant";
                   const isOpen = expandedId === key;
                   const editor = getEditor(key);
-                  const previewedName = isOpen ? previewCampaignName(editor, convention) : "";
+                  // Build patched convention with platform-specific options FIRST
+                  const patchedConvention = {
+                    ...convention,
+                    rules: convention.rules.map((r) =>
+                      r.id === "platform"
+                        ? { ...r, examples: PLATFORM_OPTIONS[platformKey] }
+                        : r
+                    ),
+                  };
+                  const previewedName = isOpen ? previewCampaignName(editor, patchedConvention) : "";
 
+                  const isDrillOpen = drillOpen.has(campaign.id);
+                  const hasChildren = (campaign.adSets?.length ?? 0) > 0;
                   return (
                     <React.Fragment key={key}>
                       <tr className="border-b border-gray-100 hover:bg-gray-50">
+                        <td className="px-2 py-2.5 text-center">
+                          {hasChildren ? (
+                            <button onClick={() => toggleDrill(campaign.id)} className="text-gray-400 hover:text-gray-700">
+                              {isDrillOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                            </button>
+                          ) : <span className="w-3.5 h-3.5 inline-block" />}
+                        </td>
                         <td className="px-4 py-2.5 font-mono text-gray-900 truncate max-w-md">
                           {campaign.name}
                         </td>
@@ -288,7 +367,7 @@ export default function NamingConventionAudit({ campaigns }: AuditProps) {
                               </div>
 
                               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                                {convention.rules.map((rule) => {
+                                {patchedConvention.rules.map((rule) => {
                                   const isSelect = rule.inputType === "select" && rule.examples && rule.examples.length > 0;
                                   return (
                                     <div key={rule.id}>
@@ -386,18 +465,230 @@ export default function NamingConventionAudit({ campaigns }: AuditProps) {
                                   ✗ {(renameStatus[key] as { error: string }).error}
                                 </div>
                               )}
+
+                              {/* Ad sets + ads under this campaign (Meta only) — each row
+                                  inline-renameable via the same /api/naming/rename/meta endpoint. */}
+                              {campaign.platform === "meta" && (campaign.adSets?.length ?? 0) > 0 && (
+                                <div className="pt-3 mt-2 border-t border-gray-200">
+                                  <div className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
+                                    Ad sets & ads — click any to rename
+                                  </div>
+                                  <div className="space-y-2">
+                                    {campaign.adSets!.map((adSet) => (
+                                      <div key={adSet.id} className="bg-white border border-gray-200 rounded-lg p-3">
+                                        <ChildRow
+                                          id={adSet.id}
+                                          name={adSet.name}
+                                          status={adSet.status}
+                                          type="ad-set"
+                                          editing={childEditing === adSet.id}
+                                          draft={childDraft[adSet.id]}
+                                          renameStatus={childStatus[adSet.id]}
+                                          onEdit={() => { setChildEditing(adSet.id); setChildDraft((d) => ({ ...d, [adSet.id]: adSet.name })); }}
+                                          onCancel={() => setChildEditing(null)}
+                                          onChange={(v) => setChildDraft((d) => ({ ...d, [adSet.id]: v }))}
+                                          onSave={() => handleChildRename(adSet.id, adSet.name)}
+                                        />
+                                        {adSet.ads.length > 0 && (
+                                          <div className="ml-4 mt-2 pl-3 border-l-2 border-gray-200 space-y-1.5">
+                                            {adSet.ads.map((ad) => (
+                                              <ChildRow
+                                                key={ad.id}
+                                                id={ad.id}
+                                                name={ad.name}
+                                                status={ad.status}
+                                                type="ad"
+                                                editing={childEditing === ad.id}
+                                                draft={childDraft[ad.id]}
+                                                renameStatus={childStatus[ad.id]}
+                                                onEdit={() => { setChildEditing(ad.id); setChildDraft((d) => ({ ...d, [ad.id]: ad.name })); }}
+                                                onCancel={() => setChildEditing(null)}
+                                                onChange={(v) => setChildDraft((d) => ({ ...d, [ad.id]: v }))}
+                                                onSave={() => handleChildRename(ad.id, ad.name)}
+                                              />
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           </td>
                         </tr>
                       )}
+
+                      {/* AS / AD inline drill — shown when ▶ is expanded */}
+                      {isDrillOpen && hasChildren && campaign.adSets!.map((as) => (
+                        <React.Fragment key={`as-${as.id}`}>
+                          <tr className="bg-blue-50 border-b border-blue-100">
+                            <td className="px-2 py-1.5 text-center">
+                              <span className="text-[9px] font-bold bg-blue-200 text-blue-800 px-1.5 py-0.5 rounded">AS</span>
+                            </td>
+                            <td className="pl-8 pr-4 py-1.5 font-mono text-[12px] text-gray-800 truncate max-w-md" colSpan={3}>
+                              {as.name}
+                            </td>
+                            <td className="px-4 py-1.5 text-center">
+                              <span className="text-[10px] text-gray-400 uppercase">{as.status}</span>
+                            </td>
+                            <td className="px-4 py-1.5 text-right">
+                              <ChildRenameInline id={as.id} name={as.name} accessToken={metaAccessToken} />
+                            </td>
+                          </tr>
+                          {as.ads.map((ad) => (
+                            <tr key={`ad-${ad.id}`} className="bg-pink-50 border-b border-pink-100">
+                              <td className="px-2 py-1.5 text-center">
+                                <span className="text-[9px] font-bold bg-pink-200 text-pink-800 px-1.5 py-0.5 rounded">AD</span>
+                              </td>
+                              <td className="pl-14 pr-4 py-1.5 font-mono text-[11px] text-gray-700 truncate max-w-md" colSpan={3}>
+                                {ad.name}
+                              </td>
+                              <td className="px-4 py-1.5 text-center">
+                                <span className="text-[10px] text-gray-400 uppercase">{ad.status}</span>
+                              </td>
+                              <td className="px-4 py-1.5 text-right">
+                                <ChildRenameInline id={ad.id} name={ad.name} accessToken={metaAccessToken} />
+                              </td>
+                            </tr>
+                          ))}
+                        </React.Fragment>
+                      ))}
                     </React.Fragment>
                   );
-                })
-              )}
+                }; // end renderRow
+
+                const PlatformHeader = ({ platform, count }: { platform: string; count: number }) => (
+                  <tr className="bg-gray-100 border-b border-gray-300">
+                    <td colSpan={6} className="px-4 py-2 font-bold text-sm text-gray-800 flex items-center gap-2">
+                      <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${platform === "meta" ? "bg-blue-100 text-blue-800" : "bg-green-100 text-green-800"}`}>
+                        {platform === "meta" ? "Meta" : "Google"}
+                      </span>
+                      <span>{platform === "meta" ? "Meta Ads" : "Google Ads"}</span>
+                      <span className="text-xs font-normal text-gray-500 ml-1">({count} campaign{count !== 1 ? "s" : ""})</span>
+                    </td>
+                  </tr>
+                );
+
+                return (
+                  <>
+                    {metaRows.length > 0 && (
+                      <>
+                        <PlatformHeader platform="meta" count={metaRows.length} />
+                        {metaRows.map((row) => renderRow(row, "meta"))}
+                      </>
+                    )}
+                    {googleRows.length > 0 && (
+                      <>
+                        <PlatformHeader platform="google" count={googleRows.length} />
+                        {googleRows.map((row) => renderRow(row, "google"))}
+                      </>
+                    )}
+                  </>
+                );
+              })()}
             </tbody>
           </table>
         </div>
       </AuditCard>
     </div>
+  );
+}
+
+// ---------- ChildRow: inline-rename UI for an ad set or ad ----------
+interface ChildRowProps {
+  id: string;
+  name: string;
+  status: string;
+  type: "ad-set" | "ad";
+  editing: boolean;
+  draft: string | undefined;
+  renameStatus: "loading" | "success" | { error: string } | undefined;
+  onEdit: () => void;
+  onCancel: () => void;
+  onChange: (v: string) => void;
+  onSave: () => void;
+}
+
+function ChildRow({ id, name, status, type, editing, draft, renameStatus, onEdit, onCancel, onChange, onSave }: ChildRowProps) {
+  const typeColor = type === "ad-set" ? "bg-purple-100 text-purple-700" : "bg-pink-100 text-pink-700";
+  const isError = typeof renameStatus === "object";
+  return (
+    <div>
+      <div className="flex items-center gap-2 text-xs">
+        <span className={`px-1.5 py-0.5 rounded font-semibold ${typeColor} shrink-0`}>{type === "ad-set" ? "Ad Set" : "Ad"}</span>
+        {editing ? (
+          <>
+            <input
+              type="text"
+              value={draft ?? name}
+              onChange={(e) => onChange(e.target.value)}
+              className="flex-1 px-2 py-1 border border-gray-300 rounded text-xs font-mono text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              autoFocus
+            />
+            <button
+              onClick={onSave}
+              disabled={renameStatus === "loading"}
+              className="px-2 py-1 rounded bg-blue-600 text-white font-semibold hover:bg-blue-700 disabled:opacity-50"
+            >
+              {renameStatus === "loading" ? "Saving…" : "Save"}
+            </button>
+            <button onClick={onCancel} className="px-2 py-1 rounded bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200">
+              Cancel
+            </button>
+          </>
+        ) : (
+          <>
+            <span className="flex-1 font-mono text-gray-900 truncate" title={name}>{name}</span>
+            <span className="text-[10px] text-gray-400 uppercase">{status}</span>
+            <button
+              onClick={onEdit}
+              className="px-2 py-0.5 rounded bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200"
+            >
+              Rename
+            </button>
+          </>
+        )}
+      </div>
+      {renameStatus === "success" && (
+        <div className="ml-12 mt-1 text-[10px] text-green-700">✓ Renamed in Meta Ads Manager (id {id})</div>
+      )}
+      {isError && (
+        <div className="ml-12 mt-1 text-[10px] text-red-700">✗ {(renameStatus as { error: string }).error}</div>
+      )}
+    </div>
+  );
+}
+
+// Minimal inline rename for AS/AD rows inside the naming table.
+function ChildRenameInline({ id, name, accessToken }: { id: string; name: string; accessToken: string | null }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(name);
+  const [status, setStatus] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const save = async () => {
+    if (!draft.trim() || draft === name || !accessToken) { setEditing(false); return; }
+    setStatus("loading");
+    try {
+      const r = await fetch("/api/naming/rename/meta", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accessToken, nodeId: id, newName: draft }),
+      });
+      const d = await r.json();
+      if (r.ok && d.success) { setStatus("done"); setEditing(false); setTimeout(() => setStatus("idle"), 3000); }
+      else { setStatus("error"); }
+    } catch { setStatus("error"); }
+  };
+  if (editing) return (
+    <span className="inline-flex items-center gap-1">
+      <input value={draft} onChange={(e) => setDraft(e.target.value)} className="px-1.5 py-0.5 border border-gray-300 rounded text-[11px] font-mono w-40 focus:outline-none focus:ring-1 focus:ring-blue-500" autoFocus />
+      <button onClick={save} disabled={status === "loading"} className="px-1.5 py-0.5 rounded bg-blue-600 text-white text-[10px] font-bold hover:bg-blue-700 disabled:opacity-50">{status === "loading" ? "…" : "✓"}</button>
+      <button onClick={() => setEditing(false)} className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-700 text-[10px] font-bold hover:bg-gray-200">✗</button>
+    </span>
+  );
+  return (
+    <span className="inline-flex items-center gap-1">
+      {status === "done" && <span className="text-[10px] text-green-700">✓</span>}
+      <button onClick={() => { setDraft(name); setEditing(true); }} className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-700 text-[10px] font-semibold hover:bg-gray-200">Rename</button>
+    </span>
   );
 }

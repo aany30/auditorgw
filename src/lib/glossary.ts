@@ -354,6 +354,68 @@ export const GLOSSARY: Record<string, TermDef> = {
     short: "Call to Action",
     long: "The button or instruction telling users what to do next — Shop Now, Sign Up, Learn More. The CTA you pick on the ad changes downstream behaviour.",
   },
+
+  // ----- Match keys, attribution, iOS / privacy hygiene -----
+  "Match-Key Coverage": {
+    short: "% of events carrying customer-matching data",
+    long: "What share of your events include match keys (hashed email, phone, fbp/fbc, external ID, IP, user-agent). Higher coverage = better attribution. This is the real input to Meta's EMQ scoring.",
+  },
+  "Match Key Coverage": {
+    short: "% of events carrying customer-matching data",
+    long: "What share of your events include match keys (hashed email, phone, fbp/fbc, external ID, IP, user-agent). Higher coverage = better attribution. This is the real input to Meta's EMQ scoring.",
+  },
+  "Attribution Window": {
+    short: "How long after seeing an ad a conversion counts",
+    long: "The time period within which a conversion is credited to an ad click or view — e.g. 7-day click + 1-day view. Shorter windows undercount lagging conversions; longer ones overstate ad influence.",
+  },
+  "Attribution Window Coverage": {
+    short: "Conversions captured within the chosen window",
+    long: "What % of post-ad conversions actually fall inside your configured attribution window. Low coverage means many conversions happen too late to be credited — consider lengthening the window or improving CAPI.",
+  },
+  "Attribution Settings": {
+    short: "Conversion window + model",
+    long: "Where you choose how long after a click/view a conversion gets credited to the ad. Meta default: 7-day click. Affects everything downstream — ROAS, CPA, optimization signal.",
+  },
+  "Reported Conversions": {
+    short: "Conversions the platform can attribute",
+    long: "The subset of your total conversions that Meta/Google was actually able to tie back to ad clicks or views (browser pixel + CAPI + AEM). Differs from your real total purchases due to tracking loss, iOS, and ad blockers.",
+  },
+  "iOS Conversions": {
+    short: "Conversions from Apple devices",
+    long: "Purchases / sign-ups that came from iOS users. Heavily affected by Apple's ATT prompt and SKAdNetwork limits — without proper CAPI + AEM setup, 30–50% of iOS conversions are typically lost to attribution.",
+  },
+  "Aggregated Event Measurement": {
+    short: "Meta's iOS conversion framework",
+    long: "Meta's privacy-safe framework for measuring iOS web conversions post-iOS-14.5. You're capped at 8 conversion events per domain, ranked by business priority — only the highest-priority event per user gets counted for iOS attribution.",
+  },
+  "Domain Verification": {
+    short: "Proof you own the domain",
+    long: "Adding a TXT or HTML-meta record to your website's DNS that proves ownership to Meta Business. Required before you can configure AEM (8 priority events) and serve iOS ads pointing to that domain.",
+  },
+  "Priority Event Configuration": {
+    short: "Ranking your top 8 conversion events for iOS",
+    long: "Meta's AEM forces you to pick 8 events per verified domain and rank them by importance. For iOS users who didn't consent to tracking, only the highest-priority event they triggered gets counted. Misconfigured priorities = lost iOS attribution.",
+  },
+  "iOS Tracking": {
+    short: "Conversion tracking on Apple devices",
+    long: "How ad platforms see conversions from iOS users post-iOS-14.5. Governed by Apple's ATT prompt and SKAdNetwork. Requires opting into Meta's AEM, Google's SKAN settings, and an ATT prompt that users actually accept.",
+  },
+  SKAdNetwork: {
+    short: "Apple's privacy-safe ad attribution",
+    long: "Apple's framework (currently SKAN 4) that returns aggregated, delayed conversion data to ad platforms without exposing user IDs. The only iOS attribution signal for users who deny the ATT prompt.",
+  },
+  SKAN: {
+    short: "SKAdNetwork — Apple's iOS attribution",
+    long: "Short for SKAdNetwork. Apple's privacy-safe iOS attribution system that returns aggregated conversion data with no user-level detail. SKAN 4 added richer (but still delayed) postbacks.",
+  },
+  "ATT prompt": {
+    short: "Apple's tracking-permission popup",
+    long: "The iOS dialog asking 'Allow [App] to track your activity across other apps and websites?' Accepting unlocks IDFA-based tracking; declining (~75% of users) drops attribution down to SKAdNetwork only.",
+  },
+  "EU GDPR Compliance": {
+    short: "Consent + data-handling for EU traffic",
+    long: "Whether your tracking setup honours EU privacy law — explicit consent before firing pixels, Consent Mode v2 in GTM, data-retention controls. Non-compliance: fines AND loss of tracking signal for non-consented users.",
+  },
 };
 
 /** Sorted list of glossary keys for regex matching — longest first to avoid prefix overlap. */

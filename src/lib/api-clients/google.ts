@@ -466,7 +466,11 @@ export class GoogleApiClient {
   /**
    * List all campaigns under a Google Ads customer
    */
-  async listCampaigns(customerId: string): Promise<Array<{
+  async listCampaigns(
+    customerId: string,
+    startDate?: string,
+    endDate?: string
+  ): Promise<Array<{
     id: string;
     name: string;
     status: string;
@@ -483,8 +487,12 @@ export class GoogleApiClient {
   }> | null> {
     try {
       const cid = customerId.replace(/-/g, "");
-      // Use LAST_30_DAYS segment so metrics align with the dashboard's default window.
-      // Aggregate by campaign — one row per campaign with summed metrics.
+      // Use explicit date range when provided so the picker reaches the metrics
+      // segment; otherwise fall back to LAST_30_DAYS.
+      const dateClause =
+        startDate && endDate
+          ? `segments.date BETWEEN '${startDate}' AND '${endDate}'`
+          : "segments.date DURING LAST_30_DAYS";
       const query =
         "SELECT campaign.id, campaign.name, campaign.status, campaign.creation_date_time, " +
         "campaign_budget.amount_micros, customer.currency_code, " +
@@ -492,7 +500,7 @@ export class GoogleApiClient {
         "metrics.conversions, metrics.conversions_value, " +
         "metrics.search_impression_share " +
         "FROM campaign " +
-        "WHERE segments.date DURING LAST_30_DAYS " +
+        `WHERE ${dateClause} ` +
         "ORDER BY campaign.creation_date_time DESC " +
         "LIMIT 100";
 

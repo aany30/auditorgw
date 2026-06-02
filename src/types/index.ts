@@ -137,6 +137,8 @@ export interface CampaignData {
   status: string;
   platform: "meta" | "google";
   createdTime?: string;
+  /** ISO timestamp of the last significant edit (Meta `updated_time`). Used to estimate learning-phase triggers. */
+  updatedTime?: string;
   /** Campaign end / stop time (ISO). Null/undefined means ongoing. */
   endTime?: string;
   /** Budget + spend fields (optional — populated when Insights data is available). */
@@ -151,6 +153,42 @@ export interface CampaignData {
   impressionShare?: number;
   /** ISO currency code: "USD", "INR", etc. */
   currency?: string;
+  /**
+   * Ad sets nested under the campaign, each with its child ads — used by the
+   * Naming audit to let users rename ad sets and ads alongside campaigns.
+   * Only populated for Meta currently.
+   */
+  adSets?: Array<AdSetData>;
+}
+
+export interface AdData {
+  id: string;
+  name: string;
+  status: string;
+}
+
+export interface AdSetData {
+  id: string;
+  name: string;
+  status: string;
+  /** Per-ad-set metrics (populated for Meta when insights are returned). */
+  spend?: number;
+  impressions?: number;
+  clicks?: number;
+  /** Real Meta learning-phase status (LEARNING / LEARNING_LIMITED / SUCCESS).
+   * Populated only for Meta ad sets via `learning_stage_info` field. */
+  learningStatus?: "LEARNING" | "LEARNING_LIMITED" | "SUCCESS" | string;
+  /** Unix timestamp of the last significant edit that restarted learning. */
+  lastSigEditTs?: number;
+  /** The exact event Meta counts toward the 50-event learning threshold
+   * (OFFSITE_CONVERSIONS, LEAD_GENERATION, LINK_CLICKS, APP_INSTALLS, …). */
+  optimizationGoal?: string;
+  /** Bid strategy on the ad set (LOWEST_COST_WITHOUT_CAP / COST_CAP / BID_CAP /
+   * LOWEST_COST_WITH_BID_CAP). Tells whether a manual cap is constraining delivery. */
+  bidStrategy?: string;
+  /** Bid/cost cap value, in account currency major units (divided by 100). */
+  bidAmount?: number;
+  ads: AdData[];
 }
 
 export interface AdSetData {

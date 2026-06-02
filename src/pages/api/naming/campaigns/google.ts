@@ -12,7 +12,7 @@ export default async function handler(
     return;
   }
 
-  const { accessToken, customerId, developerToken, loginCustomerId } = req.body;
+  const { accessToken, customerId, developerToken, loginCustomerId, startDate, endDate } = req.body;
 
   if (!accessToken || !customerId || !developerToken) {
     res.status(400).json({ error: "Missing required credentials" });
@@ -30,7 +30,7 @@ export default async function handler(
       developerToken,
       loginCustomerId: loginCustomerId || customerId,
     });
-    const campaigns = await client.listCampaigns(customerId);
+    const campaigns = await client.listCampaigns(customerId, startDate, endDate);
     if (!campaigns || campaigns.length === 0) {
       res.status(200).json(getDemoGoogleCampaigns());
       return;

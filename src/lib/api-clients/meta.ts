@@ -16,6 +16,8 @@ export interface MetaPixelInfo {
   enable_automatic_matching?: boolean;
   automatic_matching_fields?: string[];
   creation_time?: string;
+  owner_business?: { id: string; name: string };
+  is_consolidated_container?: boolean;
 }
 
 export interface MetaPixelStats {
@@ -68,6 +70,17 @@ export interface MetaPixelStats {
     dataFreshnessMins: number;
     issues: Array<{ code: string; message: string; severity: "warning" | "error"; affectedEvent?: string }>;
     recentActivity: Array<{ time: string; event: string; type: string; status: string }>;
+  };
+  /** Pixel configuration — fetched from Meta's Graph API. */
+  config: {
+    createdAt?: string;
+    dataUseSetting: string;
+    automaticMatchingEnabled: boolean;
+    automaticMatchingFields: string[];
+    ownerBusiness?: { id: string; name: string };
+    isConsolidatedContainer?: boolean;
+    isUnavailable: boolean;
+    lastFiredTime?: string;
   };
   eventManager: {
     automaticMatchingEnabled: boolean;
@@ -131,6 +144,87 @@ export function detectAnomalies(eventBreakdown: MetaPixelStats["eventBreakdown"]
   return anomalies;
 }
 
+/**
+ * Convert an ISO date (YYYY-MM-DD) to a Unix timestamp (seconds).
+ * Meta's pixel `/stats` edge expects Unix timestamps, not ISO strings —
+ * passing ISO strings causes a few hours of window drift at day boundaries.
+ * `endOfDay` pushes to 23:59:59 so the `until` bound includes the full final day.
+ */
+function isoToUnix(iso: string, endOfDay = false): number {
+  const ms = endOfDay
+    ? new Date(`${iso}T23:59:59Z`).getTime()
+    : new Date(`${iso}T00:00:00Z`).getTime();
+  return Math.floor(ms / 1000);
+}
+
+/**
+ * Sum conversion events from a Meta Insights `actions` / `action_values` array,
+ * counting each underlying conversion ONCE.
+ *
+ * Meta reports the same conversion under multiple overlapping action_type
+ * aliases — e.g. `purchase` (unified/omni) AND `offsite_conversion.fb_pixel_purchase`
+ * (pixel-specific). Naively summing both double-counts. We prefer the unified
+ * type and only fall back to the pixel alias when the unified one is absent.
+ */
+function sumConversions(rows: Array<{ action_type: string; value: string }> | undefined): number | undefined {
+  if (!rows || rows.length === 0) return undefined;
+  const byType: Record<string, number> = {};
+  for (const r of rows) byType[r.action_type] = (byType[r.action_type] || 0) + (parseFloat(r.value) || 0);
+
+  // Each group: prefer the unified/preferred action_type, fall back to the
+  // alias only if the unified one is absent — prevents double-counting when
+  // Meta returns BOTH (e.g. `purchase` AND `offsite_conversion.fb_pixel_purchase`).
+  // Single-entry groups have no alias (the type itself is the only form).
+  //
+  // Covers the conversion objectives a real ad account is most likely set up
+  // around: e-commerce (purchase/subscribe/start_trial), lead-gen on-site
+  // (lead) and on-Meta (lead-form), registrations, app installs, and
+  // messaging-based businesses.
+  const groups: Array<[string, ...string[]]> = [
+    // E-commerce
+    ["purchase", "offsite_conversion.fb_pixel_purchase"],
+    ["subscribe", "offsite_conversion.fb_pixel_subscribe"],
+    ["start_trial", "offsite_conversion.fb_pixel_start_trial"],
+    // Lead-gen — off-site (website pixel) and on-Meta (instant lead forms)
+    ["lead", "offsite_conversion.fb_pixel_lead"],
+    ["onsite_conversion.lead_grouped"],
+    // Account creation
+    ["complete_registration", "offsite_conversion.fb_pixel_complete_registration"],
+    // App installs (unified vs older mobile alias)
+    ["app_install", "mobile_app_install"],
+    // Messaging-based conversions (WhatsApp / IG / Messenger ads)
+    ["onsite_conversion.messaging_conversation_started_7d"],
+    ["onsite_conversion.total_messaging_connection"],
+  ];
+  let total = 0;
+  let counted = false;
+  for (const group of groups) {
+    for (const t of group) {
+      if (byType[t] !== undefined) {
+        total += byType[t];
+        counted = true;
+        break; // first hit in a group wins → no double count
+      }
+    }
+  }
+  return counted ? total : undefined;
+}
+
+/**
+ * The attribution window we ask Meta to use when computing conversions /
+ * ROAS. Exported so the UI can display it explicitly (so users know exactly
+ * how the numbers were calculated and can compare against Ads Manager
+ * — which uses this same default unless the account overrides it).
+ */
+export const META_ATTRIBUTION_WINDOW = {
+  raw: ["7d_click", "1d_view"] as const,
+  /** Human-readable label shown alongside conversion/ROAS values in the UI. */
+  label: "7-day click + 1-day view",
+  /** Tooltip / explainer text. */
+  description:
+    "Conversions and ROAS are counted using Meta's Ads Manager default attribution window — a conversion is credited to an ad if a user clicked it within 7 days, or viewed it within 1 day, before converting.",
+};
+
 export class MetaApiClient {
   private accessToken: string;
 
@@ -151,66 +245,88 @@ export class MetaApiClient {
     return res.json();
   }
 
+  /**
+   * Fetch a fully-formed absolute URL (e.g. a Graph API `paging.next` link,
+   * which already includes the access token and all query params). Used to walk
+   * paginated Insights responses.
+   */
+  private async fetchAbsolute<T>(absoluteUrl: string): Promise<T> {
+    const res = await fetch(absoluteUrl);
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`Meta API ${res.status}: ${body.slice(0, 200)}`);
+    }
+    return res.json();
+  }
+
   async getPixelInfo(pixelId: string): Promise<MetaPixelInfo> {
     return this.fetch<MetaPixelInfo>(`/${pixelId}`, {
       fields:
         "id,name,is_unavailable,last_fired_time,data_use_setting," +
-        "enable_automatic_matching,automatic_matching_fields,creation_time",
+        "enable_automatic_matching,automatic_matching_fields,creation_time," +
+        "owner_business,is_consolidated_container",
     });
   }
 
   async getPixelStats(pixelId: string, since?: string, until?: string) {
     const params: Record<string, string> = { aggregation: "event" };
-    if (since) params.start_time = since;
-    if (until) params.end_time = until;
+    // Meta's /stats edge expects Unix timestamps; ISO strings drift at day edges.
+    if (since) params.start_time = String(isoToUnix(since));
+    if (until) params.end_time = String(isoToUnix(until, true));
     return this.fetch<{ data?: any[] }>(`/${pixelId}/stats`, params);
   }
 
-  async getCapiStats(pixelId: string) {
+  async getCapiStats(pixelId: string, since?: string, until?: string) {
     // `aggregation=event_source` returns the browser-vs-server (Pixel vs CAPI)
     // split: nested rows of { value: "BROWSER" | "SERVER", count }. The
     // `breakdowns=event_source` param is silently ignored by Meta — verified
-    // live via /api/debug/meta-capi.
-    return this.fetch<{ data?: any[] }>(`/${pixelId}/stats`, {
-      aggregation: "event_source",
-    });
+    // live via /api/debug/meta-capi. start_time/end_time scope it to the
+    // dashboard's selected date window so 7d ≠ 90d.
+    const params: Record<string, string> = { aggregation: "event_source" };
+    if (since) params.start_time = String(isoToUnix(since));
+    if (until) params.end_time = String(isoToUnix(until, true));
+    return this.fetch<{ data?: any[] }>(`/${pixelId}/stats`, params);
   }
 
   async getDiagnostics(pixelId: string) {
+    // Diagnostics are config-level errors — not time-scoped.
     return this.fetch<{ data?: any[] }>(`/${pixelId}/diagnostics`, {
       fields: "issue_type,description,severity,affected_event",
     });
   }
 
-  async getMatchKeyStats(pixelId: string) {
+  async getMatchKeyStats(pixelId: string, since?: string, until?: string) {
     // `aggregation=match_keys` returns REAL per-key coverage: nested rows of
     // { event, value: <keyName e.g. "em"|"external_id"|"fbp">, count } where
-    // count = events of that type that carried the key. Verified live.
-    return this.fetch<{ data?: any[] }>(`/${pixelId}/stats`, {
-      aggregation: "match_keys",
-    });
+    // count = events of that type that carried the key. Date-scoped so the
+    // match-key table reflects the selected window, not all-time.
+    const params: Record<string, string> = { aggregation: "match_keys" };
+    if (since) params.start_time = String(isoToUnix(since));
+    if (until) params.end_time = String(isoToUnix(until, true));
+    return this.fetch<{ data?: any[] }>(`/${pixelId}/stats`, params);
   }
 
-  async getPiiStats(pixelId: string) {
+  async getPiiStats(pixelId: string, since?: string, until?: string) {
     // `aggregation=had_pii` returns rows { event, value: "has_pii"|"not_has_pii", count }.
-    return this.fetch<{ data?: any[] }>(`/${pixelId}/stats`, {
-      aggregation: "had_pii",
-    });
+    const params: Record<string, string> = { aggregation: "had_pii" };
+    if (since) params.start_time = String(isoToUnix(since));
+    if (until) params.end_time = String(isoToUnix(until, true));
+    return this.fetch<{ data?: any[] }>(`/${pixelId}/stats`, params);
   }
 
   /**
    * Full audit — calls real Meta APIs in parallel.
    * Returns null if any required call fails — caller falls back to demo data.
    */
-  async getFullPixelAudit(pixelId: string): Promise<MetaPixelStats | null> {
+  async getFullPixelAudit(pixelId: string, startDate?: string, endDate?: string): Promise<MetaPixelStats | null> {
     try {
       const [info, stats, capiStats, diagnostics, matchKeyStats, piiStats] = await Promise.all([
         this.getPixelInfo(pixelId),
-        this.getPixelStats(pixelId),
-        this.getCapiStats(pixelId).catch(() => ({ data: [] })),
-        this.getDiagnostics(pixelId).catch(() => ({ data: [] })),
-        this.getMatchKeyStats(pixelId).catch(() => ({ data: [] })),
-        this.getPiiStats(pixelId).catch(() => ({ data: [] })),
+        this.getPixelStats(pixelId, startDate, endDate),
+        this.getCapiStats(pixelId, startDate, endDate).catch(() => ({ data: [] })),
+        this.getDiagnostics(pixelId).catch(() => ({ data: [] })),              // config errors — not time-scoped
+        this.getMatchKeyStats(pixelId, startDate, endDate).catch(() => ({ data: [] })),
+        this.getPiiStats(pixelId, startDate, endDate).catch(() => ({ data: [] })),
       ]);
 
       // Meta's pixel /stats returns TIME-BUCKETED rows, each with a NESTED
@@ -251,27 +367,25 @@ export class MetaApiClient {
       const serverShare = Math.round((serverCount / total) * 100);
 
       const eventBreakdown = (events as any[]).map((e) => {
-        // Use ONLY the values Meta actually returns. Do NOT fabricate
-        // healthy-looking defaults (e.g. 90% dedup / 7.0 EMQ) when a field is
-        // missing — that masks the fact that the Graph stats edge returns no
-        // dedup/CAPI data and makes an empty pixel look healthy. Missing = 0.
-        const dedup = e.deduplication_rate ?? 0;
-        const matchScore = e.matchRate ?? e.event_match_quality ?? 0;
+        // Only store what Meta's API actually returns — no synthetic calculations.
+        // Meta does NOT expose per-event browser/server breakdown via the /stats
+        // edge; browserCount and serverCount are set to 0 here. The real TOTAL
+        // browser/server split comes from capiStats (aggregation=event_source)
+        // and is shown in the KPI cards, not fabricated per-event.
         const count = e.count || 0;
-        const eBrowser = Math.round(count * (browserShare / 100 || 0.55));
         return {
           event: e.event_name,
           count,
-          browserCount: eBrowser,
-          serverCount: count - eBrowser,
-          dedupRate: dedup,
-          matchScore,
-          avgLatencyMs: e.avg_latency_ms ?? 0,
-          eventIdCoverage: e.event_id_coverage ?? 0,
-          payloadCompleteness: e.payload_completeness ?? 0,
-          duplicateRate: dedup > 0 ? 100 - dedup : 0,
-          last24hCount: e.last_24h_count ?? Math.round(count / 7),
-          baseline7dAvg: e.baseline_7d_avg ?? Math.round(count / 7),
+          browserCount: 0,  // Meta provides no per-event browser/server breakdown
+          serverCount: 0,   // Real totals are in capi.browserShare / serverShare
+          dedupRate: 0,
+          matchScore: 0,
+          avgLatencyMs: 0,
+          eventIdCoverage: 0,
+          payloadCompleteness: 0,
+          duplicateRate: 0,
+          last24hCount: 0,
+          baseline7dAvg: 0,
         };
       });
 
@@ -385,6 +499,16 @@ export class MetaApiClient {
           sequencingIssues,
           brokenAttributionChains: 0,
         },
+        config: {
+          createdAt: info.creation_time,
+          dataUseSetting: info.data_use_setting || "ADVERTISING_AND_ANALYTICS",
+          automaticMatchingEnabled: info.enable_automatic_matching || false,
+          automaticMatchingFields: info.automatic_matching_fields || [],
+          ownerBusiness: info.owner_business,
+          isConsolidatedContainer: info.is_consolidated_container,
+          isUnavailable: info.is_unavailable,
+          lastFiredTime: info.last_fired_time,
+        },
       };
     } catch {
       return null;
@@ -414,6 +538,15 @@ export class MetaApiClient {
     conversions?: number;
     conversionValue?: number;
     currency?: string;
+    adSets?: Array<{
+      id: string;
+      name: string;
+      status: string;
+      spend?: number;
+      impressions?: number;
+      clicks?: number;
+      ads: Array<{ id: string; name: string; status: string }>;
+    }>;
   }> | null> {
     try {
       // The user-provided ID can be either an Ad Account ID (more common — they
@@ -427,44 +560,45 @@ export class MetaApiClient {
         ? `act_${businessId}`
         : businessId;
 
-      // Use the caller-supplied date range when available; otherwise default to
-      // the last 30 days. Meta accepts either time_range({since,until}) or one
-      // of its named date_presets — we use time_range for absolute dates.
-      const insightsWindow =
-        startDate && endDate
-          ? `time_range({"since":"${startDate}","until":"${endDate}"})`
-          : "date_preset(last_30d)";
+      // Fetch in parallel:
+      //  1. /campaigns — STRUCTURE only (id/name/objective/status/budgets/adsets/ads).
+      //     No nested insights: Meta frequently ignores a `time_range` buried in a
+      //     nested field expansion and returns lifetime/default data → spend that
+      //     doesn't match Ads Manager. We get metrics from the dedicated edge below.
+      //  2. /insights?level=campaign — window-accurate per-campaign metrics, the
+      //     SAME source Ads Manager uses (top-level time_range, reliably honored).
+      //  3. /insights?level=adset — window-accurate per-ad-set metrics for the drill.
+      //  4. /{account}?fields=currency — the REAL account currency (INR/USD/…).
+      //     `account_currency` is NOT a field on campaign objects, so it must be
+      //     read from the ad account itself.
+      const [response, campaignInsights, adsetInsights, accountCurrency] = await Promise.all([
+        this.fetch<{ data?: any[] }>(`/${accountPath}/campaigns`, {
+          fields:
+            "id,name,objective,status,effective_status,created_time,updated_time,stop_time,daily_budget,lifetime_budget," +
+            // learning_stage_info is the REAL Meta field that exposes whether
+            // an ad set is in LEARNING / LEARNING_LIMITED / SUCCESS phase, plus
+            // the actual conversion count and last significant edit timestamp.
+            // 50 conversion events / 7 days is Meta's threshold to exit learning.
+            //
+            // optimization_goal = the exact event Meta counts toward the 50
+            // (OFFSITE_CONVERSIONS, LEAD_GENERATION, LINK_CLICKS, APP_INSTALLS, …).
+            // bid_strategy / bid_amount = whether a manual cost/bid cap is in
+            // place; used to diagnose "cap too restrictive" stuck-in-learning.
+            "adsets.limit(50){id,name,daily_budget,lifetime_budget,end_time,status,effective_status,updated_time,optimization_goal,bid_strategy,bid_amount,learning_stage_info{status,attribution_windows,last_sig_edit_ts}," +
+              "ads.limit(20){id,name,status,effective_status}}",
+          limit: "100",
+        }),
+        this.getCampaignInsights(accountPath, startDate, endDate),
+        this.getAdSetInsights(accountPath, startDate, endDate),
+        this.getAccountCurrency(accountPath),
+      ]);
 
-      // Graph API field expansion: pull campaign metadata + budgets + insights + ad-set
-      // budgets (fallback for CBO/ad-set-level budgets) + stop_time, all in one request.
-      const response = await this.fetch<{ data?: any[] }>(`/${accountPath}/campaigns`, {
-        fields:
-          "id,name,objective,status,created_time,stop_time,daily_budget,lifetime_budget,account_currency," +
-          "adsets.limit(50){daily_budget,lifetime_budget,end_time,status}," +
-          `insights.${insightsWindow}{spend,impressions,clicks,actions,action_values}`,
-        limit: "100",
-      });
+      const currency = accountCurrency || "USD";
 
       return (response.data || []).map((c: any) => {
-        const insight = c.insights?.data?.[0];
-        // Sum purchases / leads / completed registrations as conversions.
-        const conversionActionTypes = new Set([
-          "purchase",
-          "offsite_conversion.fb_pixel_purchase",
-          "complete_registration",
-          "lead",
-          "offsite_conversion.fb_pixel_lead",
-        ]);
-        const conversions = insight?.actions
-          ? insight.actions
-              .filter((a: any) => conversionActionTypes.has(a.action_type))
-              .reduce((sum: number, a: any) => sum + (parseFloat(a.value) || 0), 0)
-          : undefined;
-        const conversionValue = insight?.action_values
-          ? insight.action_values
-              .filter((a: any) => conversionActionTypes.has(a.action_type))
-              .reduce((sum: number, a: any) => sum + (parseFloat(a.value) || 0), 0)
-          : undefined;
+        const m = campaignInsights[String(c.id)];
+        const conversions = m?.conversions;
+        const conversionValue = m?.conversionValue;
 
         // Meta returns budgets in account currency *minor units* (cents). Divide by 100.
         // Campaign-level budget. May be null for CBO/ABO setups where the budget
@@ -500,6 +634,35 @@ export class MetaApiClient {
           }
         }
 
+        // Children for the naming audit: ad sets + their ads, name + status +
+        // per-ad-set insights (spend / impressions / clicks) so the drill view
+        // can show metrics at every level.
+        const adSets = adsets.map((a: any) => {
+          const asm = adsetInsights[String(a.id)];
+          // Meta's learning_stage_info: { status: "LEARNING" | "LEARNING_LIMITED"
+          // | "SUCCESS", last_sig_edit_ts: <unix ts of last significant edit
+          // that restarted the ~7-day learning window> }
+          const lsi = a.learning_stage_info || null;
+          return {
+            id: String(a.id),
+            name: String(a.name || ""),
+            status: String(a.status || a.effective_status || "UNKNOWN"),
+            spend: asm?.spend,
+            impressions: asm?.impressions,
+            clicks: asm?.clicks,
+            learningStatus: lsi?.status || undefined,
+            lastSigEditTs: lsi?.last_sig_edit_ts ? Number(lsi.last_sig_edit_ts) : undefined,
+            optimizationGoal: a.optimization_goal || undefined,
+            bidStrategy: a.bid_strategy || undefined,
+            bidAmount: a.bid_amount ? parseFloat(a.bid_amount) / 100 : undefined,
+            ads: (a.ads?.data || []).map((ad: any) => ({
+              id: String(ad.id),
+              name: String(ad.name || ""),
+              status: String(ad.status || ad.effective_status || "UNKNOWN"),
+            })),
+          };
+        });
+
         return {
           id: c.id,
           name: c.name,
@@ -507,15 +670,17 @@ export class MetaApiClient {
           status: c.status,
           platform: "meta" as const,
           createdTime: c.created_time,
+          updatedTime: c.updated_time,
           endTime,
           dailyBudget,
           lifetimeBudget,
-          spend: insight?.spend ? parseFloat(insight.spend) : undefined,
-          impressions: insight?.impressions ? parseInt(insight.impressions, 10) : undefined,
-          clicks: insight?.clicks ? parseInt(insight.clicks, 10) : undefined,
+          spend: m?.spend,
+          impressions: m?.impressions,
+          clicks: m?.clicks,
           conversions,
           conversionValue,
-          currency: c.account_currency || "USD",
+          currency,
+          adSets,
         };
       });
     } catch (e) {
@@ -523,6 +688,176 @@ export class MetaApiClient {
       // instead of swallowing it — the endpoint decides whether to fall back.
       throw e instanceof Error ? e : new Error(String(e));
     }
+  }
+
+  /**
+   * Fetch the ad account's ISO currency code (e.g. "INR", "USD").
+   * `account_currency` is NOT a field on campaign objects — it lives on the
+   * Ad Account node. Returns undefined on any error so the caller can fall back.
+   */
+  async getAccountCurrency(accountPath: string): Promise<string | undefined> {
+    try {
+      const res = await this.fetch<{ currency?: string }>(`/${accountPath}`, { fields: "currency" });
+      return res.currency || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * List the user's verified domains across all Businesses they have access to.
+   * Real Meta API: `/me/businesses?fields=verified_domains`. Domain verification
+   * is the prerequisite for Aggregated Event Measurement (AEM) and iOS 14.5+
+   * conversion attribution.
+   */
+  async getVerifiedDomains(): Promise<Array<{ businessId: string; businessName: string; domains: string[] }>> {
+    try {
+      const res = await this.fetch<{ data?: Array<{ id: string; name: string; verified_domains?: { data?: Array<{ domain: string }> } }> }>(
+        `/me/businesses`,
+        { fields: "id,name,verified_domains{domain}" }
+      );
+      return (res.data || []).map((b) => ({
+        businessId: b.id,
+        businessName: b.name,
+        domains: (b.verified_domains?.data || []).map((d) => d.domain),
+      }));
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Aggregated Event Measurement (AEM) priority event list per pixel. Real
+   * Meta API: `/{pixel_id}?fields=aggregated_event_configuration`. Returns
+   * the up-to-8 prioritised events used for iOS 14.5+ attribution.
+   * Returns empty array when the pixel has no AEM configured or when the
+   * field isn't accessible on this account/token.
+   */
+  async getAemConfig(pixelId: string): Promise<Array<{ event_name: string; priority: number }>> {
+    try {
+      const res = await this.fetch<{ aggregated_event_configuration?: { data?: Array<{ event_name: string; priority: number }> } }>(
+        `/${pixelId}`,
+        { fields: "aggregated_event_configuration" }
+      );
+      const data = res.aggregated_event_configuration?.data;
+      return Array.isArray(data) ? data : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Read the ad account's default attribution spec. Real Meta API:
+   * `act_<id>?fields=attribution_spec`. Tells us whether the account uses the
+   * platform default (7d click + 1d view) or has overridden to something else.
+   */
+  async getAccountAttributionSpec(accountPath: string): Promise<Array<{ event_type: string; window_days: number }> | null> {
+    try {
+      const res = await this.fetch<{ attribution_spec?: Array<{ event_type: string; window_days: number }> }>(
+        `/${accountPath}`,
+        { fields: "attribution_spec" }
+      );
+      return res.attribution_spec || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Window-accurate per-campaign metrics from the dedicated Insights edge.
+   *
+   * Unlike nested field-expansion insights (which Meta often returns for a
+   * default/lifetime window), the `/insights?level=campaign` edge with a
+   * TOP-LEVEL `time_range` is the same source Ads Manager uses and reliably
+   * honors the window. `action_attribution_windows=7d_click,1d_view` matches
+   * Ads Manager's default so conversions/ROAS line up.
+   *
+   * Returns a map keyed by campaign id. Follows paging defensively.
+   */
+  async getCampaignInsights(
+    accountPath: string,
+    startDate?: string,
+    endDate?: string
+  ): Promise<Record<string, { spend?: number; impressions?: number; clicks?: number; conversions?: number; conversionValue?: number }>> {
+    const out: Record<string, { spend?: number; impressions?: number; clicks?: number; conversions?: number; conversionValue?: number }> = {};
+    try {
+      const params: Record<string, string> = {
+        level: "campaign",
+        fields: "campaign_id,spend,impressions,clicks,actions,action_values",
+        action_attribution_windows: JSON.stringify(META_ATTRIBUTION_WINDOW.raw),
+        limit: "500",
+      };
+      if (startDate && endDate) params.time_range = `{"since":"${startDate}","until":"${endDate}"}`;
+      else params.date_preset = "last_30d";
+
+      let path: string | null = `/${accountPath}/insights`;
+      let nextParams: Record<string, string> | undefined = params;
+      // Walk paging.next defensively (campaign list is capped at 100, so usually one page).
+      for (let guard = 0; guard < 10 && path; guard++) {
+        const res: { data?: any[]; paging?: { next?: string } } = nextParams
+          ? await this.fetch<{ data?: any[]; paging?: { next?: string } }>(path, nextParams)
+          : await this.fetchAbsolute<{ data?: any[]; paging?: { next?: string } }>(path);
+        for (const row of res.data || []) {
+          const id = String(row.campaign_id);
+          out[id] = {
+            spend: row.spend !== undefined ? parseFloat(row.spend) : undefined,
+            impressions: row.impressions !== undefined ? parseInt(row.impressions, 10) : undefined,
+            clicks: row.clicks !== undefined ? parseInt(row.clicks, 10) : undefined,
+            conversions: sumConversions(row.actions),
+            conversionValue: sumConversions(row.action_values),
+          };
+        }
+        const next = res.paging?.next;
+        path = next || null;
+        nextParams = undefined; // subsequent pages use the absolute `next` URL verbatim
+      }
+    } catch {
+      // Degrade gracefully — campaigns render with undefined metrics ("—").
+    }
+    return out;
+  }
+
+  /**
+   * Window-accurate per-ad-set metrics from the Insights edge (`level=adset`).
+   * Used by the campaign drill-down. Returns a map keyed by ad-set id.
+   */
+  async getAdSetInsights(
+    accountPath: string,
+    startDate?: string,
+    endDate?: string
+  ): Promise<Record<string, { spend?: number; impressions?: number; clicks?: number }>> {
+    const out: Record<string, { spend?: number; impressions?: number; clicks?: number }> = {};
+    try {
+      const params: Record<string, string> = {
+        level: "adset",
+        fields: "adset_id,spend,impressions,clicks",
+        limit: "500",
+      };
+      if (startDate && endDate) params.time_range = `{"since":"${startDate}","until":"${endDate}"}`;
+      else params.date_preset = "last_30d";
+
+      let path: string | null = `/${accountPath}/insights`;
+      let nextParams: Record<string, string> | undefined = params;
+      for (let guard = 0; guard < 10 && path; guard++) {
+        const res: { data?: any[]; paging?: { next?: string } } = nextParams
+          ? await this.fetch<{ data?: any[]; paging?: { next?: string } }>(path, nextParams)
+          : await this.fetchAbsolute<{ data?: any[]; paging?: { next?: string } }>(path);
+        for (const row of res.data || []) {
+          const id = String(row.adset_id);
+          out[id] = {
+            spend: row.spend !== undefined ? parseFloat(row.spend) : undefined,
+            impressions: row.impressions !== undefined ? parseInt(row.impressions, 10) : undefined,
+            clicks: row.clicks !== undefined ? parseInt(row.clicks, 10) : undefined,
+          };
+        }
+        const next = res.paging?.next;
+        path = next || null;
+        nextParams = undefined;
+      }
+    } catch {
+      // Degrade gracefully.
+    }
+    return out;
   }
 
   /**
@@ -534,6 +869,160 @@ export class MetaApiClient {
    * any Graph API error (rate limit, missing scope, invalid name, etc.).
    * Never throws — wraps the failure so the UI can surface the error.
    */
+  /**
+   * Batch-fetch LIFETIME insights (date_preset=maximum) for a list of campaign
+   * IDs. Used by the Funnel-Separation drill-down to show paused campaigns'
+   * historical spend — i.e. "before it was paused, this campaign spent ₹X".
+   *
+   * Graph API supports multi-ID fetch via `?ids=id1,id2,id3&fields=...`,
+   * returning a map keyed by id. Single round-trip for any list size up to
+   * Graph's batch limit (~50 ids).
+   */
+  async getCampaignLifetimeMetrics(
+    ids: string[]
+  ): Promise<Record<string, { spend: number; impressions: number; clicks: number; dateStart?: string; dateStop?: string }>> {
+    if (!ids || ids.length === 0) return {};
+    // Chunk to be safe — Graph's `?ids=` cap varies but 50 is comfortably under.
+    const chunks: string[][] = [];
+    for (let i = 0; i < ids.length; i += 50) chunks.push(ids.slice(i, i + 50));
+    const out: Record<string, { spend: number; impressions: number; clicks: number; dateStart?: string; dateStop?: string }> = {};
+    for (const chunk of chunks) {
+      try {
+        const res = await this.fetch<Record<string, { insights?: { data?: any[] } }>>(
+          ``,
+          { ids: chunk.join(","), fields: "insights.date_preset(maximum){spend,impressions,clicks,date_start,date_stop}" }
+        );
+        for (const id of chunk) {
+          const node = (res as any)[id];
+          const insight = node?.insights?.data?.[0];
+          out[id] = {
+            spend: insight?.spend ? parseFloat(insight.spend) : 0,
+            impressions: insight?.impressions ? parseInt(insight.impressions, 10) : 0,
+            clicks: insight?.clicks ? parseInt(insight.clicks, 10) : 0,
+            dateStart: insight?.date_start,
+            dateStop: insight?.date_stop,
+          };
+        }
+      } catch (e) {
+        // Per chunk — if Graph rejects one chunk, fill with zeros so the caller
+        // can render "—" gracefully instead of bubbling an error.
+        for (const id of chunk) {
+          if (!out[id]) out[id] = { spend: 0, impressions: 0, clicks: 0 };
+        }
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Fetch per-day spend for the last 28 days for a list of campaign IDs.
+   * Returns a map of id → array of { date, spend } sorted oldest-first.
+   * Used by the Budget Allocation audit to compute calendar-day averages:
+   *   – last 7 calendar days  ÷ 7   = "Last 7 Days Avg"
+   *   – last 28 calendar days ÷ 28  = "Last 4 Weeks Avg"
+   *
+   * Meta's `time_increment(1)` on an insights edge returns one row per day.
+   * Zero-spend days are OMITTED from the response — callers must divide by
+   * the calendar-day count (not row count) to get an accurate average.
+   * Batched using the same `?ids=…` technique as `getCampaignLifetimeMetrics`.
+   */
+  async getCampaignDailySpendTrail(
+    ids: string[]
+  ): Promise<Record<string, Array<{ date: string; spend: number }>>> {
+    if (!ids || ids.length === 0) return {};
+    const chunks: string[][] = [];
+    for (let i = 0; i < ids.length; i += 50) chunks.push(ids.slice(i, i + 50));
+    const out: Record<string, Array<{ date: string; spend: number }>> = {};
+    for (const chunk of chunks) {
+      try {
+        const res = await this.fetch<Record<string, { insights?: { data?: any[] } }>>(
+          ``,
+          {
+            ids: chunk.join(","),
+            fields: "insights.date_preset(last_28d).time_increment(1){spend,date_start}",
+          }
+        );
+        for (const id of chunk) {
+          const node = (res as any)[id];
+          const rows: Array<{ date: string; spend: number }> = (node?.insights?.data || [])
+            .map((r: any) => ({
+              date: r.date_start as string,
+              spend: r.spend ? parseFloat(r.spend) : 0,
+            }))
+            .sort((a: { date: string }, b: { date: string }) => a.date.localeCompare(b.date));
+          out[id] = rows;
+        }
+      } catch {
+        for (const id of chunk) {
+          if (!out[id]) out[id] = [];
+        }
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Fetch fixed-7-day signals per campaign for the Learning Phase audit:
+   * conversions (50-event rule), plus reach + frequency + impressions + spend
+   * so we can derive REAL audience-size diagnostics ("audience too small =
+   * high frequency on small reach", "delivery throttled = low reach despite
+   * high spend"). Fixed 7-day window — independent of the global date picker.
+   *
+   * Reuses the same chunk-of-50 `?ids=…` batch pattern as
+   * `getCampaignLifetimeMetrics` and `getCampaignDailySpendTrail`. Conversion
+   * counting goes through `sumConversions()` so each underlying event is
+   * counted once (purchase / lead / app_install / messaging etc., not
+   * double-counted via offsite_conversion.fb_pixel_* aliases). Attribution
+   * window is the account's default (typically 7-day click + 1-day view).
+   */
+  async getCampaignLast7dConversions(
+    ids: string[]
+  ): Promise<Record<string, {
+    conversions7d: number;
+    conversionValue7d: number;
+    reach7d: number;
+    frequency7d: number;
+    impressions7d: number;
+    spend7d: number;
+  }>> {
+    if (!ids || ids.length === 0) return {};
+    const chunks: string[][] = [];
+    for (let i = 0; i < ids.length; i += 50) chunks.push(ids.slice(i, i + 50));
+    const out: Record<string, {
+      conversions7d: number;
+      conversionValue7d: number;
+      reach7d: number;
+      frequency7d: number;
+      impressions7d: number;
+      spend7d: number;
+    }> = {};
+    for (const chunk of chunks) {
+      try {
+        const res = await this.fetch<Record<string, { insights?: { data?: any[] } }>>(``, {
+          ids: chunk.join(","),
+          fields: "insights.date_preset(last_7d){actions,action_values,reach,frequency,impressions,spend}",
+        });
+        for (const id of chunk) {
+          const node = (res as any)[id];
+          const insight = node?.insights?.data?.[0];
+          out[id] = {
+            conversions7d: sumConversions(insight?.actions) ?? 0,
+            conversionValue7d: sumConversions(insight?.action_values) ?? 0,
+            reach7d: insight?.reach ? parseInt(insight.reach, 10) : 0,
+            frequency7d: insight?.frequency ? parseFloat(insight.frequency) : 0,
+            impressions7d: insight?.impressions ? parseInt(insight.impressions, 10) : 0,
+            spend7d: insight?.spend ? parseFloat(insight.spend) : 0,
+          };
+        }
+      } catch {
+        for (const id of chunk) {
+          if (!out[id]) out[id] = { conversions7d: 0, conversionValue7d: 0, reach7d: 0, frequency7d: 0, impressions7d: 0, spend7d: 0 };
+        }
+      }
+    }
+    return out;
+  }
+
   async renameCampaign(
     campaignId: string,
     newName: string

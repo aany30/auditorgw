@@ -17,6 +17,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import Anthropic from "@anthropic-ai/sdk";
 import { getStaticRecipe, type FixRecipe } from "@/lib/fix-recipes";
+import { calcCost } from "@/lib/ai-cost";
 
 interface FixRequest {
   metric: string;
@@ -38,7 +39,7 @@ interface FixRequest {
   isDemo?: boolean;
 }
 
-interface FixResponse extends FixRecipe {
+interface FixResponse extends FixRecipe { creditsUsedUsd?: number; // already added
   source: "ai" | "fallback";
 }
 
@@ -128,7 +129,7 @@ export default async function handler(
   if (!apiKey) {
     if (isDemo) {
       const recipe = getStaticRecipe(body.metric);
-      res.status(200).json({ ...recipe, source: "fallback" });
+      res.status(200).json({ ...recipe, source: "fallback", creditsUsedUsd: 0 });
       return;
     }
     res.status(503).json({
@@ -193,7 +194,8 @@ export default async function handler(
       throw new Error("AI response missing required fields");
     }
 
-    res.status(200).json({ ...parsed, source: "ai" });
+    const creditsUsedUsd = calcCost(response.usage);
+    res.status(200).json({ ...parsed, source: "ai", creditsUsedUsd });
   } catch (error) {
     console.error("Fix-recommendation AI call failed:", error);
     // Demo mode → graceful static fallback so the dashboard still demos something.
@@ -201,7 +203,7 @@ export default async function handler(
     // them generic recipes that ignore their actual data.
     if (isDemo) {
       const recipe = getStaticRecipe(body.metric);
-      res.status(200).json({ ...recipe, source: "fallback" });
+      res.status(200).json({ ...recipe, source: "fallback", creditsUsedUsd: 0 });
       return;
     }
     const message = error instanceof Error ? error.message : "AI call failed";

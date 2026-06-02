@@ -88,7 +88,7 @@ export default async function handler(
     const client = new MetaApiClient(accessToken);
     for (const id of pixelIds) {
       try {
-        const live = await client.getFullPixelAudit(id);
+        const live = await client.getFullPixelAudit(id, req.body.startDate, req.body.endDate);
         if (live) {
           pixels.push(live);
           perPixelSource[id] = "live";
