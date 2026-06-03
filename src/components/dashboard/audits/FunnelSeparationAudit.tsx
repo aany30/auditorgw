@@ -58,15 +58,44 @@ const STATUS_META: Record<string, { label: string; color: string }> = {
   WITH_ISSUES:{ label: "With Issues", color: "bg-orange-100 text-orange-700 border-orange-300" },
 };
 
+// The statuses we treat as "currently serving". Default scope across audits.
+const ACTIVE_STATUSES = new Set(["ACTIVE", "ENABLED"]);
+
 export default function FunnelSeparationAudit({ campaigns, accountTotal, dateRange, customStart, customEnd }: AuditProps) {
   // Detect distinct statuses present in this account's campaigns
   const availableStatuses = [...new Set(campaigns.map((c) => c.status?.toUpperCase()).filter(Boolean))].sort() as string[];
-  // Default: all statuses selected
-  const [selectedStatuses, setSelectedStatuses] = useState<Set<string>>(new Set(availableStatuses));
 
-  // Re-sync if campaigns change (new fetch with different date range)
+  // Default scope: ACTIVE + ENABLED only — matches the user's "what's running
+  // right now" mental model. Power users can still tick PAUSED/ARCHIVED in the
+  // filter UI to expand scope; that choice is sticky (no longer reset by
+  // date-range changes, see the useEffect below).
+  const [selectedStatuses, setSelectedStatuses] = useState<Set<string>>(() => {
+    const activeAvailable = availableStatuses.filter((s) => ACTIVE_STATUSES.has(s));
+    return new Set(activeAvailable.length > 0 ? activeAvailable : availableStatuses);
+  });
+
+  // When campaigns reload (e.g. date range changes), the set of AVAILABLE
+  // statuses may shift — but the user's CHOICE must be preserved. Only ADD
+  // brand-new active statuses we haven't seen; don't blow away existing picks.
   useEffect(() => {
-    setSelectedStatuses(new Set([...new Set(campaigns.map((c) => c.status?.toUpperCase()).filter(Boolean))] as string[]));
+    setSelectedStatuses((prev) => {
+      const next = new Set(prev);
+      // If the user has filtered down to specific statuses, leave them alone.
+      // Only auto-add an active status if the entire current selection is the
+      // default-on-load active set (i.e. user hasn't customised yet).
+      const isDefaultActive =
+        [...prev].every((s) => ACTIVE_STATUSES.has(s)) && prev.size > 0;
+      if (isDefaultActive) {
+        for (const s of availableStatuses) {
+          if (ACTIVE_STATUSES.has(s)) next.add(s);
+        }
+      }
+      // Drop statuses that no longer exist in the data so the filter stays valid.
+      for (const s of prev) {
+        if (!availableStatuses.includes(s)) next.delete(s);
+      }
+      return next;
+    });
   }, [campaigns.map(c => c.id).join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleStatus = (s: string) =>

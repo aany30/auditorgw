@@ -8,6 +8,7 @@ import FunnelSeparationAudit from "./audits/FunnelSeparationAudit";
 import BudgetAllocationAudit from "./audits/BudgetAllocationAudit";
 import LearningPhaseAudit from "./audits/LearningPhaseAudit";
 import AboCboAudit from "./audits/AboCboAudit";
+import VerificationBanner from "@/components/shared/VerificationBanner";
 
 interface Props {
   platform: "meta" | "google" | "both";
@@ -104,6 +105,20 @@ export default function AccountStructureTab({ platform, dateRange, customStart, 
 
   const auditProps = { campaigns: filteredCampaigns, loading, platform, accountTotal: campaigns.length, dateRange, customStart, customEnd };
 
+  // Window summary for the banner — derived from the same helper the API call uses.
+  const { startDate: winStart, endDate: winEnd } = rangeToDates(dateRange, customStart, customEnd);
+  const windowDays = Math.max(
+    1,
+    Math.round((new Date(winEnd).getTime() - new Date(winStart).getTime()) / 86_400_000) + 1
+  );
+  const fmt = (iso: string) => {
+    try { return new Date(iso).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }); }
+    catch { return iso; }
+  };
+  const activeCount = filteredCampaigns.filter((c) => c.status?.toUpperCase() === "ACTIVE" || c.status?.toUpperCase() === "ENABLED").length;
+  const pausedCount = filteredCampaigns.length - activeCount;
+  const acctCurrency = filteredCampaigns.find((c) => c.currency)?.currency || "USD";
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
@@ -113,6 +128,26 @@ export default function AccountStructureTab({ platform, dateRange, customStart, 
           <p className="text-gray-600 mt-1">Campaign structure: naming, funnel separation, budget, learning, objective, ABO/CBO</p>
         </div>
       </div>
+
+      {/* Window header — tells the user EXACTLY what window the numbers below cover. */}
+      {filteredCampaigns.length > 0 && (
+        <div className="bg-gray-50 border border-gray-200 rounded-lg px-4 py-2.5 text-xs text-gray-700">
+          <span className="font-mono">
+            Window: <span className="font-semibold text-gray-900">{fmt(winStart)} → {fmt(winEnd)}</span>
+            <span className="text-gray-400"> ({windowDays} days)</span>
+            <span className="text-gray-400"> · </span>
+            <span className="font-semibold text-gray-900">{activeCount} active</span>
+            {pausedCount > 0 && <><span className="text-gray-400"> · </span>{pausedCount} paused/archived</>}
+            <span className="text-gray-400"> · </span>
+            Currency: <span className="font-semibold text-gray-900">{acctCurrency}</span>
+          </span>
+        </div>
+      )}
+
+      {/* Passive auto-verification banner — runs in background, surfaces drift. */}
+      {filteredCampaigns.length > 0 && (
+        <VerificationBanner campaigns={filteredCampaigns} startDate={winStart} endDate={winEnd} />
+      )}
 
       {selectedObjectives && selectedObjectives.size > 0 && (
         <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-2 text-sm text-blue-900">

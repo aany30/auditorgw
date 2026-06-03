@@ -159,6 +159,10 @@ export interface CampaignData {
    * Only populated for Meta currently.
    */
   adSets?: Array<AdSetData>;
+  /** Human-readable attribution actually used for this campaign's conversions
+   * (derived from the most common ad-set `attributionSpec`, or account default).
+   * Example: "1d_click + 1d_view" or "7d_click + 1d_view". */
+  effectiveAttribution?: string;
 }
 
 export interface AdData {
@@ -188,6 +192,10 @@ export interface AdSetData {
   bidStrategy?: string;
   /** Bid/cost cap value, in account currency major units (divided by 100). */
   bidAmount?: number;
+  /** Per-ad-set attribution window (Meta's `attribution_spec`). Used to send
+   * each campaign's OWN attribution to the Insights edge so conversions match
+   * Ads Manager exactly. Example: [{event_type:"CLICK_THROUGH", window_days:1}]. */
+  attributionSpec?: Array<{ event_type: string; window_days: number }>;
   ads: AdData[];
 }
 

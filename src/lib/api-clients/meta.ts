@@ -225,6 +225,44 @@ export const META_ATTRIBUTION_WINDOW = {
     "Conversions and ROAS are counted using Meta's Ads Manager default attribution window — a conversion is credited to an ad if a user clicked it within 7 days, or viewed it within 1 day, before converting.",
 };
 
+/**
+ * Convert a Meta `attribution_spec` array (per-ad-set) into the
+ * `action_attribution_windows` query-param format Insights expects.
+ * Example input:  [{event_type:"CLICK_THROUGH", window_days:1}, {event_type:"VIEW_THROUGH", window_days:1}]
+ * Example output: ["1d_click", "1d_view"]
+ * Returns null if the input doesn't translate cleanly (caller falls back to default).
+ */
+export function attributionSpecToWindows(
+  spec: Array<{ event_type: string; window_days: number }> | null | undefined
+): string[] | null {
+  if (!Array.isArray(spec) || spec.length === 0) return null;
+  const map: Record<string, string> = {
+    CLICK_THROUGH: "click",
+    VIEW_THROUGH: "view",
+    ENGAGED_VIDEO_VIEW: "engaged_view",
+  };
+  const out: string[] = [];
+  for (const item of spec) {
+    const suffix = map[item.event_type?.toUpperCase()];
+    if (!suffix || !item.window_days) continue;
+    out.push(`${item.window_days}d_${suffix}`);
+  }
+  return out.length > 0 ? out : null;
+}
+
+/** Convert a windows array back into the human label, e.g. "1-day click + 1-day view". */
+export function attributionWindowsToLabel(windows: readonly string[] | string[]): string {
+  return windows
+    .map((w) => {
+      const m = /^(\d+)d_(\w+)$/.exec(w);
+      if (!m) return w;
+      const days = m[1];
+      const type = m[2] === "click" ? "click" : m[2] === "view" ? "view" : m[2].replace(/_/g, " ");
+      return `${days}-day ${type}`;
+    })
+    .join(" + ");
+}
+
 export class MetaApiClient {
   private accessToken: string;
 
@@ -547,6 +585,7 @@ export class MetaApiClient {
       clicks?: number;
       ads: Array<{ id: string; name: string; status: string }>;
     }>;
+    effectiveAttribution?: string;
   }> | null> {
     try {
       // The user-provided ID can be either an Ad Account ID (more common — they
@@ -560,35 +599,45 @@ export class MetaApiClient {
         ? `act_${businessId}`
         : businessId;
 
-      // Fetch in parallel:
-      //  1. /campaigns — STRUCTURE only (id/name/objective/status/budgets/adsets/ads).
-      //     No nested insights: Meta frequently ignores a `time_range` buried in a
-      //     nested field expansion and returns lifetime/default data → spend that
-      //     doesn't match Ads Manager. We get metrics from the dedicated edge below.
-      //  2. /insights?level=campaign — window-accurate per-campaign metrics, the
-      //     SAME source Ads Manager uses (top-level time_range, reliably honored).
-      //  3. /insights?level=adset — window-accurate per-ad-set metrics for the drill.
-      //  4. /{account}?fields=currency — the REAL account currency (INR/USD/…).
-      //     `account_currency` is NOT a field on campaign objects, so it must be
-      //     read from the ad account itself.
-      const [response, campaignInsights, adsetInsights, accountCurrency] = await Promise.all([
-        this.fetch<{ data?: any[] }>(`/${accountPath}/campaigns`, {
-          fields:
-            "id,name,objective,status,effective_status,created_time,updated_time,stop_time,daily_budget,lifetime_budget," +
-            // learning_stage_info is the REAL Meta field that exposes whether
-            // an ad set is in LEARNING / LEARNING_LIMITED / SUCCESS phase, plus
-            // the actual conversion count and last significant edit timestamp.
-            // 50 conversion events / 7 days is Meta's threshold to exit learning.
-            //
-            // optimization_goal = the exact event Meta counts toward the 50
-            // (OFFSITE_CONVERSIONS, LEAD_GENERATION, LINK_CLICKS, APP_INSTALLS, …).
-            // bid_strategy / bid_amount = whether a manual cost/bid cap is in
-            // place; used to diagnose "cap too restrictive" stuck-in-learning.
-            "adsets.limit(50){id,name,daily_budget,lifetime_budget,end_time,status,effective_status,updated_time,optimization_goal,bid_strategy,bid_amount,learning_stage_info{status,attribution_windows,last_sig_edit_ts}," +
-              "ads.limit(20){id,name,status,effective_status}}",
-          limit: "100",
-        }),
-        this.getCampaignInsights(accountPath, startDate, endDate),
+      // STEP 1 — fetch /campaigns FIRST (gets ad-set attribution_spec).
+      //   We need this BEFORE the Insights call so we can use each account's
+      //   actual attribution window (e.g. Plenaire's 1d_click+1d_view) instead
+      //   of hardcoded 7d_click+1d_view. Insights with the wrong attribution
+      //   returns conversion counts that won't match Ads Manager.
+      const response = await this.fetch<{ data?: any[] }>(`/${accountPath}/campaigns`, {
+        fields:
+          "id,name,objective,status,effective_status,created_time,updated_time,stop_time,daily_budget,lifetime_budget," +
+          "adsets.limit(50){id,name,daily_budget,lifetime_budget,end_time,status,effective_status,updated_time,optimization_goal,bid_strategy,bid_amount,attribution_spec,learning_stage_info{status,attribution_windows,last_sig_edit_ts}," +
+            "ads.limit(20){id,name,status,effective_status}}",
+        limit: "100",
+      });
+
+      // STEP 2 — derive the DOMINANT attribution across active campaigns'
+      //   ad sets. Most accounts use one attribution everywhere; mixed-attr
+      //   accounts: pick the most common (the rare odd-one-out has a small
+      //   per-campaign drift the auto-verify agent will catch and flag).
+      const activeRawCampaigns = (response.data || []).filter(
+        (c: any) => c.status === "ACTIVE" || c.effective_status === "ACTIVE"
+      );
+      const windowCounts = new Map<string, number>();
+      for (const c of activeRawCampaigns) {
+        const adsets = c.adsets?.data || [];
+        for (const a of adsets) {
+          const w = attributionSpecToWindows(a.attribution_spec);
+          if (!w || w.length === 0) continue;
+          const key = w.slice().sort().join(",");
+          windowCounts.set(key, (windowCounts.get(key) || 0) + 1);
+        }
+      }
+      let dominantWindows: string[] | undefined;
+      if (windowCounts.size > 0) {
+        const [bestKey] = [...windowCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+        dominantWindows = bestKey.split(",");
+      }
+
+      // STEP 3 — fetch the rest in parallel, using the derived attribution.
+      const [campaignInsights, adsetInsights, accountCurrency] = await Promise.all([
+        this.getCampaignInsights(accountPath, startDate, endDate, dominantWindows),
         this.getAdSetInsights(accountPath, startDate, endDate),
         this.getAccountCurrency(accountPath),
       ]);
@@ -655,6 +704,7 @@ export class MetaApiClient {
             optimizationGoal: a.optimization_goal || undefined,
             bidStrategy: a.bid_strategy || undefined,
             bidAmount: a.bid_amount ? parseFloat(a.bid_amount) / 100 : undefined,
+            attributionSpec: Array.isArray(a.attribution_spec) ? a.attribution_spec : undefined,
             ads: (a.ads?.data || []).map((ad: any) => ({
               id: String(ad.id),
               name: String(ad.name || ""),
@@ -662,6 +712,25 @@ export class MetaApiClient {
             })),
           };
         });
+
+        // Derive this campaign's own effective attribution from the dominant
+        // attribution among its live ad sets. Falls back to the account-wide
+        // dominant (computed above) → Meta global default.
+        const campaignWindowCounts = new Map<string, number>();
+        for (const a of adSets) {
+          const w = attributionSpecToWindows(a.attributionSpec);
+          if (!w || w.length === 0) continue;
+          const key = w.slice().sort().join(",");
+          campaignWindowCounts.set(key, (campaignWindowCounts.get(key) || 0) + 1);
+        }
+        let effectiveWindows: string[] | undefined;
+        if (campaignWindowCounts.size > 0) {
+          const [k] = [...campaignWindowCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+          effectiveWindows = k.split(",");
+        } else {
+          effectiveWindows = dominantWindows ?? [...META_ATTRIBUTION_WINDOW.raw];
+        }
+        const effectiveAttribution = attributionWindowsToLabel(effectiveWindows);
 
         return {
           id: c.id,
@@ -681,6 +750,7 @@ export class MetaApiClient {
           conversionValue,
           currency,
           adSets,
+          effectiveAttribution,
         };
       });
     } catch (e) {
@@ -777,14 +847,20 @@ export class MetaApiClient {
   async getCampaignInsights(
     accountPath: string,
     startDate?: string,
-    endDate?: string
+    endDate?: string,
+    /** Override the default 7d_click+1d_view attribution. Pass an array like
+     * ["1d_click","1d_view"] derived from the account's actual attribution_spec
+     * so conversions match Ads Manager exactly. */
+    attributionWindows?: string[]
   ): Promise<Record<string, { spend?: number; impressions?: number; clicks?: number; conversions?: number; conversionValue?: number }>> {
     const out: Record<string, { spend?: number; impressions?: number; clicks?: number; conversions?: number; conversionValue?: number }> = {};
     try {
+      const windowsToUse =
+        attributionWindows && attributionWindows.length > 0 ? attributionWindows : [...META_ATTRIBUTION_WINDOW.raw];
       const params: Record<string, string> = {
         level: "campaign",
         fields: "campaign_id,spend,impressions,clicks,actions,action_values",
-        action_attribution_windows: JSON.stringify(META_ATTRIBUTION_WINDOW.raw),
+        action_attribution_windows: JSON.stringify(windowsToUse),
         limit: "500",
       };
       if (startDate && endDate) params.time_range = `{"since":"${startDate}","until":"${endDate}"}`;
