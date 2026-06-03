@@ -1003,12 +1003,61 @@ export class MetaApiClient {
    * Batched using the same `?ids=…` technique as `getCampaignLifetimeMetrics`.
    */
   async getCampaignDailySpendTrail(
-    ids: string[]
+    ids: string[],
+    /** Ad-account path (act_<id>). When provided, we use the RELIABLE dedicated
+     * Insights edge (`/act_<id>/insights?level=campaign&time_increment=1`) which
+     * reliably honors the date window — instead of the fragile nested `?ids=`
+     * field-expansion pattern, which Meta intermittently ignores (returning
+     * lifetime/default data → inflated "last 7d" averages). */
+    accountPath?: string
   ): Promise<Record<string, Array<{ date: string; spend: number }>>> {
     if (!ids || ids.length === 0) return {};
+    const out: Record<string, Array<{ date: string; spend: number }>> = {};
+    const wantedIds = new Set(ids.map(String));
+
+    // PREFERRED PATH — dedicated account-level insights edge, one row per
+    // campaign per day, top-level date scoping (reliably honored by Meta).
+    if (accountPath) {
+      try {
+        const params: Record<string, string> = {
+          level: "campaign",
+          time_increment: "1",
+          date_preset: "last_28d",
+          fields: "campaign_id,spend,date_start",
+          limit: "1000",
+        };
+        let path: string | null = `/${accountPath}/insights`;
+        let nextParams: Record<string, string> | undefined = params;
+        for (let guard = 0; guard < 20 && path; guard++) {
+          const res: { data?: any[]; paging?: { next?: string } } = nextParams
+            ? await this.fetch<{ data?: any[]; paging?: { next?: string } }>(path, nextParams)
+            : await this.fetchAbsolute<{ data?: any[]; paging?: { next?: string } }>(path);
+          for (const row of res.data || []) {
+            const id = String(row.campaign_id);
+            if (!wantedIds.has(id)) continue;
+            if (!out[id]) out[id] = [];
+            out[id].push({ date: row.date_start as string, spend: row.spend ? parseFloat(row.spend) : 0 });
+          }
+          const next = res.paging?.next;
+          path = next || null;
+          nextParams = undefined;
+        }
+        // Sort each campaign's rows oldest-first and return.
+        for (const id of Object.keys(out)) {
+          out[id].sort((a, b) => a.date.localeCompare(b.date));
+        }
+        // Ensure every requested id has an entry (empty = no spend in window).
+        for (const id of wantedIds) if (!out[id]) out[id] = [];
+        return out;
+      } catch {
+        // Fall through to the legacy batch path below.
+      }
+    }
+
+    // FALLBACK PATH — legacy nested field-expansion (used only when accountPath
+    // is unavailable). Less reliable for date scoping; kept for back-compat.
     const chunks: string[][] = [];
     for (let i = 0; i < ids.length; i += 50) chunks.push(ids.slice(i, i + 50));
-    const out: Record<string, Array<{ date: string; spend: number }>> = {};
     for (const chunk of chunks) {
       try {
         const res = await this.fetch<Record<string, { insights?: { data?: any[] } }>>(

@@ -155,7 +155,7 @@ export default function BudgetAllocationAudit({ campaigns }: AuditProps) {
   const [alertSendState, setAlertSendState] = useState<Record<string, "idle" | "sending" | "sent" | "error">>({});
 
   // Alert email + monthly-cap state (both persisted in store).
-  const { alertEmail, setAlertEmail, monthlyBudget, setMonthlyBudget, metaAccessToken } = useAuthStore();
+  const { alertEmail, setAlertEmail, monthlyBudget, setMonthlyBudget, metaAccessToken, metaBusinessId } = useAuthStore();
   const [emailDraft, setEmailDraft] = useState(alertEmail || "");
   const [budgetDraft, setBudgetDraft] = useState<string>(monthlyBudget ? String(monthlyBudget) : "");
   const [sendStatus, setSendStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
@@ -179,7 +179,7 @@ export default function BudgetAllocationAudit({ campaigns }: AuditProps) {
     fetch("/api/naming/campaigns/daily-trail", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ accessToken: metaAccessToken, campaignIds: metaIds }),
+      body: JSON.stringify({ accessToken: metaAccessToken, campaignIds: metaIds, businessId: metaBusinessId }),
     })
       .then((r) => r.json())
       .then((data) => {

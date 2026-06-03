@@ -12,6 +12,8 @@ import { isDemoCredential } from "@/lib/demo-data";
 interface ReqBody {
   accessToken: string;
   campaignIds: string[];
+  /** Ad-account / business ID — enables the reliable dedicated insights edge. */
+  businessId?: string;
 }
 
 interface RespBody {
@@ -26,7 +28,7 @@ export default async function handler(
     res.status(405).json({ error: "Method not allowed" });
     return;
   }
-  const { accessToken, campaignIds } = req.body as ReqBody;
+  const { accessToken, campaignIds, businessId } = req.body as ReqBody;
   if (!accessToken || !Array.isArray(campaignIds) || campaignIds.length === 0) {
     res.status(400).json({ error: "Missing accessToken or campaignIds[]" });
     return;
@@ -42,7 +44,12 @@ export default async function handler(
 
   try {
     const client = new MetaApiClient(accessToken);
-    const trails = await client.getCampaignDailySpendTrail(campaignIds);
+    // Normalise businessId → act_<id> path so the client can use the reliable
+    // dedicated insights edge (top-level date scoping).
+    const accountPath = businessId
+      ? (businessId.startsWith("act_") ? businessId : /^\d+$/.test(businessId) ? `act_${businessId}` : businessId)
+      : undefined;
+    const trails = await client.getCampaignDailySpendTrail(campaignIds, accountPath);
     res.status(200).json({ trails });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Unknown error";
