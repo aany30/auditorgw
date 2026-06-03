@@ -186,24 +186,37 @@ export default function BudgetAllocationAudit({ campaigns }: AuditProps) {
         if (data?.trails) {
           const derived: Record<string, { avg7d: number; avg14d: number; avg28d: number }> = {};
           const trailMap = data.trails as Record<string, Array<{ date: string; spend: number }>>;
+
+          // CRITICAL: anchor the "last 7 / 14 / 28 days" window to a SINGLE
+          // global "today" — the most recent spend date across ALL campaigns
+          // (≈ yesterday in the account timezone). Previously the anchor was
+          // computed per-campaign (its own last spend day), so a campaign
+          // paused 3 weeks ago contributed its OWN last-7-active-days of spend
+          // as if it were the last 7 CALENDAR days — massively inflating the
+          // account "Last 7d avg" (e.g. ₹42k shown vs ₹15.5k actual). A fixed
+          // global anchor makes paused campaigns correctly contribute ₹0 to
+          // recent windows.
+          const dayMs = 86_400_000;
+          let globalAnchor: string | null = null;
+          for (const days of Object.values(trailMap)) {
+            for (const d of days) {
+              if (!globalAnchor || d.date > globalAnchor) globalAnchor = d.date;
+            }
+          }
+
           for (const [id, days] of Object.entries(trailMap)) {
-            const sorted = [...days].sort((a: { date: string }, b: { date: string }) => a.date.localeCompare(b.date));
-            // Calendar-day averages over the trailing 28 days.
-            // Meta's time_increment(1) OMITS rows for zero-spend days, so
-            // summing rows and dividing by row count over-states the average
-            // for paused / intermittent campaigns. Fix: divide by a FIXED
-            // calendar-day count. Missing days = ₹0.
+            // Calendar-day averages over the trailing 28 days from the GLOBAL
+            // anchor. Meta's time_increment(1) OMITS zero-spend days, so we
+            // divide by a FIXED calendar-day count (missing days = ₹0):
             //   avg7d  = sum of last 7 calendar days   ÷ 7
             //   avg14d = sum of days 8..14 ago         ÷ 7   (prev-7 baseline)
             //   avg28d = sum of last 28 calendar days  ÷ 28  (true 4-week)
-            const anchor = sorted.length > 0 ? sorted[sorted.length - 1].date : null;
-            const dayMs = 86_400_000;
             const sumWindow = (startOffset: number, endOffset: number): number => {
-              if (!anchor) return 0;
-              const anchorMs = new Date(`${anchor}T00:00:00Z`).getTime();
+              if (!globalAnchor) return 0;
+              const anchorMs = new Date(`${globalAnchor}T00:00:00Z`).getTime();
               const startMs = anchorMs - startOffset * dayMs;
               const endMs = anchorMs - endOffset * dayMs;
-              return sorted.reduce((s, d) => {
+              return days.reduce((s, d) => {
                 const t = new Date(`${d.date}T00:00:00Z`).getTime();
                 return t >= endMs && t <= startMs ? s + d.spend : s;
               }, 0);
