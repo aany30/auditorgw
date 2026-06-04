@@ -16,6 +16,7 @@ import { TermText } from "@/components/shared/Term";
 import { basisMetrics, BASIS_OPTIONS, BASIS_SUBTITLE, type SpendBasis, type LifetimeMap } from "@/lib/spend-basis";
 import { detectCurrency, formatMoney } from "@/lib/currency";
 import AttributionInfo from "@/components/shared/AttributionInfo";
+import FunnelStageCompare from "./FunnelStageCompare";
 
 type Stage = "TOF" | "MOF" | "BOF";
 
@@ -170,7 +171,8 @@ function fmtHumanDate(iso: string): string {
 export default function FunnelStagePerformance({ campaigns, accountTotal, dateRange, customStart, customEnd }: Props) {
   // Detect account currency from campaign data — avoids hardcoding "$"
   const acctCurrency = detectCurrency(campaigns);
-  const { metaAccessToken } = useAuthStore();
+  const { metaAccessToken, metaBusinessId } = useAuthStore();
+  const [compareMode, setCompareMode] = useState(false);
   const [primaryMetric, setPrimaryMetric] = useState<MetricId>("spend");
   const [secondaryMetric, setSecondaryMetric] = useState<MetricId>("cpm");
   // Default to "window" so the date picker IMMEDIATELY affects the chart.
@@ -240,6 +242,31 @@ export default function FunnelStagePerformance({ campaigns, accountTotal, dateRa
     stage === "TOF" ? "bg-purple-500" : stage === "MOF" ? "bg-blue-500" : "bg-green-500";
 
   return (
+   <div className="space-y-4">
+    {/* Compare-periods toggle */}
+    {metaAccessToken && metaBusinessId && (
+      <div className="flex justify-end">
+        <button
+          onClick={() => setCompareMode((v) => !v)}
+          className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition ${
+            compareMode
+              ? "bg-blue-600 text-white border-blue-600"
+              : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
+          }`}
+        >
+          {compareMode ? "✕ Close comparison" : "⇄ Compare two periods"}
+        </button>
+      </div>
+    )}
+
+    {compareMode && metaAccessToken && metaBusinessId && (
+      <FunnelStageCompare
+        metaAccessToken={metaAccessToken}
+        metaBusinessId={metaBusinessId}
+        currency={acctCurrency}
+      />
+    )}
+
     <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-4">
       {/* Left: 3 small sparkbar groups — Campaigns %, Spend %, Impressions % */}
       <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-5">
@@ -466,6 +493,7 @@ export default function FunnelStagePerformance({ campaigns, accountTotal, dateRa
         </div>
       </div>
     </div>
+   </div>
   );
 }
 

@@ -53,12 +53,24 @@ export default function AccountStructureTab({ platform, dateRange, customStart, 
   const [loading, setLoading] = useState(false);
   const [active, setActive] = useState<SubTab>("naming");
 
+  // User-defined window override (independent of the global navbar picker).
+  // When set, it drives the fetch for ALL sub-audits. Null → global picker.
+  const globalRange = rangeToDates(dateRange, customStart, customEnd);
+  const [ovStart, setOvStart] = useState<string | null>(null);
+  const [ovEnd, setOvEnd] = useState<string | null>(null);
+  const winStart = ovStart ?? globalRange.startDate;
+  const winEnd = ovEnd ?? globalRange.endDate;
+  // Draft values for the inline date inputs before "Apply".
+  const [draftStart, setDraftStart] = useState(winStart);
+  const [draftEnd, setDraftEnd] = useState(winEnd);
+
   useEffect(() => {
     let cancelled = false;
     const fetchCampaigns = async () => {
       setLoading(true);
       const all: CampaignData[] = [];
-      const { startDate, endDate } = rangeToDates(dateRange, customStart, customEnd);
+      const startDate = winStart;
+      const endDate = winEnd;
       try {
         if ((platform === "meta" || platform === "both") && metaAccessToken && metaBusinessId) {
           const r = await fetch("/api/naming/campaigns/meta", {
@@ -96,17 +108,24 @@ export default function AccountStructureTab({ platform, dateRange, customStart, 
     return () => {
       cancelled = true;
     };
-  }, [platform, dateRange, customStart, customEnd, metaAccessToken, metaBusinessId, googleAccessToken, googleCustomerId, googleAdsDeveloperToken, googleAdsLoginCustomerId]);
+  }, [platform, winStart, winEnd, metaAccessToken, metaBusinessId, googleAccessToken, googleCustomerId, googleAdsDeveloperToken, googleAdsLoginCustomerId]);
+
+  // Keep draft inputs in sync when the effective window changes (e.g. global picker moves while no override is set).
+  useEffect(() => {
+    setDraftStart(winStart);
+    setDraftEnd(winEnd);
+  }, [winStart, winEnd]);
 
   const filteredCampaigns = useMemo(() => {
     if (!selectedObjectives || selectedObjectives.size === 0) return campaigns;
     return campaigns.filter((c) => objectiveMatches(c.objective, selectedObjectives));
   }, [campaigns, selectedObjectives]);
 
-  const auditProps = { campaigns: filteredCampaigns, loading, platform, accountTotal: campaigns.length, dateRange, customStart, customEnd };
+  // Pass the EFFECTIVE window (override or global) down so sub-audits scope
+  // correctly. dateRange="custom" forces sub-components to honor the explicit
+  // start/end (their resolveWindow only uses custom dates when range==="custom").
+  const auditProps = { campaigns: filteredCampaigns, loading, platform, accountTotal: campaigns.length, dateRange: "custom", customStart: winStart, customEnd: winEnd };
 
-  // Window summary for the banner — derived from the same helper the API call uses.
-  const { startDate: winStart, endDate: winEnd } = rangeToDates(dateRange, customStart, customEnd);
   const windowDays = Math.max(
     1,
     Math.round((new Date(winEnd).getTime() - new Date(winStart).getTime()) / 86_400_000) + 1
@@ -129,20 +148,53 @@ export default function AccountStructureTab({ platform, dateRange, customStart, 
         </div>
       </div>
 
-      {/* Window header — tells the user EXACTLY what window the numbers below cover. */}
-      {filteredCampaigns.length > 0 && (
-        <div className="bg-gray-50 border border-gray-200 rounded-lg px-4 py-2.5 text-xs text-gray-700">
-          <span className="font-mono">
-            Window: <span className="font-semibold text-gray-900">{fmt(winStart)} → {fmt(winEnd)}</span>
-            <span className="text-gray-400"> ({windowDays} days)</span>
-            <span className="text-gray-400"> · </span>
+      {/* User-defined window — drives the data fetch for ALL sub-audits.
+          Like Meta Ads Manager's from→to report range. */}
+      <div className="bg-gray-50 border border-gray-200 rounded-lg px-4 py-3 flex flex-wrap items-center gap-3 text-xs text-gray-700">
+        <span className="font-semibold text-gray-700">Window</span>
+        <input
+          type="date"
+          value={draftStart}
+          max={draftEnd}
+          onChange={(e) => setDraftStart(e.target.value)}
+          className="border border-gray-300 rounded px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        <span className="text-gray-400">→</span>
+        <input
+          type="date"
+          value={draftEnd}
+          min={draftStart}
+          onChange={(e) => setDraftEnd(e.target.value)}
+          className="border border-gray-300 rounded px-2 py-1 text-xs text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        <button
+          onClick={() => { setOvStart(draftStart); setOvEnd(draftEnd); }}
+          disabled={draftStart === winStart && draftEnd === winEnd}
+          className="px-3 py-1 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700 disabled:opacity-40"
+        >
+          Apply
+        </button>
+        {(ovStart || ovEnd) && (
+          <button
+            onClick={() => { setOvStart(null); setOvEnd(null); }}
+            className="px-2 py-1 rounded-lg text-gray-600 hover:bg-gray-200 font-semibold"
+          >
+            Reset to global
+          </button>
+        )}
+        <span className="text-gray-400">·</span>
+        <span className="text-gray-500">{windowDays} days</span>
+        {filteredCampaigns.length > 0 && (
+          <>
+            <span className="text-gray-400">·</span>
             <span className="font-semibold text-gray-900">{activeCount} active</span>
-            {pausedCount > 0 && <><span className="text-gray-400"> · </span>{pausedCount} paused/archived</>}
-            <span className="text-gray-400"> · </span>
-            Currency: <span className="font-semibold text-gray-900">{acctCurrency}</span>
-          </span>
-        </div>
-      )}
+            {pausedCount > 0 && <span className="text-gray-500">· {pausedCount} paused/archived</span>}
+            <span className="text-gray-400">·</span>
+            <span>Currency: <span className="font-semibold text-gray-900">{acctCurrency}</span></span>
+          </>
+        )}
+        {(ovStart || ovEnd) && <span className="text-blue-700 font-semibold">· custom window active</span>}
+      </div>
 
       {/* Passive auto-verification banner — runs in background, surfaces drift. */}
       {filteredCampaigns.length > 0 && (

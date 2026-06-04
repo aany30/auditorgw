@@ -236,16 +236,28 @@ export function attributionSpecToWindows(
   spec: Array<{ event_type: string; window_days: number }> | null | undefined
 ): string[] | null {
   if (!Array.isArray(spec) || spec.length === 0) return null;
+  // Meta's `action_attribution_windows` enum: 1d/7d/28d_click, 1d/7d/28d_view,
+  // and 1d_ev (engaged view). NOTE: the engaged-view token is "ev" → "1d_ev",
+  // NOT "engaged_view" — passing "1d_engaged_view" 400s the whole Insights
+  // call (which previously zeroed out all spend).
   const map: Record<string, string> = {
     CLICK_THROUGH: "click",
     VIEW_THROUGH: "view",
-    ENGAGED_VIDEO_VIEW: "engaged_view",
+    ENGAGED_VIDEO_VIEW: "ev",
   };
+  // Only these exact tokens are accepted by Meta — anything else is dropped so
+  // a single unrecognised window can never break the entire request.
+  const VALID = new Set([
+    "1d_click", "7d_click", "28d_click",
+    "1d_view", "7d_view", "28d_view",
+    "1d_ev",
+  ]);
   const out: string[] = [];
   for (const item of spec) {
     const suffix = map[item.event_type?.toUpperCase()];
     if (!suffix || !item.window_days) continue;
-    out.push(`${item.window_days}d_${suffix}`);
+    const token = `${item.window_days}d_${suffix}`;
+    if (VALID.has(token)) out.push(token);
   }
   return out.length > 0 ? out : null;
 }
@@ -656,8 +668,14 @@ export class MetaApiClient {
         let lifetimeBudget = c.lifetime_budget ? parseFloat(c.lifetime_budget) / 100 : undefined;
         const adsets: any[] = c.adsets?.data || [];
         if (dailyBudget === undefined && lifetimeBudget === undefined && adsets.length > 0) {
-          // Sum ad-set budgets (only ACTIVE/non-deleted ones to avoid inflated totals).
-          const liveAdsets = adsets.filter((a) => a.status !== "DELETED" && a.status !== "ARCHIVED");
+          // Sum ad-set budgets — only ACTIVELY-DELIVERING ad sets, so paused/
+          // archived ad sets don't inflate the campaign's allocated budget.
+          // (Previously this included PAUSED ad sets, which over-stated the
+          // budget several-fold for accounts that rotate many paused ad sets.)
+          const liveAdsets = adsets.filter((a) => {
+            const s = (a.effective_status || a.status || "").toUpperCase();
+            return s === "ACTIVE" || s === "ENABLED";
+          });
           const sumDaily = liveAdsets.reduce(
             (s, a) => s + (a.daily_budget ? parseFloat(a.daily_budget) / 100 : 0),
             0
@@ -854,21 +872,27 @@ export class MetaApiClient {
     attributionWindows?: string[]
   ): Promise<Record<string, { spend?: number; impressions?: number; clicks?: number; conversions?: number; conversionValue?: number }>> {
     const out: Record<string, { spend?: number; impressions?: number; clicks?: number; conversions?: number; conversionValue?: number }> = {};
-    try {
-      const windowsToUse =
-        attributionWindows && attributionWindows.length > 0 ? attributionWindows : [...META_ATTRIBUTION_WINDOW.raw];
+
+    // Inner runner — fetches the insights edge with (or without) attribution
+    // windows. `withAttribution=false` omits action_attribution_windows entirely
+    // (spend/impressions/clicks are attribution-INDEPENDENT, so they're always
+    // correct even without it; only conversions vary by window).
+    const runFetch = async (withAttribution: boolean) => {
       const params: Record<string, string> = {
         level: "campaign",
         fields: "campaign_id,spend,impressions,clicks,actions,action_values",
-        action_attribution_windows: JSON.stringify(windowsToUse),
         limit: "500",
       };
+      if (withAttribution) {
+        const windowsToUse =
+          attributionWindows && attributionWindows.length > 0 ? attributionWindows : [...META_ATTRIBUTION_WINDOW.raw];
+        params.action_attribution_windows = JSON.stringify(windowsToUse);
+      }
       if (startDate && endDate) params.time_range = `{"since":"${startDate}","until":"${endDate}"}`;
       else params.date_preset = "last_30d";
 
       let path: string | null = `/${accountPath}/insights`;
       let nextParams: Record<string, string> | undefined = params;
-      // Walk paging.next defensively (campaign list is capped at 100, so usually one page).
       for (let guard = 0; guard < 10 && path; guard++) {
         const res: { data?: any[]; paging?: { next?: string } } = nextParams
           ? await this.fetch<{ data?: any[]; paging?: { next?: string } }>(path, nextParams)
@@ -885,10 +909,22 @@ export class MetaApiClient {
         }
         const next = res.paging?.next;
         path = next || null;
-        nextParams = undefined; // subsequent pages use the absolute `next` URL verbatim
+        nextParams = undefined;
       }
+    };
+
+    try {
+      await runFetch(true);
     } catch {
-      // Degrade gracefully — campaigns render with undefined metrics ("—").
+      // A bad/unsupported attribution window (e.g. an account using engaged-view)
+      // 400s the whole call. Retry WITHOUT attribution windows so spend/
+      // impressions/clicks (attribution-independent) are never lost — only
+      // conversions fall back to the account default.
+      try {
+        await runFetch(false);
+      } catch {
+        // Both failed — degrade gracefully (campaigns render "—").
+      }
     }
     return out;
   }
