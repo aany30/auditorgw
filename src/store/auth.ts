@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { DateRange, CustomDateRange, NamingConvention, NamingRule } from "@/types";
 import { META_BENCHMARKS, type BenchmarkSnapshot } from "@/lib/funnel-benchmarks";
+import { toDisplayCredits } from "@/lib/ai-cost";
 
 interface PixelInfo {
   id: string;
@@ -310,8 +311,10 @@ export const useAuthStore = create<AuthState>()(
       setMonthlyBudget: (amount) => set({ monthlyBudget: amount }),
       setEmqInput: (eventId, value) =>
         set((state) => ({ emqInputs: { ...state.emqInputs, [eventId]: value } })),
+      // Callers pass the RAW Anthropic cost; we store the PRODUCT-priced value
+      // (raw × 3 ÷ 0.05) so the counter reflects what the customer is charged.
       addAiCredits: (usd) =>
-        set((state) => ({ totalAiCreditsUsd: +(state.totalAiCreditsUsd + usd).toFixed(6) })),
+        set((state) => ({ totalAiCreditsUsd: +(state.totalAiCreditsUsd + toDisplayCredits(usd)).toFixed(4) })),
 
       setMetaCredentials: (token, businessId, pixelIds) =>
         set({ metaAccessToken: token, metaBusinessId: businessId, metaPixelIds: pixelIds }),

@@ -230,7 +230,7 @@ export default function FunnelStageCompare({ metaAccessToken, metaBusinessId, cu
           {/* Delta table */}
           <div className="overflow-x-auto mt-4">
             <table className="w-full text-sm">
-              <thead className="bg-gray-50 border-b border-gray-200">
+              <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-20 shadow-sm">
                 <tr>
                   <th className="px-3 py-2 text-left font-semibold text-gray-700">Stage</th>
                   <th className="px-3 py-2 text-right font-semibold text-indigo-700">Period A<div className="text-[10px] font-normal text-gray-400">{aStart} → {aEnd}</div></th>

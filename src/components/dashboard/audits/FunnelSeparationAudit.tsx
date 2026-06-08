@@ -374,7 +374,7 @@ export default function FunnelSeparationAudit({ campaigns, accountTotal, dateRan
             }`}
           >
             <Sparkles className="w-4 h-4" />
-            <>{aiLoading ? "Analyzing…" : "Analyze with AI"}{!aiLoading && !aiResult && <span className="text-[10px] opacity-60 ml-1">~$0.0004</span>}</>
+            <>{aiLoading ? "Analyzing…" : "Analyze with AI"}{!aiLoading && !aiResult && <span className="text-[10px] opacity-60 ml-1">~$0.02</span>}</>
           </button>
         </div>
 

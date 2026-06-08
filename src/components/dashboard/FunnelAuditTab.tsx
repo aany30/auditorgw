@@ -19,7 +19,7 @@ interface Props {
 export default function FunnelAuditTab({ platform = "both", dateRange = "30d", customStart, customEnd }: Props) {
   const { customBenchmarks, isMetaConnected, isGoogleConnected, benchmarkSnapshots, activeBenchmarkId } = useAuthStore();
   // Wire to useAudit so the funnel re-fetches when the date picker changes.
-  const { meta, google } = useAudit(platform, dateRange, customStart, customEnd);
+  const { meta, google, loading: auditLoading } = useAudit(platform, dateRange, customStart, customEnd);
   const metaOn = isMetaConnected();
   const googleOn = isGoogleConnected();
   const activeSnapshot = benchmarkSnapshots.find((s) => s.id === activeBenchmarkId);
@@ -176,7 +176,9 @@ export default function FunnelAuditTab({ platform = "both", dateRange = "30d", c
             </div>
             <div className="bg-white rounded-lg border border-gray-200 p-5 shadow-sm">
               <div className="text-sm text-gray-600">Conversion Rate</div>
-              <div className="text-3xl font-bold text-gray-900 mt-1">{convRate}%</div>
+              <div className="text-3xl font-bold text-gray-900 mt-1">
+                {auditLoading && convRate === 0 ? <span className="text-gray-400 text-xl">Loading…</span> : `${convRate}%`}
+              </div>
               <div className="text-xs text-gray-500 mt-1">PageView → Purchase</div>
             </div>
             <div className="bg-white rounded-lg border border-gray-200 p-5 shadow-sm">
@@ -199,9 +201,9 @@ export default function FunnelAuditTab({ platform = "both", dateRange = "30d", c
             <h2 className="text-lg font-bold text-gray-900">Meta Funnel — Pixel Events</h2>
             <p className="text-sm text-gray-600 mt-1"><TermText>Conversion stages and drop-off rates vs. benchmarks</TermText></p>
           </div>
-          <div className="overflow-x-auto">
+          <div>
             <table className="w-full text-sm">
-              <thead className="bg-gray-50 border-b border-gray-200">
+              <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-20 shadow-sm">
                 <tr>
                   <SortTh col="stage" sort={metaSort} onToggle={metaToggle} className="px-6 py-3">Stage</SortTh>
                   <SortTh col="count" sort={metaSort} onToggle={metaToggle} className="px-6 py-3" align="right">Users</SortTh>
@@ -257,9 +259,9 @@ export default function FunnelAuditTab({ platform = "both", dateRange = "30d", c
             <h2 className="text-lg font-bold text-gray-900">Google GA4 Funnel — Ecommerce Events</h2>
             <p className="text-sm text-gray-600 mt-1"><TermText>GA4 standard ecommerce conversion path</TermText></p>
           </div>
-          <div className="overflow-x-auto">
+          <div>
             <table className="w-full text-sm">
-              <thead className="bg-gray-50 border-b border-gray-200">
+              <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-20 shadow-sm">
                 <tr>
                   <SortTh col="stage" sort={googleSort} onToggle={googleToggle} className="px-6 py-3">Stage</SortTh>
                   <SortTh col="count" sort={googleSort} onToggle={googleToggle} className="px-6 py-3" align="right">Users</SortTh>

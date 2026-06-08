@@ -17,6 +17,17 @@ export default function RecommendationsTab({ platform = "both", dateRange = "30d
   const [priorityFilter, setPriorityFilter] = useState<string>("All");
   const [platformFilter, setPlatformFilter] = useState<string>("All");
 
+  // ALL hooks must run on every render (Rules of Hooks). Compute the rows +
+  // run useSort BEFORE any early return — otherwise toggling `loading` changes
+  // the hook count and React throws "Rendered more hooks than previous render".
+  const allRecs = [...(meta?.recommendations || []), ...(google?.recommendations || [])];
+  const filtered = allRecs.filter(
+    (r) =>
+      (priorityFilter === "All" || r.priority === priorityFilter) &&
+      (platformFilter === "All" || r.platform === platformFilter)
+  );
+  const { sorted: sortedRecs, sort: recSort, toggle: recToggle } = useSort(filtered, "priority", "asc");
+
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center py-24">
@@ -25,14 +36,6 @@ export default function RecommendationsTab({ platform = "both", dateRange = "30d
       </div>
     );
   }
-
-  const allRecs = [...(meta?.recommendations || []), ...(google?.recommendations || [])];
-  const filtered = allRecs.filter(
-    (r) =>
-      (priorityFilter === "All" || r.priority === priorityFilter) &&
-      (platformFilter === "All" || r.platform === platformFilter)
-  );
-  const { sorted: sortedRecs, sort: recSort, toggle: recToggle } = useSort(filtered, "priority", "asc");
 
   const priorityColor = (p: string) =>
     p === "Critical" ? "bg-red-100 text-red-700 border-red-300" :
@@ -112,9 +115,9 @@ export default function RecommendationsTab({ platform = "both", dateRange = "30d
             </select>
           </div>
         </div>
-        <div className="overflow-x-auto">
+        <div>
           <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200">
+            <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-20 shadow-sm">
               <tr>
                 <SortTh col="priority" sort={recSort} onToggle={recToggle} className="px-6 py-3">Priority</SortTh>
                 <SortTh col="platform" sort={recSort} onToggle={recToggle} className="px-6 py-3">Platform</SortTh>

@@ -23,3 +23,23 @@ export function calcCost(usage: AnthropicUsage): number {
     (usage.cache_creation_input_tokens ?? 0) * 0.000001
   );
 }
+
+// ── Product pricing ────────────────────────────────────────────────────────
+// The raw Anthropic cost (`calcCost`) is the wholesale price. What we SHOW the
+// user (and charge to the in-app credit counter) is the productised price:
+//
+//   displayed = (rawUsd × MARKUP) ÷ DIVISOR        // = rawUsd × 60 today
+//
+// MARKUP = 3× (company margin); DIVISOR = 0.05 (per-credit unit price). Tune
+// these two constants in one place to re-price the whole product.
+export const CREDIT_MARKUP = 3;
+export const CREDIT_DIVISOR = 0.05;
+
+/** Convert a raw Anthropic USD cost into the user-facing credit value. */
+export function toDisplayCredits(rawUsd: number | undefined | null): number {
+  if (!rawUsd || rawUsd < 0) return 0;
+  return (rawUsd * CREDIT_MARKUP) / CREDIT_DIVISOR;
+}
+
+/** Per-recommendation display estimate (raw ≈ $0.0003 → shown as the marked-up value). */
+export const RECO_ESTIMATE_DISPLAY = `~$${toDisplayCredits(0.0003).toFixed(2)}`;

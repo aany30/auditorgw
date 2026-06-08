@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import type { AuditProps } from "./types";
 import type { CampaignData } from "@/types";
 import { useAuthStore } from "@/store/auth";
@@ -7,6 +7,7 @@ import AttributionInfo from "@/components/shared/AttributionInfo";
 import { useSort } from "@/hooks/useSort";
 import SortTh from "@/components/shared/SortTh";
 import { detectCurrency, formatMoney } from "@/lib/currency";
+import { TrendingUp, TrendingDown, AlertCircle, CheckCircle2 } from "lucide-react";
 
 /**
  * Budget Allocation = honest, date-range-scoped SPEND REPORT (Meta-export style).
@@ -32,8 +33,116 @@ function fmtDate(iso?: string): string {
 }
 
 export default function BudgetAllocationAudit({ campaigns, dateRange }: AuditProps) {
-  const { alertEmail, setAlertEmail, monthlyBudget, setMonthlyBudget } = useAuthStore();
+  const { alertEmail, setAlertEmail, monthlyBudget, setMonthlyBudget, metaAccessToken, metaBusinessId } = useAuthStore();
   const currency = detectCurrency(campaigns);
+
+  // ── Rolling daily-spend trail → real 7d / 4w averages (pacing strip) ──────
+  // Reliable account-level Insights edge (level=campaign&time_increment=1) via
+  // the daily-trail endpoint. Averages use a GLOBAL anchor (max date across all
+  // campaigns) so paused campaigns don't leak old spend into recent windows.
+  const [trail, setTrail] = useState<Record<string, { avg7d: number; avg14d: number; avg28d: number }>>({});
+  useEffect(() => {
+    if (!metaAccessToken) return;
+    const ids = campaigns.filter((c) => c.platform === "meta" && !(c.id in trail)).map((c) => c.id);
+    if (ids.length === 0) return;
+    fetch("/api/naming/campaigns/daily-trail", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ accessToken: metaAccessToken, campaignIds: ids, businessId: metaBusinessId }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (!data?.trails) return;
+        const trailMap = data.trails as Record<string, Array<{ date: string; spend: number }>>;
+        const dayMs = 86_400_000;
+        let anchor: string | null = null;
+        for (const days of Object.values(trailMap)) for (const d of days) if (!anchor || d.date > anchor) anchor = d.date;
+        const derived: Record<string, { avg7d: number; avg14d: number; avg28d: number }> = {};
+        for (const [id, days] of Object.entries(trailMap)) {
+          const sumWindow = (startOff: number, endOff: number) => {
+            if (!anchor) return 0;
+            const a = new Date(`${anchor}T00:00:00Z`).getTime();
+            const start = a - startOff * dayMs, end = a - endOff * dayMs;
+            return days.reduce((s, d) => {
+              const t = new Date(`${d.date}T00:00:00Z`).getTime();
+              return t >= end && t <= start ? s + d.spend : s;
+            }, 0);
+          };
+          derived[id] = { avg7d: sumWindow(0, 6) / 7, avg14d: sumWindow(7, 13) / 7, avg28d: sumWindow(0, 27) / 28 };
+        }
+        setTrail((prev) => ({ ...prev, ...derived }));
+      })
+      .catch(() => { /* silent — pacing strip shows "—" */ });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [metaAccessToken, metaBusinessId, campaigns.map((c) => c.id).join(",")]);
+
+  // ── 6-month total spend → avg per month ─────────────────────────────────────
+  // One call to /api/naming/campaigns/meta with a fixed 182-day window (≈6 months).
+  // Each campaign's c.spend sums to its 6-month total; divide by 6 for avg/month.
+  const [spend6m, setSpend6m] = useState<number | null>(null);
+  useEffect(() => {
+    if (!metaAccessToken || !metaBusinessId) return;
+    const today = new Date();
+    const sixMonthsAgo = new Date(today);
+    sixMonthsAgo.setDate(today.getDate() - 182);
+    const startDate = sixMonthsAgo.toISOString().slice(0, 10);
+    const endDate = today.toISOString().slice(0, 10);
+    fetch("/api/naming/campaigns/meta", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ accessToken: metaAccessToken, businessId: metaBusinessId, startDate, endDate }),
+    })
+      .then((r) => r.json())
+      .then((data: CampaignData[]) => {
+        if (!Array.isArray(data)) return;
+        const total = data.reduce((s, c) => s + (c.spend || 0), 0);
+        setSpend6m(total);
+      })
+      .catch(() => { /* silent */ });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [metaAccessToken, metaBusinessId]);
+
+  const avg6mPerMonth = spend6m !== null ? spend6m / 6 : null;
+
+  // ── Last-3-month fetch → derive "prev 3 months" without an extra call ───────
+  // recent3m = last 91 days spend; prior3m = 6m total − recent3m (days 92–182).
+  const [spend3m, setSpend3m] = useState<number | null>(null);
+  useEffect(() => {
+    if (!metaAccessToken || !metaBusinessId) return;
+    const today = new Date();
+    const threeMonthsAgo = new Date(today);
+    threeMonthsAgo.setDate(today.getDate() - 91);
+    const startDate = threeMonthsAgo.toISOString().slice(0, 10);
+    const endDate = today.toISOString().slice(0, 10);
+    fetch("/api/naming/campaigns/meta", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ accessToken: metaAccessToken, businessId: metaBusinessId, startDate, endDate }),
+    })
+      .then((r) => r.json())
+      .then((data: CampaignData[]) => {
+        if (!Array.isArray(data)) return;
+        setSpend3m(data.reduce((s, c) => s + (c.spend || 0), 0));
+      })
+      .catch(() => { /* silent */ });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [metaAccessToken, metaBusinessId]);
+
+  // Month-over-month: last 3m avg vs prior 3m avg (from the same 6m total).
+  // Guard: only show when prior 3m had meaningful spend (≥ ₹10k) — otherwise
+  // if the account was new/inactive in months 4-6, the % becomes absurdly large
+  // (e.g. prior spend ₹100 → +157793%) which misleads rather than informs.
+  const mom3m = useMemo(() => {
+    if (spend3m === null || spend6m === null || spend6m <= 0) return null;
+    const recent3mAvg = spend3m / 3;
+    const prior3mTotal = spend6m - spend3m;
+    if (prior3mTotal < 10_000) return null; // prior 3m too low to give meaningful %
+    const prior3mAvg = prior3mTotal / 3;
+    const delta = ((recent3mAvg - prior3mAvg) / prior3mAvg) * 100;
+    // Also cap at ±999% — if it's still that extreme, something is off
+    if (Math.abs(delta) > 999) return null;
+    return { delta, recent3mAvg, prior3mAvg };
+  }, [spend3m, spend6m]);
 
   const [statusFilter, setStatusFilter] = useState<"all" | "active">("all");
   const [emailDraft, setEmailDraft] = useState(alertEmail || "");
@@ -80,6 +189,161 @@ export default function BudgetAllocationAudit({ campaigns, dateRange }: AuditPro
     return { daily, lifetime };
   }, [visible]);
 
+  // Account-level pacing (real, from the rolling trail). Sum per-campaign avgs
+  // across visible campaigns; missing trail entries contribute 0.
+  const pacing = useMemo(() => {
+    let avg7d = 0, avg14d = 0, avg28d = 0;
+    for (const c of visible) {
+      const t = trail[c.id];
+      if (t) { avg7d += t.avg7d; avg14d += t.avg14d; avg28d += t.avg28d; }
+    }
+    const wow = avg14d > 0 ? ((avg7d - avg14d) / avg14d) * 100 : null;
+    const pacePct = budgetSetting.daily > 0 ? (avg7d / budgetSetting.daily) * 100 : null;
+    const hasTrail = visible.some((c) => c.id in trail);
+    return { avg7d, avg28d, wow, pacePct, hasTrail };
+  }, [visible, trail, budgetSetting.daily]);
+
+  // Month-over-month proxy from the 28-day trail — no extra API call.
+  // Split 28d into two 14-day halves and compare as monthly-rate equivalents.
+  const mom = useMemo(() => {
+    let recent14Sum = 0, prior14Sum = 0, count = 0;
+    for (const c of visible) {
+      const t = trail[c.id];
+      if (!t) continue;
+      recent14Sum += t.avg7d * 7 + t.avg14d * 7;
+      prior14Sum += t.avg28d * 28 - (t.avg7d * 7 + t.avg14d * 7);
+      count++;
+    }
+    if (count === 0 || prior14Sum <= 0) return null;
+    const recentMonthly = (recent14Sum / 14) * 30;
+    const priorMonthly = (prior14Sum / 14) * 30;
+    const delta = ((recentMonthly - priorMonthly) / priorMonthly) * 100;
+    return { delta };
+  }, [visible, trail]);
+
+  // Per-campaign tip computation — every row gets a tip (no empty cells).
+  // Derived from the existing trail (avg7d, avg14d, avg28d) + dailyBudget setting.
+  type TipKind = "spike" | "noDelivery" | "overPacing" | "underPacing" | "healthy" | "paused" | "adSetLevel" | "noBudgetTrail";
+  type Tip = {
+    kind: TipKind;
+    severity: "high" | "medium" | "info" | "good";
+    label: string;
+    detail: string;
+    isSpike: boolean;
+    sevRank: number; // 3=high, 2=med, 1=info, 0=good (sort desc → critical on top)
+  };
+  const computeTip = (c: CampaignData): Tip => {
+    const active = isActive(c);
+
+    // Paused / non-Meta short-circuits get a friendly status tip rather than "—".
+    if (!active) {
+      return {
+        kind: "paused",
+        severity: "info",
+        label: "Paused",
+        detail: "Campaign is not currently delivering. No live spend to assess.",
+        isSpike: false,
+        sevRank: 1,
+      };
+    }
+    if (c.platform !== "meta") {
+      return {
+        kind: "noBudgetTrail",
+        severity: "info",
+        label: "—",
+        detail: "Daily-spend trail isn't available for this platform.",
+        isSpike: false,
+        sevRank: 1,
+      };
+    }
+    const t = trail[c.id];
+    if (!t) {
+      return {
+        kind: "noBudgetTrail",
+        severity: "info",
+        label: "Loading…",
+        detail: "Fetching last 28 days of daily spend.",
+        isSpike: false,
+        sevRank: 1,
+      };
+    }
+    const { avg7d, avg14d, avg28d } = t;
+
+    // 1. Budget spike — last 7d > 25% above prior 7d
+    if (avg14d > 0 && avg7d / avg14d > 1.25) {
+      const pct = ((avg7d - avg14d) / avg14d) * 100;
+      return {
+        kind: "spike",
+        severity: "high",
+        label: "Budget spike",
+        detail: `${formatMoney(avg7d, currency, 0)}/day this week vs ${formatMoney(avg14d, currency, 0)}/day prior · +${Math.round(pct)}%. Verify this was intentional.`,
+        isSpike: true,
+        sevRank: 3,
+      };
+    }
+
+    // 2. Zero delivery on active campaign
+    if (avg7d === 0 && avg28d > 0) {
+      return {
+        kind: "noDelivery",
+        severity: "high",
+        label: "No delivery",
+        detail: "Active but zero spend in the last 7 days. Check ad approvals, audience, or pixel firing.",
+        isSpike: false,
+        sevRank: 3,
+      };
+    }
+
+    // 3. Ad-set-level budget — no campaign budget to compare against
+    if (!c.dailyBudget || c.dailyBudget <= 0) {
+      return {
+        kind: "adSetLevel",
+        severity: "info",
+        label: "Ad-set budgets",
+        detail: `Budget is set at the ad-set level (ABO). Currently averaging ${formatMoney(avg7d, currency, 0)}/day across all ad sets.`,
+        isSpike: false,
+        sevRank: 1,
+      };
+    }
+
+    // 4. Over-pacing — spending >10% above daily budget
+    if (avg7d / c.dailyBudget > 1.10) {
+      const pct = ((avg7d - c.dailyBudget) / c.dailyBudget) * 100;
+      return {
+        kind: "overPacing",
+        severity: "medium",
+        label: "Over-pacing",
+        detail: `${formatMoney(avg7d, currency, 0)}/day vs ${formatMoney(c.dailyBudget, currency, 0)}/day budget · +${Math.round(pct)}%. Within Meta tolerance — watch trend.`,
+        isSpike: false,
+        sevRank: 2,
+      };
+    }
+
+    // 5. Under-pacing — spending <70% of daily budget
+    if (avg7d > 0 && avg7d < c.dailyBudget * 0.70) {
+      const pct = (avg7d / c.dailyBudget) * 100;
+      return {
+        kind: "underPacing",
+        severity: "medium",
+        label: "Under-pacing",
+        detail: `${formatMoney(avg7d, currency, 0)}/day vs ${formatMoney(c.dailyBudget, currency, 0)}/day budget · ${Math.round(pct)}% of cap. Consider lowering budget or check delivery limits.`,
+        isSpike: false,
+        sevRank: 2,
+      };
+    }
+
+    // 6. Healthy — on-pace, no issues. The good-news bucket.
+    const pct = c.dailyBudget > 0 ? (avg7d / c.dailyBudget) * 100 : 100;
+    return {
+      kind: "healthy",
+      severity: "good",
+      label: "On pace",
+      detail: `Spending ${formatMoney(avg7d, currency, 0)}/day · ${Math.round(pct)}% of the ${formatMoney(c.dailyBudget, currency, 0)}/day budget. No action needed.`,
+      isSpike: false,
+      sevRank: 0,
+    };
+  };
+
   // Per-campaign rows for the Meta-export table.
   const rows = useMemo(
     () => visible.map((c) => {
@@ -87,10 +351,14 @@ export default function BudgetAllocationAudit({ campaigns, dateRange }: AuditPro
       const impressions = c.impressions || 0;
       const clicks = c.clicks || 0;
       const conversions = c.conversions || 0;
+      const active = isActive(c);
+      const tip = computeTip(c);
       return {
         c,
         name: c.name,
         status: c.status || "—",
+        // statusOrder: 0 = active first, 1 = paused/other — primary sort key
+        statusOrder: active ? 0 : 1,
         objective: c.objective || "—",
         budget: c.lifetimeBudget ?? c.dailyBudget ?? 0,
         budgetType: c.lifetimeBudget !== undefined ? "lifetime" : c.dailyBudget !== undefined ? "daily" : "none",
@@ -99,11 +367,92 @@ export default function BudgetAllocationAudit({ campaigns, dateRange }: AuditPro
         cpc: clicks > 0 ? spend / clicks : 0,
         results: conversions,
         cpr: conversions > 0 ? spend / conversions : 0,
+        tip,
+        tipSeverity: tip.sevRank,
       };
     }),
-    [visible]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [visible, trail, currency]
   );
-  const { sorted, sort, toggle } = useSort(rows, "spend", "desc");
+  // Auto-send budget-spike emails — once per campaign per ISO week.
+  const [spikeNotice, setSpikeNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (!alertEmail) return;
+    const spikes = rows.filter((r) => r.tip.isSpike);
+    if (spikes.length === 0) return;
+    // ISO year-week key — naturally rolls over weekly so persistent spikes
+    // re-fire next week at most once.
+    const now = new Date();
+    const yr = now.getUTCFullYear();
+    const startOfYear = Date.UTC(yr, 0, 1);
+    const wk = Math.ceil(((now.getTime() - startOfYear) / 86_400_000 + new Date(startOfYear).getUTCDay() + 1) / 7);
+    const weekKey = `${yr}-W${String(wk).padStart(2, "0")}`;
+    const toSend: typeof spikes = [];
+    const dedupKeys: string[] = [];
+    for (const r of spikes) {
+      const k = `spike:${r.c.id}:${weekKey}`;
+      try {
+        if (localStorage.getItem(k)) continue;
+      } catch { /* ignore */ }
+      toSend.push(r);
+      dedupKeys.push(k);
+    }
+    if (toSend.length === 0) return;
+    // Format as CriticalCampaign entries for the existing /api/alerts/budget endpoint.
+    const payload = {
+      recipient: alertEmail,
+      periodLabel: "Budget spike alert",
+      campaigns: toSend.map((r) => {
+        const t = trail[r.c.id];
+        const avg7 = t?.avg7d ?? 0;
+        const avg14 = t?.avg14d ?? 0;
+        const pct = avg14 > 0 ? Math.round(((avg7 - avg14) / avg14) * 100) : 0;
+        return {
+          name: r.c.name,
+          objective: r.c.objective,
+          budget: avg14, // prior-week daily avg, as the "baseline"
+          spend: avg7,   // this-week daily avg, as the "current"
+          spendPct: pct + 100, // express as "% of prior" for the email column
+          currency,
+          status: `Budget spike (+${pct}%)`,
+        };
+      }),
+    };
+    fetch("/api/alerts/budget", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    })
+      .then((r) => r.json().then((d) => ({ ok: r.ok, status: r.status, data: d })))
+      .then(({ ok, status, data }) => {
+        if (ok && data?.sent) {
+          // Mark dedup ONLY on successful send — failures stay re-tryable.
+          for (const k of dedupKeys) {
+            try { localStorage.setItem(k, "1"); } catch { /* ignore */ }
+          }
+          setSpikeNotice(`✓ Sent budget-spike alert for ${toSend.length} campaign(s) to ${alertEmail}`);
+          setTimeout(() => setSpikeNotice(null), 8000);
+        } else {
+          // Surface the actual error so the user knows why no email arrived.
+          const msg = data?.error || `HTTP ${status}`;
+          setSpikeNotice(`⚠ Couldn't send alert: ${msg}`);
+          setTimeout(() => setSpikeNotice(null), 12000);
+        }
+      })
+      .catch((e) => {
+        setSpikeNotice(`⚠ Couldn't send alert: ${e instanceof Error ? e.message : "network error"}`);
+        setTimeout(() => setSpikeNotice(null), 12000);
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, alertEmail]);
+
+  // Default: active campaigns first, then paused, within each group by spend desc.
+  const { sorted: rawSorted, sort, toggle } = useSort(rows, "statusOrder", "asc");
+  // Secondary sort within each status group: highest spend first.
+  const sorted = useMemo(
+    () => [...rawSorted].sort((a, b) => a.statusOrder !== b.statusOrder ? a.statusOrder - b.statusOrder : b.spend - a.spend),
+    [rawSorted]
+  );
 
   const cur = (n: number) => formatMoney(n, currency, 0);
 
@@ -153,21 +502,16 @@ export default function BudgetAllocationAudit({ campaigns, dateRange }: AuditPro
     );
   }
 
-  // Summary metric tiles — all REAL, date-scoped.
+  // Summary metric tiles — Spend only per user request; delivery columns in table below.
   const tiles: Array<{ label: string; value: string; sub?: string }> = [
     { label: "Spend", value: cur(totals.spend), sub: "Real, for the selected window" },
-    { label: "Impressions", value: fmtInt(totals.impressions) },
-    { label: "Clicks", value: fmtInt(totals.clicks), sub: `CTR ${totals.ctr.toFixed(2)}%` },
-    { label: "Results (conversions)", value: fmtInt(totals.conversions), sub: totals.cpr > 0 ? `${cur(totals.cpr)} / result` : undefined },
-    { label: "CPM", value: cur(totals.cpm) },
-    { label: "CPC", value: totals.cpc > 0 ? formatMoney(totals.cpc, currency, 2) : "—" },
   ];
 
   return (
     <div className="space-y-4">
       {/* Toolbar: status filter + attribution chip */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden">
+        <div className="inline-flex rounded-lg border border-gray-200">
           {(["all", "active"] as const).map((f) => (
             <button
               key={f}
@@ -184,7 +528,7 @@ export default function BudgetAllocationAudit({ campaigns, dateRange }: AuditPro
       </div>
 
       {/* Summary row — real window totals */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-1 gap-3">
         {tiles.map((t) => (
           <div key={t.label} className="bg-white rounded-lg border border-gray-200 p-4">
             <div className="text-[11px] text-gray-500">{t.label}</div>
@@ -193,6 +537,121 @@ export default function BudgetAllocationAudit({ campaigns, dateRange }: AuditPro
           </div>
         ))}
       </div>
+
+      {/* Pacing strip — REAL rolling averages from the daily-spend trail */}
+      {pacing.hasTrail && (
+        <div className="bg-white rounded-lg border border-gray-200 p-4">
+          <div className="flex items-center gap-1.5 mb-3">
+            <span className="text-sm font-bold text-gray-900">Spend pacing</span>
+            <span className="text-[11px] text-gray-400">· rolling 7 / 28-day, anchored to today</span>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+
+            {/* Last 7-day avg — per day, with comparison badge */}
+            <div>
+              <div className="text-[11px] text-gray-500">Last 7-day avg</div>
+              <div className="text-xl font-bold text-gray-900">
+                {cur(pacing.avg7d)}
+                <span className="text-xs text-gray-400 font-normal">/day</span>
+              </div>
+              {pacing.wow !== null && (
+                <span className={`inline-flex items-center gap-0.5 mt-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                  pacing.wow > 0
+                    ? "bg-red-100 text-red-700"
+                    : pacing.wow < 0
+                    ? "bg-green-100 text-green-700"
+                    : "bg-gray-100 text-gray-500"
+                }`}>
+                  {pacing.wow >= 0 ? "▲" : "▼"} {Math.abs(Math.round(pacing.wow))}% vs prev 7d
+                </span>
+              )}
+            </div>
+
+            {/* Last 4-week avg — shown as /week */}
+            <div>
+              <div className="text-[11px] text-gray-500">Last 4-week avg</div>
+              <div className="text-xl font-bold text-gray-900">
+                {cur(pacing.avg28d * 7)}
+                <span className="text-xs text-gray-400 font-normal">/wk</span>
+              </div>
+              {pacing.wow !== null && (
+                <span className={`inline-flex items-center gap-0.5 mt-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                  pacing.avg7d > pacing.avg28d * 1.1
+                    ? "bg-red-100 text-red-700"
+                    : pacing.avg7d < pacing.avg28d * 0.9
+                    ? "bg-green-100 text-green-700"
+                    : "bg-gray-100 text-gray-500"
+                }`}>
+                  {pacing.avg7d >= pacing.avg28d ? "▲" : "▼"} {Math.abs(Math.round(pacing.wow))}% this wk
+                </span>
+              )}
+            </div>
+
+            {/* 6-month avg — per month, with badge vs last-month estimate */}
+            <div>
+              <div className="text-[11px] text-gray-500">6-month avg</div>
+              {avg6mPerMonth !== null ? (
+                <>
+                  <div className="text-xl font-bold text-gray-900">
+                    {cur(avg6mPerMonth)}
+                    <span className="text-xs text-gray-400 font-normal">/mo</span>
+                  </div>
+                  {(() => {
+                    // Use current monthly pace (avg28d×30) vs 6m baseline.
+                    // Works even when the account is new (no prior-3m data needed).
+                    // Guard: only show when 6m avg is meaningful (> ₹10k/mo).
+                    if (!avg6mPerMonth || avg6mPerMonth < 10_000 || !pacing.avg28d) return null;
+                    const currentMonthly = pacing.avg28d * 30;
+                    const delta = ((currentMonthly - avg6mPerMonth) / avg6mPerMonth) * 100;
+                    if (Math.abs(delta) > 500) return null; // still extreme → skip
+                    return (
+                      <span className={`inline-flex items-center gap-0.5 mt-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                        delta > 0 ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"
+                      }`}>
+                        {delta >= 0 ? "▲" : "▼"} {Math.abs(Math.round(delta))}% vs 6m avg
+                      </span>
+                    );
+                  })()}
+                  <div className="text-[10px] text-gray-400 mt-0.5">last 182 days ÷ 6 · current pace vs baseline</div>
+                </>
+              ) : (
+                <div className="text-sm text-gray-400 mt-1">Loading…</div>
+              )}
+            </div>
+
+            {/* Weekly budget setting */}
+            <div>
+              <div className="text-[11px] text-gray-500">Weekly budget (setting)</div>
+              <div className="text-xl font-bold text-gray-900">
+                {budgetSetting.daily > 0
+                  ? <>{cur(budgetSetting.daily * 7)}<span className="text-xs text-gray-400 font-normal">/wk</span></>
+                  : <span className="text-gray-400 text-sm">ad-set level</span>}
+              </div>
+              <div className="text-[10px] text-gray-400">live config × 7</div>
+            </div>
+
+            {/* Pace badge */}
+            <div>
+              <div className="text-[11px] text-gray-500">Pace (7d vs budget)</div>
+              {pacing.pacePct !== null ? (
+                <>
+                  <div className={`text-xl font-bold ${pacing.pacePct > 110 ? "text-red-600" : pacing.pacePct < 70 ? "text-yellow-600" : "text-green-600"}`}>
+                    {Math.round(pacing.pacePct)}%
+                  </div>
+                  <span className={`inline-flex items-center mt-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                    pacing.pacePct > 110 ? "bg-red-100 text-red-700"
+                    : pacing.pacePct < 70 ? "bg-yellow-100 text-yellow-700"
+                    : "bg-green-100 text-green-700"
+                  }`}>
+                    {pacing.pacePct > 110 ? "Over budget" : pacing.pacePct < 70 ? "Under-pacing" : "On budget"}
+                  </span>
+                </>
+              ) : <div className="text-sm text-gray-400">— no daily budget</div>}
+            </div>
+
+          </div>
+        </div>
+      )}
 
       {/* Budget SETTING reference — explicitly NOT a projection */}
       <div className="bg-gray-50 border border-gray-200 rounded-lg px-4 py-2.5 text-xs text-gray-600">
@@ -205,31 +664,35 @@ export default function BudgetAllocationAudit({ campaigns, dateRange }: AuditPro
       </div>
 
       {/* Per-campaign Meta-export table */}
-      <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+      <div className="bg-white rounded-lg border border-gray-200 shadow-sm">
         <div className="px-5 py-3 border-b border-gray-200">
           <h3 className="text-sm font-bold text-gray-900">Spend by campaign</h3>
           <p className="text-[11px] text-gray-500 mt-0.5">Real per-campaign delivery for the window — mirrors a Meta Ads Manager export.</p>
+          {spikeNotice && (
+            <div className={`mt-2 inline-flex items-center gap-2 px-3 py-1.5 rounded-md border text-[11px] font-semibold ${
+              spikeNotice.startsWith("⚠")
+                ? "bg-red-50 border-red-200 text-red-700"
+                : "bg-green-50 border-green-200 text-green-700"
+            }`}>
+              {spikeNotice}
+            </div>
+          )}
         </div>
-        <div className="overflow-x-auto">
+        <div>
           <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200">
+            <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-20 shadow-sm">
               <tr>
                 <SortTh col="name" sort={sort} onToggle={toggle} className="px-4 py-2 min-w-[200px]">Campaign</SortTh>
                 <SortTh col="status" sort={sort} onToggle={toggle} className="px-4 py-2" align="center">Status</SortTh>
                 <SortTh col="objective" sort={sort} onToggle={toggle} className="px-4 py-2">Objective</SortTh>
                 <SortTh col="budget" sort={sort} onToggle={toggle} className="px-4 py-2" align="right">Budget (setting)</SortTh>
                 <SortTh col="spend" sort={sort} onToggle={toggle} className="px-4 py-2" align="right">Spend</SortTh>
-                <SortTh col="impressions" sort={sort} onToggle={toggle} className="px-4 py-2" align="right">Impressions</SortTh>
-                <SortTh col="clicks" sort={sort} onToggle={toggle} className="px-4 py-2" align="right">Clicks</SortTh>
-                <SortTh col="cpm" sort={sort} onToggle={toggle} className="px-4 py-2" align="right">CPM</SortTh>
-                <SortTh col="cpc" sort={sort} onToggle={toggle} className="px-4 py-2" align="right">CPC</SortTh>
-                <SortTh col="results" sort={sort} onToggle={toggle} className="px-4 py-2" align="right">Results</SortTh>
-                <SortTh col="cpr" sort={sort} onToggle={toggle} className="px-4 py-2" align="right">Cost/result</SortTh>
+                <SortTh col="tipSeverity" sort={sort} onToggle={toggle} className="px-4 py-2 min-w-[300px]">Recommend</SortTh>
               </tr>
             </thead>
             <tbody>
               {sorted.map((r) => (
-                <tr key={`${r.c.platform}-${r.c.id}`} className="border-b border-gray-100 hover:bg-gray-50">
+                <tr key={`${r.c.platform}-${r.c.id}`} className="border-b border-gray-100 hover:bg-gray-50 align-top">
                   <td className="px-4 py-2.5 font-mono text-gray-900 truncate max-w-[240px]" title={r.name}>{r.name}</td>
                   <td className="px-4 py-2.5 text-center">
                     <span className={`px-2 py-0.5 rounded text-[11px] font-semibold ${isActive(r.c) ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>
@@ -243,12 +706,30 @@ export default function BudgetAllocationAudit({ campaigns, dateRange }: AuditPro
                     )}
                   </td>
                   <td className="px-4 py-2.5 text-right font-semibold text-gray-900 whitespace-nowrap">{cur(r.spend)}</td>
-                  <td className="px-4 py-2.5 text-right text-gray-700">{fmtInt(r.impressions)}</td>
-                  <td className="px-4 py-2.5 text-right text-gray-700">{fmtInt(r.clicks)}</td>
-                  <td className="px-4 py-2.5 text-right text-gray-700 whitespace-nowrap">{r.impressions > 0 ? cur(r.cpm) : "—"}</td>
-                  <td className="px-4 py-2.5 text-right text-gray-700 whitespace-nowrap">{r.clicks > 0 ? formatMoney(r.cpc, currency, 2) : "—"}</td>
-                  <td className="px-4 py-2.5 text-right text-gray-700">{r.results > 0 ? fmtInt(r.results) : "—"}</td>
-                  <td className="px-4 py-2.5 text-right text-gray-700 whitespace-nowrap">{r.cpr > 0 ? cur(r.cpr) : "—"}</td>
+                  <td className="px-4 py-2.5">
+                    {(() => {
+                      const t = r.tip;
+                      // Visual tokens per severity
+                      const styles = {
+                        high:   { ring: "ring-red-200 bg-red-50",        pill: "bg-red-100 text-red-700",        Icon: AlertCircle,    iconClass: "text-red-600" },
+                        medium: { ring: "ring-yellow-200 bg-yellow-50",  pill: "bg-yellow-100 text-yellow-700",  Icon: t.kind === "overPacing" ? TrendingUp : TrendingDown, iconClass: "text-yellow-600" },
+                        good:   { ring: "ring-green-200 bg-green-50",    pill: "bg-green-100 text-green-700",    Icon: CheckCircle2,   iconClass: "text-green-600" },
+                        info:   { ring: "ring-gray-200 bg-gray-50",      pill: "bg-gray-100 text-gray-600",      Icon: AlertCircle,    iconClass: "text-gray-400" },
+                      }[t.severity];
+                      const { Icon } = styles;
+                      return (
+                        <div className={`flex items-start gap-2.5 rounded-lg px-3 py-2 ring-1 ${styles.ring}`}>
+                          <Icon className={`w-4 h-4 mt-0.5 shrink-0 ${styles.iconClass}`} strokeWidth={2.2} />
+                          <div className="min-w-0 flex-1">
+                            <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide ${styles.pill}`}>
+                              {t.label}
+                            </span>
+                            <div className="text-[11px] text-gray-600 leading-snug mt-1">{t.detail}</div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -256,12 +737,7 @@ export default function BudgetAllocationAudit({ campaigns, dateRange }: AuditPro
               <tr className="font-bold text-gray-900">
                 <td className="px-4 py-2.5" colSpan={4}>Total ({visible.length} campaigns)</td>
                 <td className="px-4 py-2.5 text-right whitespace-nowrap">{cur(totals.spend)}</td>
-                <td className="px-4 py-2.5 text-right">{fmtInt(totals.impressions)}</td>
-                <td className="px-4 py-2.5 text-right">{fmtInt(totals.clicks)}</td>
-                <td className="px-4 py-2.5 text-right whitespace-nowrap">{totals.impressions > 0 ? cur(totals.cpm) : "—"}</td>
-                <td className="px-4 py-2.5 text-right whitespace-nowrap">{totals.clicks > 0 ? formatMoney(totals.cpc, currency, 2) : "—"}</td>
-                <td className="px-4 py-2.5 text-right">{fmtInt(totals.conversions)}</td>
-                <td className="px-4 py-2.5 text-right whitespace-nowrap">{totals.cpr > 0 ? cur(totals.cpr) : "—"}</td>
+                <td className="px-4 py-2.5"></td>
               </tr>
             </tfoot>
           </table>
@@ -269,54 +745,11 @@ export default function BudgetAllocationAudit({ campaigns, dateRange }: AuditPro
       </div>
 
       {/* Campaign → ad set → ad drill (real hierarchy) */}
-      <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+      <div className="bg-white rounded-lg border border-gray-200 shadow-sm">
         <div className="px-5 py-3 border-b border-gray-200">
           <h3 className="text-sm font-bold text-gray-900">Drill into campaigns → ad sets → ads</h3>
         </div>
         <CampaignDrillTree campaigns={visible} currency={currency} />
-      </div>
-
-      {/* Monthly cap + email the spend report (kept config) */}
-      <div className="bg-white rounded-lg border border-gray-200 p-5">
-        <h3 className="text-sm font-bold text-gray-900 mb-3">Monthly cap &amp; email report</h3>
-        <div className="flex flex-wrap items-end gap-4">
-          <div className="flex flex-col gap-1">
-            <label className="text-[11px] font-semibold text-gray-600">Monthly budget cap ({currency})</label>
-            <input
-              type="number" min={0} placeholder="e.g. 500000"
-              value={budgetDraft}
-              onChange={(e) => setBudgetDraft(e.target.value)}
-              onBlur={() => { const n = parseFloat(budgetDraft); setMonthlyBudget(!isNaN(n) && n > 0 ? n : null); }}
-              className="border border-gray-300 rounded px-3 py-1.5 text-sm w-40 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            {monthlyBudget ? (
-              <span className="text-[10px] text-gray-500">
-                Window spend is {Math.round((totals.spend / monthlyBudget) * 100)}% of the {cur(monthlyBudget)} cap.
-              </span>
-            ) : <span className="text-[10px] text-gray-400">Set a cap to track spend against it.</span>}
-          </div>
-          <div className="flex flex-col gap-1 flex-1 min-w-[220px]">
-            <label className="text-[11px] font-semibold text-gray-600">Email this spend report</label>
-            <div className="flex gap-2">
-              <input
-                type="email" placeholder="you@email.com"
-                value={emailDraft}
-                onChange={(e) => setEmailDraft(e.target.value)}
-                className="border border-gray-300 rounded px-3 py-1.5 text-sm flex-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <button
-                onClick={handleSend}
-                disabled={sendStatus === "sending"}
-                className="px-4 py-1.5 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap"
-              >
-                {sendStatus === "sending" ? "Sending…" : "Send report"}
-              </button>
-            </div>
-            {sendMessage && (
-              <span className={`text-[11px] ${sendStatus === "sent" ? "text-green-700" : sendStatus === "error" ? "text-red-600" : "text-gray-500"}`}>{sendMessage}</span>
-            )}
-          </div>
-        </div>
       </div>
 
       {/* Honest footer */}

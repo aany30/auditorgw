@@ -129,9 +129,9 @@ export default function EMQBenchmarkTable() {
         </div>
       </div>
 
-      <div className="overflow-x-auto">
+      <div>
         <table className="w-full text-sm">
-          <thead className="bg-gray-50 border-b border-gray-200">
+          <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-20 shadow-sm">
             <tr>
               <th className="px-4 py-3 text-left font-semibold text-gray-700">Event</th>
               <th className="px-4 py-3 text-center font-semibold text-gray-700">EMQ Benchmark</th>
@@ -220,7 +220,7 @@ export default function EMQBenchmarkTable() {
                         onClick={() => fetchInsight(event, current!)}
                         className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100"
                       >
-                        <Sparkles className="w-3 h-3" /> Get recommendations <span className="text-[10px] opacity-60 ml-0.5">~$0.0003</span>
+                        <Sparkles className="w-3 h-3" /> Get recommendations <span className="text-[10px] opacity-60 ml-0.5">~$0.02</span>
                       </button>
                     )}
                     {isBelow && status === "loading" && (

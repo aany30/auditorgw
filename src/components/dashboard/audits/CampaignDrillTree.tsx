@@ -135,9 +135,9 @@ export default function CampaignDrillTree({ campaigns, currency }: Props) {
   };
 
   return (
-    <div className="overflow-x-auto">
+    <div>
       <table className="w-full text-sm">
-        <thead className="bg-gray-50 border-b border-gray-200">
+        <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-20 shadow-sm">
           <tr>
             <th className="px-3 py-2 text-left font-semibold text-gray-700 min-w-[280px]">Campaigns / Ad Sets / Ads</th>
             <th className="px-3 py-2 text-right font-semibold text-gray-700">Impressions</th>

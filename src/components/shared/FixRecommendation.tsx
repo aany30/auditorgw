@@ -140,7 +140,7 @@ export default function FixRecommendation({
       >
         <Sparkles className="w-3 h-3" />
         {open ? "Hide fix" : "How to fix this"}
-        {!open && !data && <span className="text-[10px] text-blue-400 ml-1">~$0.0003</span>}
+        {!open && !data && <span className="text-[10px] text-blue-400 ml-1">~$0.02</span>}
         {open ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
       </button>
 

@@ -104,9 +104,9 @@ export default function PixelHealthTab({ platform = "both", dateRange = "30d", c
         <div className="p-6 border-b border-gray-200">
           <h2 className="text-lg font-bold text-gray-900">Pixel Overview</h2>
         </div>
-        <div className="overflow-x-auto">
+        <div>
           <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200">
+            <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-20 shadow-sm">
               <tr>
                 <SortTh col="name" sort={pixelSort} onToggle={pixelToggle} className="px-6 py-3"><TermText>Pixel Name</TermText></SortTh>
                 <th className="px-6 py-3 text-left font-semibold text-gray-700"><TermText>Pixel ID</TermText></th>
@@ -149,9 +149,9 @@ export default function PixelHealthTab({ platform = "both", dateRange = "30d", c
           <h2 className="text-lg font-bold text-gray-900">Event Breakdown — Browser vs Server</h2>
           <p className="text-sm text-gray-600 mt-1">CAPI deduplication and event firing comparison</p>
         </div>
-        <div className="overflow-x-auto">
+        <div>
           <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200">
+            <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-20 shadow-sm">
               <tr>
                 <SortTh col="event" sort={eventSort} onToggle={eventToggle} className="px-6 py-3">Event</SortTh>
                 <SortTh col="fired" sort={eventSort} onToggle={eventToggle} className="px-6 py-3" align="right">Total Fired</SortTh>

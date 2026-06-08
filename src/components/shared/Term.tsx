@@ -62,7 +62,6 @@ export function Term({ name, children }: TermProps) {
       <span
         ref={triggerRef}
         className="cursor-help inline-flex items-baseline gap-0.5 group/term"
-        title={`${name} — ${def.short}: ${def.long}`}
         tabIndex={0}
       >
         {children || name}

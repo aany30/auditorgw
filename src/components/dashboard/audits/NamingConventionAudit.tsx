@@ -268,9 +268,9 @@ export default function NamingConventionAudit({ campaigns }: AuditProps) {
       </div>
 
       <AuditCard title="Naming Convention" description="Standardized naming pass/fail per campaign · click ▶ to expand ad sets and ads">
-        <div className="overflow-x-auto">
+        <div>
           <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200">
+            <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-20 shadow-sm">
               <tr>
                 <th className="px-4 py-2 w-6"></th>
                 <th className="px-4 py-2 text-left font-semibold text-gray-700">Campaign / Ad Set / Ad</th>

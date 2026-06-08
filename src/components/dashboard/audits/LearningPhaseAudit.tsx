@@ -213,34 +213,53 @@ function whyStuck(
   const daysActive = daysAgo(c.createdTime);
   const conv7d = signals.conversions7d;
 
-  // 1. Recent edit (highest priority — wipes prior learning progress)
-  if (daysSinceEdit !== null && daysSinceEdit < 7) {
-    reasons.push({
-      severity: "high",
-      text: `Significant edit ${daysSinceEdit} day${daysSinceEdit === 1 ? "" : "s"} ago restarted the 7-day learning window. Avoid editing budget (>20%), audience, bid strategy, or creative for the next ${7 - daysSinceEdit} day${7 - daysSinceEdit === 1 ? "" : "s"}.`,
-    });
-  }
-
-  // 2. Conversion count signals
-  if (conv7d === 0 && (daysActive ?? 0) >= 3) {
-    reasons.push({
-      severity: "high",
-      text: "Zero conversion events in the last 7 days. Verify the pixel is firing for this event, the audience matches, and creative isn't stalled.",
-    });
-  } else if (conv7d !== null && conv7d > 0 && conv7d < 50) {
-    reasons.push({
-      severity: "high",
-      text: `Only ${Math.round(conv7d)} / 50 events in the last 7 days. Meta needs 50 to exit learning.`,
-    });
-  }
-
-  // 3. AUDIENCE TOO SMALL — derived from real reach + frequency data.
-  //    Frequency >3.5 over 7d = audience saturation territory. >5 = clear too-small.
-  //    Combined with low absolute reach, this is the strongest "audience" signal.
+  // Real signals — computed up front so the events bullet can name the cause.
   const reach = signals.reach7d ?? 0;
   const freq = signals.frequency7d ?? 0;
   const impr = signals.impressions7d ?? 0;
   const spent7d = signals.spend7d ?? 0;
+  const cap0 = campaignCostCap(c);
+  const spendW = c.spend ?? 0;
+  const convW = c.conversions ?? 0;
+  const cpa0 = convW > 0 ? spendW / convW : null;
+  const daily0 = c.dailyBudget;
+  const requiredWeekly0 = cpa0 !== null ? cpa0 * 50 : null;
+
+  /** Best single explanation for WHY events are below 50, from the data we have. */
+  const likelyCause = (): string => {
+    if (freq >= 3.5 && reach > 0)
+      return `likely the audience is too small — frequency ${freq.toFixed(1)}× on only ${fmtCount(reach)} unique reach, so Meta keeps re-showing the same people. Broaden targeting or add lookalikes.`;
+    if (cap0 && cpa0 !== null && cap0.cap < cpa0 * 0.9)
+      return `likely the ${cap0.strategy === "COST_CAP" ? "cost cap" : "bid cap"} ${formatMoney(cap0.cap, currency)} is below the real CPA of ${formatMoney(cpa0, currency)} — raise it or switch to "Lowest cost".`;
+    if (cpa0 !== null && daily0 && daily0 > 0 && daily0 * 7 < (requiredWeekly0 ?? 0) * 0.9)
+      return `likely the budget is too low — at the current ${formatMoney(cpa0, currency)} CPA you'd need ~${formatMoney(requiredWeekly0!, currency)}/week (${formatMoney(Math.ceil((requiredWeekly0!) / 7), currency)}/day) to reach 50.`;
+    if (reach > 0 && reach < 20_000)
+      return `likely the audience is narrow — only ${fmtCount(reach)} people reached in 7 days. Broaden targeting to give Meta more room.`;
+    return `likely audience size, budget, or bid cap is limiting delivery — check the ad-set's audience definition and budget.`;
+  };
+
+  // 1. Recent edit (highest priority — wipes prior learning progress)
+  if (daysSinceEdit !== null && daysSinceEdit < 7) {
+    const when = daysSinceEdit === 0 ? "today" : `${daysSinceEdit} day${daysSinceEdit === 1 ? "" : "s"} ago`;
+    const left = 7 - daysSinceEdit;
+    reasons.push({
+      severity: "high",
+      text: `A significant edit ${when} restarted the 7-day learning window — that reset progress toward the 50 events. Avoid editing budget (>20%), audience, bid strategy, or creative for the next ${left} day${left === 1 ? "" : "s"} so it can re-stabilise.`,
+    });
+  }
+
+  // 2. Conversion count signals — ALWAYS name the probable cause.
+  if (conv7d === 0 && (daysActive ?? 0) >= 3) {
+    reasons.push({
+      severity: "high",
+      text: `Zero conversion events in the last 7 days — ${likelyCause()} Also verify the pixel/CAPI is firing this event.`,
+    });
+  } else if (conv7d !== null && conv7d > 0 && conv7d < 50) {
+    reasons.push({
+      severity: "high",
+      text: `Only ${Math.round(conv7d)} / 50 events in the last 7 days (Meta needs 50 to exit learning) — ${likelyCause()}`,
+    });
+  }
 
   if (freq >= 5 && reach > 0) {
     reasons.push({
@@ -462,15 +481,15 @@ export default function LearningPhaseAudit({ campaigns }: AuditProps) {
       )}
 
       <AuditCard
-        title="Learning Phase per Campaign (currently serving only)"
+        title="Per Campaign — currently serving only"
         description="Active campaigns scored against Meta's 50-events / 7-day rule. Reasons + budget targets are derived from live Insights data."
       >
         {last7dLoading && rows.some((r) => r.conv7d === null) && (
           <div className="text-[11px] text-gray-500 mb-2 px-1">Loading 7-day conversion counts from Meta…</div>
         )}
-        <div className="overflow-x-auto">
+        <div>
           <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200">
+            <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-20 shadow-sm">
               <tr>
                 <SortTh col="campaign" sort={lpSort} onToggle={lpToggle} className="px-3 py-2 min-w-[200px]">Campaign</SortTh>
                 <SortTh col="structure" sort={lpSort} onToggle={lpToggle} className="px-3 py-2" align="center">Structure</SortTh>

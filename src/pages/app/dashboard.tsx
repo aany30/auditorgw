@@ -36,6 +36,8 @@ import {
   Lightbulb,
   ChevronDown,
   ChevronRight,
+  Mail,
+  Check,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -97,7 +99,12 @@ export default function Dashboard() {
     setGoogleCredentials,
     setGoogleAccountsList,
     totalAiCreditsUsd,
+    alertEmail,
+    setAlertEmail,
   } = useAuthStore();
+  const [emailPopoverOpen, setEmailPopoverOpen] = useState(false);
+  const [emailDraft, setEmailDraft] = useState(alertEmail || "");
+  const [emailSavedFlash, setEmailSavedFlash] = useState(false);
   const [activeTab, setActiveTab] = useState<string>("overview");
   const [platformFilter, setPlatformFilter] = useState<PlatformValue>("all");
   const platform = toLegacyPlatform(platformFilter);
@@ -286,13 +293,75 @@ export default function Dashboard() {
           <div className="flex items-center gap-3">
             <AccountSelector />
 
-            {/* Running AI API cost counter — always visible, accumulates every AI call */}
+            {/* Running AI credit counter — accumulates the product-priced cost of every AI call this session */}
             <div
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-50 border border-indigo-200 text-xs font-semibold text-indigo-800"
-              title="Total Claude AI API cost used this session (Haiku 4.5 pricing). Resets on logout."
+              title="Total AI credits used this session. Resets on logout."
             >
               <span>✦ AI Credits</span>
-              <span className="font-mono">${totalAiCreditsUsd.toFixed(4)}</span>
+              <span className="font-mono">${totalAiCreditsUsd.toFixed(2)}</span>
+            </div>
+
+            {/* Alert-email icon — when set, critical Budget Allocation issues
+                auto-email this address. Click to add/edit. */}
+            <div className="relative">
+              <button
+                onClick={() => { setEmailDraft(alertEmail || ""); setEmailPopoverOpen((v) => !v); }}
+                className={`relative p-2 rounded-lg transition flex items-center gap-1.5 text-sm font-semibold ${
+                  alertEmail
+                    ? "bg-green-50 border border-green-200 text-green-700 hover:bg-green-100"
+                    : "bg-gray-100 border border-gray-200 text-gray-600 hover:bg-gray-200"
+                }`}
+                title={alertEmail ? `Critical-issue alerts → ${alertEmail}` : "Add alert email"}
+              >
+                <Mail className="w-4 h-4" />
+                {alertEmail && <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-green-500 rounded-full ring-2 ring-white" />}
+              </button>
+              {emailPopoverOpen && (
+                <div className="absolute right-0 top-full mt-2 w-80 bg-white border border-gray-200 rounded-lg shadow-lg p-4 z-50">
+                  <h3 className="text-sm font-bold text-gray-900 mb-1">Critical-issue alerts</h3>
+                  <p className="text-[11px] text-gray-500 mb-3">
+                    We&apos;ll email this address when Budget Allocation detects a budget spike (&gt;25% week-over-week) or a campaign stops delivering.
+                  </p>
+                  <input
+                    type="email"
+                    placeholder="you@email.com"
+                    value={emailDraft}
+                    onChange={(e) => setEmailDraft(e.target.value)}
+                    className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    autoFocus
+                  />
+                  <div className="flex items-center justify-between mt-3 gap-2">
+                    <button
+                      onClick={() => { setAlertEmail(null); setEmailDraft(""); setEmailPopoverOpen(false); }}
+                      className="text-[11px] text-red-600 hover:underline"
+                    >
+                      Remove
+                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setEmailPopoverOpen(false)}
+                        className="px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-100 rounded"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={() => {
+                          const v = emailDraft.trim();
+                          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return;
+                          setAlertEmail(v);
+                          setEmailSavedFlash(true);
+                          setTimeout(() => setEmailSavedFlash(false), 1500);
+                          setTimeout(() => setEmailPopoverOpen(false), 600);
+                        }}
+                        className="px-3 py-1.5 text-xs font-semibold bg-blue-600 text-white rounded hover:bg-blue-700 inline-flex items-center gap-1"
+                      >
+                        {emailSavedFlash ? <><Check className="w-3 h-3" /> Saved</> : "Save"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             <button
@@ -369,7 +438,7 @@ export default function Dashboard() {
           </nav>
         </aside>
 
-        <main className="flex-1 overflow-y-auto bg-gray-50">
+        <main className="flex-1 overflow-y-auto overflow-x-hidden bg-gray-50">
           <div className="p-8">{renderTabContent()}</div>
         </main>
       </div>

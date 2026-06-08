@@ -240,7 +240,7 @@ export default function EventQualityTab({ platform = "both", dateRange = "30d", 
       .sort((a, b) => b.coverage - a.coverage);
     return [...canonicalRows, ...extraRows];
   }, [isRealMeta, meta, emqKeyBenchmarks]);
-  const { sorted: sortedMatchKeys, sort: mkSort, toggle: mkToggle } = useSort(matchKeyRows, "coverage", "desc");
+  const { sorted: sortedMatchKeys, sort: mkSort, toggle: mkToggle } = useSort(matchKeyRows, "coverage", "asc");
 
   // Inline-edit state for the Recommended Benchmark column. `editingLabel` is
   // the row currently in edit mode; `draftMin` / `draftMax` hold the in-progress
@@ -356,9 +356,9 @@ export default function EventQualityTab({ platform = "both", dateRange = "30d", 
             <h2 className="text-lg font-bold text-gray-900"><TermText>Match-Key Coverage</TermText></h2>
             <p className="text-sm text-gray-600 mt-1">% of events that carried each customer-matching parameter — real data from Meta.</p>
           </div>
-          <div className="overflow-x-auto">
+          <div>
             <table className="w-full text-sm">
-              <thead className="bg-gray-50 border-b border-gray-200">
+              <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-20 shadow-sm">
                 <tr>
                   <SortTh col="label" sort={mkSort} onToggle={mkToggle} className="px-4 py-3">Match Key</SortTh>
                   <SortTh col="coverage" sort={mkSort} onToggle={mkToggle} className="px-4 py-3">Your Coverage</SortTh>
@@ -454,7 +454,7 @@ export default function EventQualityTab({ platform = "both", dateRange = "30d", 
                               onClick={() => fetchMkRec(r.label, r.coverage, r.benchmarkMin, r.benchmarkMax, siblingMetrics)}
                               className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100"
                             >
-                              <Sparkles className="w-3 h-3" /> Get recommendations <span className="text-[10px] opacity-60 ml-0.5">~$0.0003</span>
+                              <Sparkles className="w-3 h-3" /> Get recommendations <span className="text-[10px] opacity-60 ml-0.5">~$0.02</span>
                             </button>
                           );
                         }
@@ -561,9 +561,9 @@ export default function EventQualityTab({ platform = "both", dateRange = "30d", 
           <h2 className="text-lg font-bold text-gray-900">EMQ Score vs Meta Benchmarks</h2>
           <p className="text-sm text-gray-600 mt-1">Current scores compared against recommended benchmarks per event</p>
         </div>
-        <div className="overflow-x-auto">
+        <div>
           <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200">
+            <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-20 shadow-sm">
               <tr>
                 <th className="px-6 py-3 text-left font-semibold text-gray-700">Event Type</th>
                 <th className="px-6 py-3 text-right font-semibold text-gray-700">Current Score</th>
@@ -602,9 +602,9 @@ export default function EventQualityTab({ platform = "both", dateRange = "30d", 
           <h2 className="text-lg font-bold text-gray-900"><TermText>Match Key Coverage</TermText></h2>
           <p className="text-sm text-gray-600 mt-1">Quality of advanced matching parameters passed with each event</p>
         </div>
-        <div className="overflow-x-auto">
+        <div>
           <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200">
+            <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-20 shadow-sm">
               <tr>
                 <th className="px-6 py-3 text-left font-semibold text-gray-700">Match Key</th>
                 <th className="px-6 py-3 text-right font-semibold text-gray-700">Coverage</th>
