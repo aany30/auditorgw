@@ -9,6 +9,7 @@ import BudgetAllocationAudit from "./audits/BudgetAllocationAudit";
 import LearningPhaseAudit from "./audits/LearningPhaseAudit";
 import AboCboAudit from "./audits/AboCboAudit";
 import VerificationBanner from "@/components/shared/VerificationBanner";
+import AIExecutiveSummary from "@/components/shared/AIExecutiveSummary";
 
 interface Props {
   platform: "meta" | "google" | "both";
@@ -51,6 +52,7 @@ export default function AccountStructureTab({ platform, dateRange, customStart, 
   } = useAuthStore();
   const [campaigns, setCampaigns] = useState<CampaignData[]>([]);
   const [loading, setLoading] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [active, setActive] = useState<SubTab>("naming");
 
   // User-defined window override (independent of the global navbar picker).
@@ -68,6 +70,7 @@ export default function AccountStructureTab({ platform, dateRange, customStart, 
     let cancelled = false;
     const fetchCampaigns = async () => {
       setLoading(true);
+      setFetchError(null);
       const all: CampaignData[] = [];
       const startDate = winStart;
       const endDate = winEnd;
@@ -78,7 +81,12 @@ export default function AccountStructureTab({ platform, dateRange, customStart, 
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ accessToken: metaAccessToken, businessId: metaBusinessId, startDate, endDate }),
           });
-          if (r.ok) all.push(...(await r.json()));
+          if (r.ok) {
+            all.push(...(await r.json()));
+          } else {
+            const body = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
+            if (!cancelled) setFetchError(body.error || `Meta API error (HTTP ${r.status})`);
+          }
         }
         if ((platform === "google" || platform === "both") && googleAccessToken && googleCustomerId && googleAdsDeveloperToken) {
           const r = await fetch("/api/naming/campaigns/google", {
@@ -93,10 +101,15 @@ export default function AccountStructureTab({ platform, dateRange, customStart, 
               endDate,
             }),
           });
-          if (r.ok) all.push(...(await r.json()));
+          if (r.ok) {
+            all.push(...(await r.json()));
+          } else {
+            const body = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
+            if (!cancelled) setFetchError(body.error || `Google API error (HTTP ${r.status})`);
+          }
         }
       } catch (e) {
-        console.error(e);
+        if (!cancelled) setFetchError(e instanceof Error ? e.message : "Fetch failed");
       } finally {
         if (!cancelled) {
           setCampaigns(all);
@@ -139,13 +152,28 @@ export default function AccountStructureTab({ platform, dateRange, customStart, 
   const acctCurrency = filteredCampaigns.find((c) => c.currency)?.currency || "USD";
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <Layers className="w-8 h-8 text-blue-600" />
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Account Structure Audit</h1>
-          <p className="text-gray-600 mt-1">Campaign structure: naming, funnel separation, budget, learning, objective, ABO/CBO</p>
+    <div className="space-y-6 section-enter">
+      {fetchError && (
+        <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700 flex items-start gap-2">
+          <span className="font-semibold shrink-0">Error loading campaigns:</span>
+          <span>{fetchError}</span>
         </div>
+      )}
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-3">
+          <Layers className="w-8 h-8 text-blue-600" />
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900">Account Structure Audit</h1>
+            <p className="text-gray-600 mt-1">Campaign structure: naming, funnel separation, budget, learning, objective, ABO/CBO</p>
+          </div>
+        </div>
+        <AIExecutiveSummary
+          tabName="Account Structure"
+          context={{ activeAudit: active, platform, campaignCount: campaigns.length, dateRange }}
+          platform={platform === "both" ? "meta" : platform}
+          dateRange={dateRange}
+          inline
+        />
       </div>
 
       {/* User-defined window — drives the data fetch for ALL sub-audits.
@@ -228,6 +256,7 @@ export default function AccountStructureTab({ platform, dateRange, customStart, 
       {active === "budget" && <BudgetAllocationAudit {...auditProps} />}
       {active === "learning" && <LearningPhaseAudit {...auditProps} />}
       {active === "abo-cbo" && <AboCboAudit {...auditProps} />}
+
     </div>
   );
 }

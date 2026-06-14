@@ -3,6 +3,7 @@ import { persist } from "zustand/middleware";
 import { DateRange, CustomDateRange, NamingConvention, NamingRule } from "@/types";
 import { META_BENCHMARKS, type BenchmarkSnapshot } from "@/lib/funnel-benchmarks";
 import { toDisplayCredits } from "@/lib/ai-cost";
+import { isDemoCredential } from "@/lib/demo-data";
 
 interface PixelInfo {
   id: string;
@@ -273,6 +274,14 @@ interface AuthState {
   isMetaConnected: () => boolean;
   isGoogleConnected: () => boolean;
   getDateRangeLabel: () => string;
+
+  // Demo mode — session-only, NOT persisted to localStorage.
+  // When true, the dashboard renders demo data without writing fake tokens
+  // into localStorage (so other visitors on the same machine / new tabs
+  // never accidentally see "Go to Dashboard" or someone else's demo state).
+  demoMode: boolean;
+  enterDemoMode: () => void;
+  exitDemoMode: () => void;
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -282,6 +291,9 @@ export const useAuthStore = create<AuthState>()(
       monthlyBudget: null,
       emqInputs: {},
       totalAiCreditsUsd: 0,
+      demoMode: false,
+      enterDemoMode: () => set({ demoMode: true }),
+      exitDemoMode: () => set({ demoMode: false }),
       metaAccessToken: null,
       metaBusinessId: null,
       metaPixelIds: [],
@@ -419,6 +431,7 @@ export const useAuthStore = create<AuthState>()(
           selectedGAPropertyId: null,
           selectedGTMContainerId: null,
           totalAiCreditsUsd: 0, // reset credit counter on logout
+          demoMode: false,      // exit demo on logout
         }),
 
       addMetaPixelId: (pixelId) =>
@@ -429,11 +442,18 @@ export const useAuthStore = create<AuthState>()(
 
       isMetaConnected: () => {
         const state = get();
-        return !!(state.metaAccessToken && state.metaBusinessId);
+        // Demo tokens (the legacy "demo-meta-token" placeholder OR anything that
+        // matches isDemoCredential) DON'T count as a real connection — they
+        // shouldn't surface the "Go to Dashboard" button or pass the route guard.
+        if (!state.metaAccessToken || !state.metaBusinessId) return false;
+        if (isDemoCredential(state.metaAccessToken)) return false;
+        return true;
       },
       isGoogleConnected: () => {
         const state = get();
-        return !!(state.googleAccessToken && state.googleCustomerId);
+        if (!state.googleAccessToken || !state.googleCustomerId) return false;
+        if (isDemoCredential(state.googleAccessToken)) return false;
+        return true;
       },
 
       getDateRangeLabel: () => {
@@ -501,19 +521,35 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: "auth-store",
+      // Exclude transient session state (demoMode) from localStorage so refresh
+      // doesn't re-enter demo and other tabs / browsers stay clean.
+      partialize: (state) => {
+        const { demoMode: _demoMode, ...rest } = state as AuthState & { demoMode: boolean };
+        return rest;
+      },
       // Bump this version any time DEFAULT_NAMING_CONVENTIONS / META_BENCHMARKS
       // change in a way that should override persisted user state.
-      version: 3,
-      // On version mismatch, replace the persisted naming convention with the
-      // fresh default (v3: updated Objective/Buy Type + Creative Type options).
+      version: 4,
+      // v4 migration: wipe persisted demo placeholder tokens (`demo-meta-token`,
+      // `demo-google-token`) that pre-fix users had stuck in their localStorage.
+      // Without this, old users would still see "Go to Dashboard" until they
+      // explicitly logged out.
       migrate: (persistedState: unknown, fromVersion: number) => {
-        const state = (persistedState as Partial<AuthState>) || {};
+        let state = (persistedState as Partial<AuthState>) || {};
         if (fromVersion < 3) {
-          return {
+          state = {
             ...state,
             namingConventions: DEFAULT_NAMING_CONVENTIONS,
             activeConventionId: DEFAULT_NAMING_CONVENTIONS[0].id,
-          } as AuthState;
+          };
+        }
+        if (fromVersion < 4) {
+          if (state.metaAccessToken && isDemoCredential(state.metaAccessToken)) {
+            state = { ...state, metaAccessToken: null, metaBusinessId: null, metaPixelIds: [] };
+          }
+          if (state.googleAccessToken && isDemoCredential(state.googleAccessToken)) {
+            state = { ...state, googleAccessToken: null, googleCustomerId: null, gaPropertyId: null, gtmContainerId: null };
+          }
         }
         return state as AuthState;
       },

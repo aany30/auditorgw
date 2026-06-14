@@ -44,7 +44,15 @@ export function useAudit(
     googleAdsLoginCustomerId,
     isMetaConnected,
     isGoogleConnected,
+    demoMode,
   } = useAuthStore();
+  // In demo mode, send demo-prefixed placeholders so the API endpoints take
+  // their isDemoCredential() branch and return demo data — without ever
+  // writing those placeholders into localStorage.
+  const effectiveMetaToken = demoMode ? "demo-meta-token" : metaAccessToken;
+  const effectiveGoogleToken = demoMode ? "demo-google-token" : googleAccessToken;
+  const effectiveMetaConnected = demoMode ? true : isMetaConnected();
+  const effectiveGoogleConnected = demoMode ? true : isGoogleConnected();
 
   const [state, setState] = useState<AuditState>({
     meta: null,
@@ -61,55 +69,56 @@ export function useAudit(
     const promises: Promise<void>[] = [];
     let metaData: MetaAuditResponse | null = null;
     let googleData: GoogleAuditResponse | null = null;
+    let fetchError: string | null = null;
 
-    if ((platform === "meta" || platform === "both") && isMetaConnected() && metaAccessToken) {
+    if ((platform === "meta" || platform === "both") && effectiveMetaConnected && effectiveMetaToken) {
       promises.push(
         fetch("/api/audit/meta", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            accessToken: metaAccessToken,
-            pixelIds: metaPixelIds,
-            // Sent so the endpoint can auto-discover pixels when the user
-            // left the Pixel IDs field blank in the credential form.
-            businessId: useAuthStore.getState().metaBusinessId,
+            accessToken: effectiveMetaToken,
+            pixelIds: demoMode ? ["demo-pixel-001", "demo-pixel-002"] : metaPixelIds,
+            businessId: demoMode ? "demo-business-123" : useAuthStore.getState().metaBusinessId,
             startDate,
             endDate,
           }),
         })
-          .then((r) => r.json())
-          .then((d) => {
+          .then(async (r) => {
+            const d = await r.json();
+            if (!r.ok) { fetchError = d.error || `Meta API error (HTTP ${r.status})`; return; }
             metaData = d;
           })
-          .catch(() => {})
+          .catch((e) => { fetchError = e?.message || "Meta fetch failed"; })
       );
     }
 
     if (
       (platform === "google" || platform === "both") &&
-      isGoogleConnected() &&
-      googleAccessToken
+      effectiveGoogleConnected &&
+      effectiveGoogleToken
     ) {
       promises.push(
         fetch("/api/audit/google", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            accessToken: googleAccessToken,
-            customerId: googleCustomerId,
-            propertyId: gaPropertyId,
-            containerId: gtmContainerId,
+            accessToken: effectiveGoogleToken,
+            customerId: demoMode ? "123-456-7890" : googleCustomerId,
+            propertyId: demoMode ? "GA4-DEMO-001" : gaPropertyId,
+            containerId: demoMode ? "GTM-DEMO" : gtmContainerId,
             developerToken: googleAdsDeveloperToken,
             loginCustomerId: googleAdsLoginCustomerId,
             startDate,
             endDate,
           }),
         })
-          .then((r) => r.json())
-          .then((d) => {
+          .then(async (r) => {
+            const d = await r.json();
+            if (!r.ok) { fetchError = d.error || `Google API error (HTTP ${r.status})`; return; }
             googleData = d;
           })
-          .catch(() => {})
+          .catch((e) => { fetchError = e?.message || "Google fetch failed"; })
       );
     }
 
@@ -128,12 +137,13 @@ export function useAudit(
         ? "demo"
         : "mixed";
 
-    setState({ meta: metaData, google: googleData, loading: false, error: null, source });
+    setState({ meta: metaData, google: googleData, loading: false, error: fetchError, source });
   }, [
     platform,
     dateRange,
     customStart,
     customEnd,
+    demoMode,
     metaAccessToken,
     metaPixelIds,
     googleAccessToken,

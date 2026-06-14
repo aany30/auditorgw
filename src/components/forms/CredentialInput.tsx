@@ -1,10 +1,13 @@
 import { useState } from "react";
+import { useRouter } from "next/router";
 import { useAuthStore } from "@/store/auth";
-import { CheckCircle2, XCircle, AlertCircle, Loader2, Lightbulb } from "lucide-react";
+import { CheckCircle2, XCircle, AlertCircle, Loader2, Lightbulb, ArrowRight } from "lucide-react";
 
 interface CredentialInputProps {
   platform: "meta" | "google";
-  onClose: () => void;
+  // Renamed in callers to `onComplete` — both names accepted for compatibility.
+  onClose?: () => void;
+  onComplete?: () => void;
 }
 
 interface TestResult {
@@ -15,12 +18,15 @@ interface TestResult {
   hint?: string;
 }
 
-export default function CredentialInput({ platform, onClose }: CredentialInputProps) {
+export default function CredentialInput({ platform, onClose, onComplete }: CredentialInputProps) {
+  const router = useRouter();
   const { setMetaCredentials, setGoogleCredentials } = useAuthStore();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<TestResult[] | null>(null);
   const [testing, setTesting] = useState(false);
+  const [savedSuccess, setSavedSuccess] = useState(false);
+  const done = () => { onComplete?.(); onClose?.(); };
 
   const [metaForm, setMetaForm] = useState({
     accessToken: "",
@@ -37,7 +43,6 @@ export default function CredentialInput({ platform, onClose }: CredentialInputPr
     loginCustomerId: "",
   });
 
-  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const inputClass =
     "w-full bg-white text-gray-900 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100";
@@ -106,7 +111,7 @@ export default function CredentialInput({ platform, onClose }: CredentialInputPr
       const pixelIds = metaForm.pixelIds.split(",").map((id) => id.trim()).filter(Boolean);
       setMetaCredentials(metaForm.accessToken.trim(), metaForm.businessId.trim(), pixelIds);
       setMetaForm({ accessToken: "", businessId: "", pixelIds: "" });
-      onClose();
+      setSavedSuccess(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred");
     } finally {
@@ -119,21 +124,21 @@ export default function CredentialInput({ platform, onClose }: CredentialInputPr
     setError(null);
     setIsLoading(true);
     try {
-      if (!googleForm.accessToken.trim()) throw new Error("Access token is required");
-      if (!googleForm.customerId.trim()) throw new Error("Google Ads Customer ID is required");
-      if (!googleForm.propertyId.trim()) throw new Error("GA4 Property ID is required");
-      if (!googleForm.containerId.trim()) throw new Error("GTM Container ID is required");
+      // MINIMUM requirements (only 3 fields). GA4 + GTM optional.
+      if (!googleForm.accessToken.trim()) throw new Error("Refresh Token is required");
+      if (!googleForm.developerToken.trim()) throw new Error("Developer Token is required");
+      if (!googleForm.customerId.trim()) throw new Error("Customer ID is required");
 
       setGoogleCredentials(
         googleForm.accessToken.trim(),
         googleForm.customerId.trim(),
-        googleForm.propertyId.trim(),
-        googleForm.containerId.trim(),
-        googleForm.developerToken.trim() || undefined,
+        googleForm.propertyId.trim() || "",     // optional — empty means skip GA4 audit
+        googleForm.containerId.trim() || "",    // optional — empty means skip GTM audit
+        googleForm.developerToken.trim(),
         googleForm.loginCustomerId.trim() || undefined
       );
       setGoogleForm({ accessToken: "", customerId: "", propertyId: "", containerId: "", developerToken: "", loginCustomerId: "" });
-      onClose();
+      setSavedSuccess(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred");
     } finally {
@@ -174,6 +179,40 @@ export default function CredentialInput({ platform, onClose }: CredentialInputPr
     );
   };
 
+  // Success screen — shows "Go to Dashboard" CTA after successful save.
+  if (savedSuccess) {
+    return (
+      <div className="bg-green-50 border-2 border-green-300 rounded-xl p-6 text-center space-y-4">
+        <div className="inline-flex items-center justify-center w-14 h-14 bg-green-500 rounded-full">
+          <CheckCircle2 className="w-8 h-8 text-white" strokeWidth={2.5} />
+        </div>
+        <div>
+          <h3 className="text-xl font-bold text-green-900">
+            {platform === "meta" ? "Meta" : "Google"} connected!
+          </h3>
+          <p className="text-green-700 text-sm mt-1">
+            Your credentials are saved. Open the dashboard to see your live data.
+          </p>
+        </div>
+        <button
+          onClick={() => router.push("/app/dashboard")}
+          className="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-blue-600 text-white font-bold text-sm hover:bg-blue-700 transition shadow-sm"
+        >
+          Go to Dashboard
+          <ArrowRight className="w-4 h-4" />
+        </button>
+        <div>
+          <button
+            onClick={() => { setSavedSuccess(false); done(); }}
+            className="text-xs text-gray-500 hover:text-gray-700 underline"
+          >
+            Connect another account first
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       {error && (
@@ -202,14 +241,20 @@ export default function CredentialInput({ platform, onClose }: CredentialInputPr
           </div>
 
           <div>
-            <label className="block text-gray-700 text-sm font-semibold mb-2">Business ID</label>
+            <label className="block text-gray-700 text-sm font-semibold mb-2">
+              Ad Account ID
+              <span className="ml-1 text-xs font-normal text-gray-500">— from Ads Manager URL (act_XXXXXXX)</span>
+            </label>
             <input
               type="text"
               value={metaForm.businessId}
               onChange={(e) => setMetaForm({ ...metaForm, businessId: e.target.value })}
-              placeholder="e.g., 123456789012345"
+              placeholder="e.g., 123456789012345 or act_123456789012345"
               className={inputClass}
             />
+            <p className="text-gray-500 text-xs mt-1">
+              Find this in Ads Manager → Settings → Ad Account ID (the number after "act_").
+            </p>
           </div>
 
           <div>
@@ -259,25 +304,44 @@ export default function CredentialInput({ platform, onClose }: CredentialInputPr
         </form>
       ) : (
         <form onSubmit={handleGoogleSubmit} className="space-y-4">
+          {/* REQUIRED #1 — Refresh Token (formerly mislabeled as "OAuth Access Token") */}
           <div>
             <label className="block text-gray-700 text-sm font-semibold mb-2">
-              OAuth Access Token
+              Refresh Token <span className="text-red-600">*</span>
             </label>
             <textarea
               value={googleForm.accessToken}
               onChange={(e) => setGoogleForm({ ...googleForm, accessToken: e.target.value })}
-              placeholder="ya29..."
+              placeholder="1//0gExA-MEnW5lkCgYIARAAGBASNwF..."
               className={inputClass}
               rows={3}
             />
             <p className="text-gray-500 text-xs mt-1">
-              Required scopes: analytics.readonly, tagmanager.readonly, adwords
+              From OAuth Playground. Starts with <code className="bg-gray-100 px-1 rounded">1//</code>. Required scope: <code className="bg-gray-100 px-1 rounded">https://www.googleapis.com/auth/adwords</code>
             </p>
           </div>
 
+          {/* REQUIRED #2 — Developer Token (was hidden in "Advanced" section) */}
           <div>
             <label className="block text-gray-700 text-sm font-semibold mb-2">
-              Google Ads Customer ID
+              Developer Token <span className="text-red-600">*</span>
+            </label>
+            <input
+              type="text"
+              value={googleForm.developerToken}
+              onChange={(e) => setGoogleForm({ ...googleForm, developerToken: e.target.value })}
+              placeholder="e.g., abc123XYZ_aBcDeFgH9iJkL"
+              className={inputClass}
+            />
+            <p className="text-gray-500 text-xs mt-1">
+              From <code className="bg-gray-100 px-1 rounded">ads.google.com → Tools → API Center</code>. Approval takes 1-3 business days.
+            </p>
+          </div>
+
+          {/* REQUIRED #3 — Customer ID */}
+          <div>
+            <label className="block text-gray-700 text-sm font-semibold mb-2">
+              Google Ads Customer ID <span className="text-red-600">*</span>
             </label>
             <input
               type="text"
@@ -286,69 +350,64 @@ export default function CredentialInput({ platform, onClose }: CredentialInputPr
               placeholder="e.g., 123-456-7890"
               className={inputClass}
             />
+            <p className="text-gray-500 text-xs mt-1">
+              Top-right of <code className="bg-gray-100 px-1 rounded">ads.google.com</code>. 10-digit number with dashes (dashes optional).
+            </p>
           </div>
 
-          <div>
-            <label className="block text-gray-700 text-sm font-semibold mb-2">GA4 Property ID</label>
-            <input
-              type="text"
-              value={googleForm.propertyId}
-              onChange={(e) => setGoogleForm({ ...googleForm, propertyId: e.target.value })}
-              placeholder="e.g., 123456789"
-              className={inputClass}
-            />
-          </div>
-
-          <div>
-            <label className="block text-gray-700 text-sm font-semibold mb-2">GTM Container ID</label>
-            <input
-              type="text"
-              value={googleForm.containerId}
-              onChange={(e) => setGoogleForm({ ...googleForm, containerId: e.target.value })}
-              placeholder="e.g., GTM-XXXXXX"
-              className={inputClass}
-            />
-          </div>
-
-          <button
-            type="button"
-            onClick={() => setShowAdvanced(!showAdvanced)}
-            className="text-sm text-blue-600 hover:text-blue-700 font-semibold"
-          >
-            {showAdvanced ? "Hide" : "Show"} Google Ads API fields (required for live Ads data)
-          </button>
-
-          {showAdvanced && (
-            <div className="space-y-3 pl-4 border-l-2 border-blue-200">
+          <details className="border border-gray-200 rounded-lg">
+            <summary className="cursor-pointer px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 select-none">
+              Optional — GA4 + GTM fields (skip if you only want Google Ads data)
+            </summary>
+            <div className="p-4 space-y-4 border-t border-gray-200">
               <div>
                 <label className="block text-gray-700 text-sm font-semibold mb-2">
-                  Google Ads Developer Token
+                  GA4 Property ID <span className="text-xs text-gray-400 font-normal">(optional — for GA4 audit only)</span>
                 </label>
                 <input
                   type="text"
-                  value={googleForm.developerToken}
-                  onChange={(e) => setGoogleForm({ ...googleForm, developerToken: e.target.value })}
-                  placeholder="From Google Ads > Tools > API Center"
+                  value={googleForm.propertyId}
+                  onChange={(e) => setGoogleForm({ ...googleForm, propertyId: e.target.value })}
+                  placeholder="e.g., 123456789"
                   className={inputClass}
                 />
-                <p className="text-gray-500 text-xs mt-1">
-                  Apply at developers.google.com/google-ads/api. Without this, Google Ads data will fall back to demo.
-                </p>
               </div>
               <div>
                 <label className="block text-gray-700 text-sm font-semibold mb-2">
-                  Login Customer ID (manager account, optional)
+                  GTM Container ID <span className="text-xs text-gray-400 font-normal">(optional — for GTM audit only)</span>
                 </label>
                 <input
                   type="text"
-                  value={googleForm.loginCustomerId}
-                  onChange={(e) => setGoogleForm({ ...googleForm, loginCustomerId: e.target.value })}
-                  placeholder="If using MCC, enter the manager ID"
+                  value={googleForm.containerId}
+                  onChange={(e) => setGoogleForm({ ...googleForm, containerId: e.target.value })}
+                  placeholder="e.g., GTM-XXXXXX"
                   className={inputClass}
                 />
               </div>
             </div>
-          )}
+          </details>
+
+          {/* Optional — Login Customer ID (only needed for MCC accounts) */}
+          <details className="border border-gray-200 rounded-lg">
+            <summary className="cursor-pointer px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 select-none">
+              Optional — Login Customer ID (only if using a Manager / MCC account)
+            </summary>
+            <div className="p-4 border-t border-gray-200">
+              <label className="block text-gray-700 text-sm font-semibold mb-2">
+                Login Customer ID <span className="text-xs text-gray-400 font-normal">(optional — MCC accounts only)</span>
+              </label>
+              <input
+                type="text"
+                value={googleForm.loginCustomerId}
+                onChange={(e) => setGoogleForm({ ...googleForm, loginCustomerId: e.target.value })}
+                placeholder="If using MCC, enter the manager Customer ID"
+                className={inputClass}
+              />
+              <p className="text-gray-500 text-xs mt-1">
+                Skip if you have a single Google Ads account (no Manager). The Manager&apos;s Customer ID is shown top-right when you switch to MCC view.
+              </p>
+            </div>
+          </details>
 
           {renderTestResults()}
 

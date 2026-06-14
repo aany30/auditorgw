@@ -5,6 +5,7 @@ import RiskAnalysisPanel from "./RiskAnalysisPanel";
 import { useAudit } from "@/hooks/useAudit";
 import type { DateRange } from "@/components/shared/DateRangePicker";
 import SourceBadge from "@/components/shared/SourceBadge";
+import AIRecommendationButton from "@/components/shared/AIRecommendationButton";
 import { CheckCircle2, AlertCircle, Activity, RefreshCw, TrendingDown, TrendingUp } from "lucide-react";
 
 interface OverviewTabProps {
@@ -170,9 +171,21 @@ export default function OverviewTab({ platform, dateRange, customStart, customEn
                 {topRecs.map((r) => (
                   <tr key={r.id} className="border-b border-gray-100 hover:bg-gray-50">
                     <td className="px-6 py-4">
-                      <span className={`px-3 py-1 rounded-full text-xs font-semibold border ${priorityColor(r.priority)}`}>
-                        {r.priority}
-                      </span>
+                      <div className="flex flex-col gap-1">
+                        <span className={`px-3 py-1 rounded-full text-xs font-semibold border ${priorityColor(r.priority)}`}>
+                          {r.priority}
+                        </span>
+                        {(r.priority === "Critical" || r.priority === "High" || r.priority === "Medium") && (
+                          <AIRecommendationButton
+                            metric={r.issue}
+                            value={r.impact}
+                            status={r.priority === "Critical" ? "critical" : r.priority === "High" ? "critical" : "warn"}
+                            platform={r.platform?.toLowerCase() as "meta" | "google"}
+                            auditContext={{ module: "Overview", siblingMetrics: { priority: r.priority, confidence: r.confidence, impact: r.impact } }}
+                            compact
+                          />
+                        )}
+                      </div>
                     </td>
                     <td className="px-6 py-4 text-gray-700">{r.platform}</td>
                     <td className="px-6 py-4 max-w-md">

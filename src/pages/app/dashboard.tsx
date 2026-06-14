@@ -1,19 +1,29 @@
 import { useState, useEffect } from "react";
 import { useAuthStore } from "@/store/auth";
 import { useRouter } from "next/router";
-import OverviewTab from "@/components/dashboard/OverviewTab";
 import PixelHealthTab from "@/components/dashboard/PixelHealthTab";
 import EventQualityTab from "@/components/dashboard/EventQualityTab";
 import FunnelAuditTab from "@/components/dashboard/FunnelAuditTab";
 import AttributionTab from "@/components/dashboard/AttributionTab";
 import RecommendationsTab from "@/components/dashboard/RecommendationsTab";
 import AccountStructureTab from "@/components/dashboard/AccountStructureTab";
-import AudienceAuditTab from "@/components/dashboard/AudienceAuditTab";
-import CreativeAuditTab from "@/components/dashboard/CreativeAuditTab";
-import PlatformAuditTab from "@/components/dashboard/PlatformAuditTab";
-import TrackingOverview from "@/components/dashboard/TrackingOverview";
+import AudienceFunnelTab from "@/components/dashboard/tabs/AudienceFunnelTab";
+import AudienceOverlapTab from "@/components/dashboard/tabs/AudienceOverlapTab";
+import AudiencePerformanceTab from "@/components/dashboard/tabs/AudiencePerformanceTab";
+import AudienceQualityTab from "@/components/dashboard/tabs/AudienceQualityTab";
+import AudienceSaturationTab from "@/components/dashboard/tabs/AudienceSaturationTab";
+import SearchIntentTab from "@/components/dashboard/tabs/SearchIntentTab";
+import ConversionMonitoringTab from "@/components/dashboard/tabs/ConversionMonitoringTab";
 import CampaignOverview from "@/components/dashboard/CampaignOverview";
-import InsightsOverview from "@/components/dashboard/InsightsOverview";
+import ReportingOverview from "@/components/dashboard/reports/ReportingOverview";
+import KeyMetricAnalysisReport from "@/components/dashboard/reports/KeyMetricAnalysisReport";
+import AudienceAnalysisReport from "@/components/dashboard/reports/AudienceAnalysisReport";
+import CreativeReport from "@/components/dashboard/reports/CreativeReport";
+import PlacementReport from "@/components/dashboard/reports/PlacementReport";
+import AttributionReport from "@/components/dashboard/reports/AttributionReport";
+import ExportReport from "@/components/dashboard/reports/ExportReport";
+import GenerateReport from "@/components/dashboard/reports/GenerateReport";
+import AskAITab from "@/components/dashboard/tabs/AskAITab";
 import AccountSelector from "@/components/dashboard/AccountSelector";
 import CampaignObjectiveFilter from "@/components/dashboard/CampaignObjectiveFilter";
 import PlatformFilter, { PlatformValue, toLegacyPlatform } from "@/components/dashboard/PlatformFilter";
@@ -26,18 +36,29 @@ import {
   Settings2,
   Bot,
   LogOut,
-  LayoutDashboard,
   Layers,
   Users,
-  Image as ImageIcon,
-  Globe,
-  Radio,
-  Briefcase,
   Lightbulb,
   ChevronDown,
   ChevronRight,
   Mail,
   Check,
+  FileText,
+  Filter,
+  BarChart2,
+  Star,
+  Zap,
+  Search,
+  Megaphone,
+  Sparkles,
+  Image as ImageIcon,
+  Map as MapIcon,
+  GitBranch,
+  Download,
+  ShieldCheck,
+  Monitor,
+  LineChart,
+  Briefcase,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -55,27 +76,44 @@ interface NavGroup {
 }
 
 const NAV: NavGroup[] = [
-  { id: "overview", label: "Overview", Icon: LayoutDashboard },
   {
-    id: "tracking",
-    label: "Tracking",
-    Icon: Radio,
+    id: "audit",
+    label: "Audit",
+    Icon: ShieldCheck,
     children: [
-      { id: "pixel-health", label: "Pixel Health", Icon: Activity },
-      { id: "event-quality", label: "Event Quality", Icon: TrendingUp },
-      { id: "funnel", label: "Funnel Audit", Icon: Target },
-      { id: "attribution", label: "Attribution", Icon: Settings2 },
+      { id: "pixel-health",  label: "Pixel Health",       Icon: Activity  },
+      { id: "event-quality", label: "Event Quality",      Icon: TrendingUp },
+      { id: "funnel",        label: "Funnel Audit",       Icon: Target    },
+      { id: "attribution",   label: "Attribution Audit",  Icon: Settings2 },
+      { id: "aud-funnel",    label: "Audience Funnel",    Icon: Filter    },
+      { id: "aud-overlap",   label: "Audience Overlap",   Icon: Users     },
+      { id: "aud-quality",   label: "Quality & Value",    Icon: Star      },
     ],
   },
   {
-    id: "campaign",
-    label: "Campaign",
-    Icon: Briefcase,
+    id: "tracking",
+    label: "Tracking",
+    Icon: Monitor,
     children: [
-      { id: "account-structure", label: "Account Structure", Icon: Layers },
-      { id: "audience-audit", label: "Audience Audit", Icon: Users },
-      { id: "creative-audit", label: "Creative Audit", Icon: ImageIcon },
-      { id: "platform-audit", label: "Platform Audit", Icon: Globe },
+      { id: "account-structure",      label: "Account Structure",      Icon: Layers    },
+      { id: "aud-performance",        label: "Audience Performance",   Icon: BarChart2 },
+      { id: "aud-saturation",         label: "Saturation",             Icon: Zap       },
+      { id: "search-intent",          label: "Search Intent",          Icon: Search    },
+      { id: "conversion-monitoring",  label: "Conversion Monitoring",  Icon: LineChart },
+    ],
+  },
+  {
+    id: "reporting",
+    label: "Reporting",
+    Icon: FileText,
+    children: [
+      { id: "rep-overview",    label: "Overview",            Icon: BarChart3 },
+      { id: "rep-key-metric",  label: "Key Metrics",         Icon: Megaphone },
+      { id: "rep-audience",    label: "Audience Analysis",   Icon: Sparkles  },
+      { id: "rep-creative",    label: "Creative Analysis",   Icon: ImageIcon },
+      { id: "rep-placement",   label: "Placement Analysis",  Icon: MapIcon   },
+      { id: "rep-attribution", label: "Attribution Report",  Icon: GitBranch },
+      { id: "rep-generate",    label: "Generate Report",     Icon: Download  },
     ],
   },
   {
@@ -84,6 +122,7 @@ const NAV: NavGroup[] = [
     Icon: Lightbulb,
     children: [
       { id: "recommendations", label: "AI Recommendations", Icon: Bot },
+      { id: "ask-ai",          label: "Ask AI",             Icon: Sparkles  },
     ],
   },
 ];
@@ -101,18 +140,21 @@ export default function Dashboard() {
     totalAiCreditsUsd,
     alertEmail,
     setAlertEmail,
+    demoMode,
+    enterDemoMode,
+    exitDemoMode,
   } = useAuthStore();
   const [emailPopoverOpen, setEmailPopoverOpen] = useState(false);
   const [emailDraft, setEmailDraft] = useState(alertEmail || "");
   const [emailSavedFlash, setEmailSavedFlash] = useState(false);
-  const [activeTab, setActiveTab] = useState<string>("overview");
+  const [activeTab, setActiveTab] = useState<string>("pixel-health");
   const [platformFilter, setPlatformFilter] = useState<PlatformValue>("all");
   const platform = toLegacyPlatform(platformFilter);
   const [dateRange, setDateRange] = useState<DateRange>("30d");
   const [customStart, setCustomStart] = useState<string | undefined>();
   const [customEnd, setCustomEnd] = useState<string | undefined>();
   const [selectedObjectives, setSelectedObjectives] = useState<Set<string>>(new Set());
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(["tracking", "campaign", "insights"]));
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(["audit", "tracking", "reporting", "insights"]));
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -185,11 +227,21 @@ export default function Dashboard() {
     }
   }, [router.isReady, router.query, setMetaCredentials, setMetaPixelList, setGoogleCredentials, setGoogleAccountsList, router]);
 
+  // Hydrate demo mode from ?demo=1 — survives refresh / back-button within the
+  // tab without leaking into localStorage.
   useEffect(() => {
-    if (mounted && !isMetaConnected() && !isGoogleConnected()) {
-      router.push("/");
+    if (!router.isReady) return;
+    if (router.query.demo === "1" && !demoMode) enterDemoMode();
+  }, [router.isReady, router.query.demo, demoMode, enterDemoMode]);
+
+  // Route guard — block /app/dashboard for unconnected, non-demo visitors.
+  useEffect(() => {
+    if (!mounted || !router.isReady) return;
+    if (router.query.demo === "1") return; // grace period while demoMode hydrates
+    if (!isMetaConnected() && !isGoogleConnected() && !demoMode) {
+      router.replace("/");
     }
-  }, [mounted, isMetaConnected, isGoogleConnected, router]);
+  }, [mounted, router.isReady, router.query.demo, isMetaConnected, isGoogleConnected, demoMode, router]);
 
   const handleLogout = () => {
     clearAllCredentials();
@@ -204,16 +256,9 @@ export default function Dashboard() {
 
   const renderTabContent = () => {
     const props = { platform, dateRange, customStart, customEnd };
-    const audit = { ...props, selectedObjectives, setActiveTab };
+    const ctx = { ...props, selectedObjectives, setActiveTab };
     switch (activeTab) {
-      case "overview":
-        return <OverviewTab {...props} setActiveTab={setActiveTab} />;
-      case "tracking":
-        return <TrackingOverview {...props} setActiveTab={setActiveTab} />;
-      case "campaign":
-        return <CampaignOverview platform={platform} setActiveTab={setActiveTab} />;
-      case "insights":
-        return <InsightsOverview {...props} setActiveTab={setActiveTab} />;
+      // Audit
       case "pixel-health":
         return <PixelHealthTab {...props} />;
       case "event-quality":
@@ -222,23 +267,59 @@ export default function Dashboard() {
         return <FunnelAuditTab {...props} />;
       case "attribution":
         return <AttributionTab {...props} />;
+      case "aud-funnel":
+        return <AudienceFunnelTab {...ctx} />;
+      case "aud-overlap":
+        return <AudienceOverlapTab {...ctx} />;
+      case "aud-quality":
+        return <AudienceQualityTab {...ctx} />;
+      // Tracking
+      case "account-structure":
+        return <AccountStructureTab {...ctx} />;
+      case "camp-performance":
+        return <CampaignOverview platform={platform} setActiveTab={setActiveTab} />;
+      case "aud-performance":
+        return <AudiencePerformanceTab {...ctx} />;
+      case "aud-saturation":
+        return <AudienceSaturationTab {...ctx} />;
+      case "search-intent":
+        return <SearchIntentTab {...ctx} />;
+      case "conversion-monitoring":
+        return <ConversionMonitoringTab {...props} />;
+      // Reporting
+      case "reporting":
+      case "rep-overview":
+        return <ReportingOverview {...props} setActiveTab={setActiveTab} />;
+      case "rep-key-metric":
+        return <KeyMetricAnalysisReport {...props} />;
+      case "rep-audience":
+        return <AudienceAnalysisReport {...props} />;
+      case "rep-creative":
+        return <CreativeReport {...props} />;
+      case "rep-placement":
+        return <PlacementReport {...props} />;
+      case "rep-attribution":
+        return <AttributionReport {...props} />;
+      case "rep-export":
+        return <ExportReport {...props} />;
+      case "rep-generate":
+        return <GenerateReport {...props} />;
+      // Insights
       case "recommendations":
         return <RecommendationsTab {...props} />;
-      case "account-structure":
-        return <AccountStructureTab {...audit} />;
-      case "audience-audit":
-        return <AudienceAuditTab {...audit} />;
-      case "creative-audit":
-        return <CreativeAuditTab {...audit} />;
-      case "platform-audit":
-        return <PlatformAuditTab {...audit} />;
+      case "ask-ai":
+        return <AskAITab {...props} />;
       default:
-        return <OverviewTab {...props} setActiveTab={setActiveTab} />;
+        return <PixelHealthTab {...props} />;
     }
   };
 
-  const handleGroupClick = (groupId: string, hasChildren: boolean) => {
-    setActiveTab(groupId);
+  const handleGroupClick = (groupId: string, hasChildren: boolean, firstChildId?: string) => {
+    if (hasChildren && firstChildId) {
+      setActiveTab(firstChildId);
+    } else {
+      setActiveTab(groupId);
+    }
     if (hasChildren) {
       setExpandedGroups((prev) => {
         const next = new Set(prev);
@@ -260,6 +341,30 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {demoMode && (
+        <div className="sticky top-0 z-50 bg-yellow-50 border-b border-yellow-300 text-yellow-900 text-sm">
+          <div className="max-w-7xl mx-auto px-6 py-2 flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-2">
+              <span className="text-base">⚠</span>
+              <span><span className="font-bold">Demo Mode</span> — you&apos;re viewing sample data, not a real ad account.</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => { exitDemoMode(); router.push("/"); }}
+                className="px-3 py-1 rounded bg-yellow-200 hover:bg-yellow-300 text-yellow-900 text-xs font-bold transition"
+              >
+                Connect your account
+              </button>
+              <button
+                onClick={() => { exitDemoMode(); router.push("/"); }}
+                className="px-3 py-1 rounded text-yellow-800 hover:bg-yellow-100 text-xs font-semibold transition"
+              >
+                Exit demo
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <nav className="sticky top-0 z-40 bg-white border-b border-gray-200 shadow-sm">
         <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center gap-4">
           {/* Left: Logo + Filters (Platform · Objectives · Calendar) */}
@@ -387,7 +492,7 @@ export default function Dashboard() {
               return (
                 <div key={group.id}>
                   <button
-                    onClick={() => handleGroupClick(group.id, hasChildren)}
+                    onClick={() => handleGroupClick(group.id, hasChildren, group.children?.[0]?.id)}
                     className={`w-full text-left px-4 py-3 rounded-lg font-semibold transition flex items-center gap-3 text-sm ${
                       isActiveGroup
                         ? "bg-blue-600 text-white"

@@ -313,9 +313,6 @@ export default function FunnelSeparationAudit({ campaigns, accountTotal, dateRan
         </div>
       </AuditCard>
 
-      {/* TOF/MOF/BOF distribution + dual-axis performance chart */}
-      <FunnelStagePerformance campaigns={visibleCampaigns} accountTotal={total} dateRange={dateRange} customStart={customStart} customEnd={customEnd} />
-
       {/* AI funnel-mix analysis — OPTIONAL. Starts as a small CTA; expands
           on click into the full industry input + analyze workflow. */}
       {!aiPanelOpen ? (
@@ -474,6 +471,9 @@ export default function FunnelSeparationAudit({ campaigns, accountTotal, dateRan
         )}
       </AuditCard>
       )}
+
+      {/* TOF/MOF/BOF distribution + dual-axis performance chart */}
+      <FunnelStagePerformance campaigns={visibleCampaigns} accountTotal={total} dateRange={dateRange} customStart={customStart} customEnd={customEnd} />
     </div>
   );
 }

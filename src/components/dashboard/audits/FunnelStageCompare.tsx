@@ -216,13 +216,13 @@ export default function FunnelStageCompare({ metaAccessToken, metaBusinessId, cu
           <div style={{ width: "100%", height: 320 }}>
             <ResponsiveContainer>
               <BarChart data={chartData} margin={{ top: 10, right: 20, bottom: 10, left: 10 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-                <XAxis dataKey="stage" tick={{ fontSize: 12 }} />
-                <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => metricMeta.unit === "$" ? formatMoney(v, currency, 0) : v.toLocaleString()} />
-                <Tooltip formatter={(v: number) => fmt(v)} />
+                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
+                <XAxis dataKey="stage" tick={{ fontSize: 12 }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={(v) => metricMeta.unit === "$" ? formatMoney(v, currency, 0) : v.toLocaleString()} />
+                <Tooltip cursor={{ fill: "rgba(99,102,241,0.06)" }} contentStyle={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 8, fontSize: 12 }} formatter={(v: number) => fmt(v)} />
                 <Legend />
-                <Bar dataKey="Period A" fill="#6366f1" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="Period B" fill="#10b981" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="Period A" fill="#6366f1" radius={[4, 4, 0, 0]} animationDuration={600} animationEasing="ease-out" />
+                <Bar dataKey="Period B" fill="#10b981" radius={[4, 4, 0, 0]} animationDuration={700} animationEasing="ease-out" />
               </BarChart>
             </ResponsiveContainer>
           </div>

@@ -5,6 +5,7 @@ import type { DateRange } from "@/components/shared/DateRangePicker";
 import ConnectCta from "@/components/shared/ConnectCta";
 import { ExternalLink, CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
 import AttributionInfo from "@/components/shared/AttributionInfo";
+import AIRecommendationButton from "@/components/shared/AIRecommendationButton";
 
 interface Props {
   platform?: "meta" | "google" | "both";
@@ -221,7 +222,7 @@ export default function AttributionTab({ platform, dateRange, customStart, custo
 
   if (!metaOn && !googleOn) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-6 section-enter">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Attribution Readiness</h1>
           <p className="text-gray-600 mt-1">Auto-detected what Meta exposes; manual links for the rest.</p>
@@ -240,7 +241,7 @@ export default function AttributionTab({ platform, dateRange, customStart, custo
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 section-enter">
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Attribution Readiness</h1>
@@ -279,6 +280,15 @@ export default function AttributionTab({ platform, dateRange, customStart, custo
                           className="inline-flex items-center gap-1 mt-1.5 text-[11px] font-semibold text-blue-700 hover:text-blue-900">
                           Open in Meta <ExternalLink className="w-3 h-3" />
                         </a>
+                      )}
+                      {c.state.status === "fail" && (
+                        <AIRecommendationButton
+                          metric={c.name}
+                          value={"detail" in c.state ? c.state.detail : "failed"}
+                          status="critical"
+                          platform="meta"
+                          auditContext={{ module: "Attribution Readiness", siblingMetrics: { check: c.name } }}
+                        />
                       )}
                     </div>
                     <StatePill state={c.state} />

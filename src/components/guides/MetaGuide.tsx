@@ -17,7 +17,7 @@ export default function MetaGuide({ onClose }: Props) {
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-900">
         <p className="font-semibold mb-0.5">~5 minutes total · Manual paste, no OAuth setup needed</p>
         <p className="text-blue-800">
-          You'll collect 3 things: an Access Token, your Business ID, and your Pixel ID(s). CAPI works automatically once these are saved.
+          You'll collect 3 things: an Access Token, your Ad Account ID, and your Pixel ID(s). CAPI works automatically once these are saved.
         </p>
       </div>
 
@@ -99,22 +99,25 @@ export default function MetaGuide({ onClose }: Props) {
 
       <GuideSection
         number={2}
-        title="Find your Business ID"
-        summary="The unique ID for your Business Manager"
-        yieldsLabel="Business ID"
+        title="Find your Ad Account ID"
+        summary="The unique ID for your Meta Ads account (not your Business Manager ID)"
+        yieldsLabel="Ad Account ID"
         subSteps={[
           {
             steps: [
               <>
-                Stay on <GuideLink href="https://business.facebook.com/settings">business.facebook.com/settings</GuideLink>.
+                Open <GuideLink href="https://adsmanager.facebook.com">Ads Manager</GuideLink> in a new tab.
               </>,
               <>
-                Look at the URL — it ends with <GuideCode>?business_id=XXXXXXXXXXX</GuideCode>. That number is your Business ID.
+                Look at the URL or click <GuideButton>Account Overview</GuideButton> — you'll see a number like <GuideCode>act_123456789012345</GuideCode>. The digits after <GuideCode>act_</GuideCode> are your Ad Account ID.
               </>,
               <>
-                Or: left sidebar → <GuideButton>Business Info</GuideButton> → Business ID is shown at the top of the page.
+                Or: Ads Manager → top-left account selector → the number under your account name.
               </>,
-              <>Copy and paste into the form below.</>,
+              <>
+                <strong>Note:</strong> This is different from your Business Manager ID. Campaigns and reporting data require the Ad Account ID.
+              </>,
+              <>Copy and paste into the form below (with or without the <GuideCode>act_</GuideCode> prefix).</>,
             ],
           },
         ]}
@@ -188,7 +191,7 @@ export default function MetaGuide({ onClose }: Props) {
         <p className="text-sm text-gray-600 mb-4">
           Paste the Access Token, Business ID, and Pixel ID(s) you collected above.
         </p>
-        <CredentialInput platform="meta" onClose={onClose || (() => {})} />
+        <CredentialInput platform="meta" onComplete={onClose} />
       </div>
     </div>
   );

@@ -6,6 +6,7 @@ import { RefreshCw, Activity, CheckCircle2, AlertCircle, AlertTriangle, Settings
 import { useSort } from "@/hooks/useSort";
 import SortTh from "@/components/shared/SortTh";
 import { TermText } from "@/components/shared/Term";
+import AIExecutiveSummary from "@/components/shared/AIExecutiveSummary";
 
 interface Props {
   platform?: "meta" | "google" | "both";
@@ -15,7 +16,7 @@ interface Props {
 }
 
 export default function PixelHealthTab({ platform = "both", dateRange = "30d", customStart, customEnd }: Props) {
-  const { meta, loading } = useAudit(platform, dateRange, customStart, customEnd);
+  const { meta, loading, error } = useAudit(platform, dateRange, customStart, customEnd);
   const { sorted: sortedPixels, sort: pixelSort, toggle: pixelToggle } = useSort(
     (meta?.pixels || []).map(p => ({ ...p, capiPct: p.capi.serverShare })),
     "totalEvents", "desc"
@@ -30,6 +31,15 @@ export default function PixelHealthTab({ platform = "both", dateRange = "30d", c
       <div className="flex flex-col items-center justify-center py-24">
         <RefreshCw className="w-10 h-10 text-blue-600 animate-spin mb-3" />
         <p className="text-gray-600">Loading pixel data...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="bg-red-50 border border-red-200 rounded-xl p-6 text-red-700">
+        <p className="font-semibold mb-1">Failed to load pixel data</p>
+        <p className="text-sm">{error}</p>
       </div>
     );
   }
@@ -67,33 +77,48 @@ export default function PixelHealthTab({ platform = "both", dateRange = "30d", c
     .sort((a, b) => b.fired - a.fired);
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
-          <Activity className="w-8 h-8 text-red-600" /> Pixel Health Monitor
-        </h1>
-        <p className="text-gray-600 mt-1">Active pixel status, event firing, and deduplication</p>
+    <div className="space-y-6 section-enter">
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
+            <Activity className="w-8 h-8 text-red-600" /> Pixel Health Monitor
+          </h1>
+          <p className="text-gray-600 mt-1">Active pixel status, event firing, and deduplication</p>
+        </div>
+        <AIExecutiveSummary
+          tabName="Pixel Health"
+          context={{
+            pixelCount: pixels.length,
+            activePixels,
+            totalEvents,
+            capiSharePct,
+            topEvents: sortedEvents.slice(0, 5).map(e => ({ event: e.event, count: e.count })),
+          }}
+          platform={platform === "both" ? "meta" : platform}
+          dateRange={String(dateRange)}
+          inline
+        />
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-white rounded-lg border border-gray-200 p-5 shadow-sm">
+        <div className="bg-white rounded-lg border border-gray-200 p-5 shadow-sm animate-fade-in-up stagger-1">
           <div className="text-sm text-gray-600">Active Pixels</div>
           <div className="text-3xl font-bold text-gray-900 mt-1">{activePixels}/{pixels.length}</div>
           <div className="text-xs text-green-600 mt-1 flex items-center gap-1">
             <CheckCircle2 className="w-3 h-3" /> Healthy
           </div>
         </div>
-        <div className="bg-white rounded-lg border border-gray-200 p-5 shadow-sm">
+        <div className="bg-white rounded-lg border border-gray-200 p-5 shadow-sm animate-fade-in-up stagger-2">
           <div className="text-sm text-gray-600">Total Events</div>
           <div className="text-3xl font-bold text-gray-900 mt-1">{(totalEvents / 1000).toFixed(1)}K</div>
           <div className="text-xs text-gray-500 mt-1">In selected range</div>
         </div>
-        <div className="bg-white rounded-lg border border-gray-200 p-5 shadow-sm">
+        <div className="bg-white rounded-lg border border-gray-200 p-5 shadow-sm animate-fade-in-up stagger-3">
           <div className="text-sm text-gray-600"><TermText>Server (CAPI) Events</TermText></div>
           <div className="text-3xl font-bold text-gray-900 mt-1">{(totalServer / 1000).toFixed(1)}K</div>
           <div className="text-xs text-gray-500 mt-1">Browser: {(totalBrowser / 1000).toFixed(1)}K</div>
         </div>
-        <div className="bg-white rounded-lg border border-gray-200 p-5 shadow-sm">
+        <div className="bg-white rounded-lg border border-gray-200 p-5 shadow-sm animate-fade-in-up stagger-4">
           <div className="text-sm text-gray-600"><TermText>CAPI Share</TermText></div>
           <div className="text-3xl font-bold text-gray-900 mt-1">{capiSharePct}%</div>
           <div className="text-xs text-gray-500 mt-1">Events sent server-side</div>

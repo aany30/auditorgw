@@ -20,7 +20,7 @@ import {
 
 export default function Landing() {
   const router = useRouter();
-  const { isMetaConnected, isGoogleConnected, setMetaCredentials, setGoogleCredentials } = useAuthStore();
+  const { isMetaConnected, isGoogleConnected, enterDemoMode } = useAuthStore();
   const [activeTab, setActiveTab] = useState<"meta" | "google" | null>(null);
   const [mounted, setMounted] = useState(false);
 
@@ -29,11 +29,14 @@ export default function Landing() {
   }, []);
 
   const connected = mounted && (isMetaConnected() || isGoogleConnected());
+  const oauthError = typeof router.query.error === "string" ? router.query.error : null;
 
   const loadDemoData = () => {
-    setMetaCredentials("demo-meta-token", "demo-business-123", ["demo-pixel-001", "demo-pixel-002"]);
-    setGoogleCredentials("demo-google-token", "123-456-7890", "GA4-DEMO-001", "GTM-DEMO");
-    router.push("/app/dashboard");
+    // Session-only demo flag — does NOT persist to localStorage, so other
+    // visitors / new tabs / next-session won't accidentally see demo state.
+    // The `?demo=1` query param survives refresh + back-button within the tab.
+    enterDemoMode();
+    router.push("/app/dashboard?demo=1");
   };
 
   return (
@@ -119,6 +122,15 @@ export default function Landing() {
         </div>
       </section>
 
+      {oauthError && (
+        <div className="max-w-6xl mx-auto px-6 mb-4">
+          <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm flex items-start gap-2">
+            <span className="font-bold">⚠ OAuth failed:</span>
+            <span>{oauthError.replace(/_/g, " ")}. Try again or use manual token entry below.</span>
+          </div>
+        </div>
+      )}
+
       <section id="connect" className="max-w-6xl mx-auto px-6 pb-20">
         <div className="text-center mb-12">
           <h2 className="text-3xl font-bold text-gray-900 mb-3">Connect Your Accounts</h2>
@@ -127,83 +139,129 @@ export default function Landing() {
           </p>
         </div>
 
-        <div className="grid md:grid-cols-2 gap-8">
-          <div className="bg-white border border-gray-200 rounded-xl p-8 shadow-sm">
-            <div className="flex items-center mb-6">
-              <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center mr-3">
-                <Users className="w-6 h-6 text-blue-600" />
+        {/* META — equal-weight OAuth + Manual paste cards */}
+        <div className="mb-10">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+                <Users className="w-5 h-5 text-blue-600" />
               </div>
               <h3 className="text-2xl font-bold text-gray-900">Meta Connection</h3>
-              {mounted && isMetaConnected() && (
-                <span className="ml-auto text-green-700 text-sm font-semibold bg-green-50 px-3 py-1 rounded-full flex items-center gap-1">
-                  <CheckCircle2 className="w-4 h-4" /> Connected
-                </span>
-              )}
             </div>
-
-            <div className="space-y-4">
+            {mounted && isMetaConnected() && (
+              <span className="text-green-700 text-sm font-semibold bg-green-50 px-3 py-1 rounded-full flex items-center gap-1">
+                <CheckCircle2 className="w-4 h-4" /> Connected
+              </span>
+            )}
+          </div>
+          <div className="grid md:grid-cols-2 gap-4">
+            {/* Card A — OAuth */}
+            <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm flex flex-col">
+              <h4 className="font-bold text-gray-900 text-base mb-1">One-click sign-in</h4>
+              <p className="text-sm text-gray-600 mb-4 flex-1">
+                Quickest. Sign in with your Facebook account and grant access to your ad accounts. No token copying.
+              </p>
+              <a
+                href="/api/auth/meta/start"
+                className="w-full py-3 px-4 rounded-lg font-bold text-sm flex items-center justify-center gap-2 bg-[#1877F2] text-white hover:bg-[#166fe0] transition shadow-sm"
+              >
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
+                Connect with Meta
+              </a>
+            </div>
+            {/* Card B — Manual paste */}
+            <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm flex flex-col">
+              <h4 className="font-bold text-gray-900 text-base mb-1">Paste tokens manually</h4>
+              <p className="text-sm text-gray-600 mb-4 flex-1">
+                For agencies with an existing System User token, Business ID, and Pixel IDs ready.
+              </p>
               <button
                 onClick={() => setActiveTab(activeTab === "meta" ? null : "meta")}
-                className={`w-full py-2.5 px-4 rounded-lg font-semibold transition text-sm flex items-center justify-center gap-2 ${
+                className={`w-full py-3 px-4 rounded-lg font-bold text-sm flex items-center justify-center gap-2 transition shadow-sm ${
                   activeTab === "meta"
-                    ? "bg-blue-600 text-white"
-                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                    ? "bg-blue-600 text-white hover:bg-blue-700"
+                    : "bg-gray-900 text-white hover:bg-gray-800"
                 }`}
               >
                 <BookOpen className="w-4 h-4" />
-                {activeTab === "meta" ? "Hide guide" : "Show the click-by-click guide"}
+                {activeTab === "meta" ? "Hide manual guide" : "Show manual guide"}
               </button>
-
-              {activeTab === "meta" && <MetaGuide onClose={() => setActiveTab(null)} />}
-
-              {activeTab !== "meta" && (
-                <div className="text-gray-600 text-sm space-y-2 pt-2">
-                  <p className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-green-500" /> Monitor pixel health and event firing</p>
-                  <p className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-green-500" /> Track Event Match Quality (EMQ)</p>
-                  <p className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-green-500" /> Validate CAPI implementation</p>
-                  <p className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-green-500" /> Analyze funnel performance</p>
-                </div>
-              )}
             </div>
           </div>
+          {activeTab === "meta" && (
+            <div className="mt-4">
+              <MetaGuide onClose={() => setActiveTab(null)} />
+            </div>
+          )}
+        </div>
 
-          <div className="bg-white border border-gray-200 rounded-xl p-8 shadow-sm">
-            <div className="flex items-center mb-6">
-              <div className="w-12 h-12 bg-red-100 rounded-lg flex items-center justify-center mr-3">
-                <Search className="w-6 h-6 text-red-600" />
+        {/* GOOGLE — equal-weight OAuth + Manual paste cards */}
+        <div className="mb-6">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center">
+                <Search className="w-5 h-5 text-red-600" />
               </div>
               <h3 className="text-2xl font-bold text-gray-900">Google Connection</h3>
-              {mounted && isGoogleConnected() && (
-                <span className="ml-auto text-green-700 text-sm font-semibold bg-green-50 px-3 py-1 rounded-full flex items-center gap-1">
-                  <CheckCircle2 className="w-4 h-4" /> Connected
-                </span>
-              )}
             </div>
-
-            <div className="space-y-4">
+            {mounted && isGoogleConnected() && (
+              <span className="text-green-700 text-sm font-semibold bg-green-50 px-3 py-1 rounded-full flex items-center gap-1">
+                <CheckCircle2 className="w-4 h-4" /> Connected
+              </span>
+            )}
+          </div>
+          <div className="grid md:grid-cols-2 gap-4">
+            {/* Card A — OAuth */}
+            <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm flex flex-col">
+              <h4 className="font-bold text-gray-900 text-base mb-1">One-click sign-in</h4>
+              <p className="text-sm text-gray-600 mb-4 flex-1">
+                Sign in with Google and auto-detect your Ads, GA4, and GTM accounts. Developer Token still required separately.
+              </p>
+              <a
+                href="/api/auth/google/start"
+                className="w-full py-3 px-4 rounded-lg font-bold text-sm flex items-center justify-center gap-2 bg-white text-gray-800 border-2 border-gray-300 hover:bg-gray-50 transition shadow-sm"
+              >
+                <svg className="w-5 h-5" viewBox="0 0 24 24">
+                  <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                  <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                  <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
+                  <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+                </svg>
+                Connect with Google
+              </a>
+            </div>
+            {/* Card B — Manual paste */}
+            <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm flex flex-col">
+              <h4 className="font-bold text-gray-900 text-base mb-1">Paste tokens manually</h4>
+              <p className="text-sm text-gray-600 mb-4 flex-1">
+                For agencies with Developer Token, Refresh Token, and Customer ID ready. ~5 min via OAuth Playground.
+              </p>
               <button
                 onClick={() => setActiveTab(activeTab === "google" ? null : "google")}
-                className={`w-full py-2.5 px-4 rounded-lg font-semibold transition text-sm flex items-center justify-center gap-2 ${
+                className={`w-full py-3 px-4 rounded-lg font-bold text-sm flex items-center justify-center gap-2 transition shadow-sm ${
                   activeTab === "google"
-                    ? "bg-blue-600 text-white"
-                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                    ? "bg-blue-600 text-white hover:bg-blue-700"
+                    : "bg-gray-900 text-white hover:bg-gray-800"
                 }`}
               >
                 <BookOpen className="w-4 h-4" />
-                {activeTab === "google" ? "Hide guide" : "Show the click-by-click guide"}
+                {activeTab === "google" ? "Hide manual guide" : "Show manual guide"}
               </button>
-
-              {activeTab === "google" && <GoogleGuide onClose={() => setActiveTab(null)} />}
-
-              {activeTab !== "google" && (
-                <div className="text-gray-600 text-sm space-y-2 pt-2">
-                  <p className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-green-500" /> Track Google Ads conversions</p>
-                  <p className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-green-500" /> Validate GA4 event setup</p>
-                  <p className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-green-500" /> Audit GTM container health</p>
-                  <p className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-green-500" /> Monitor enhanced conversions</p>
-                </div>
-              )}
             </div>
+          </div>
+          {activeTab === "google" && (
+            <div className="mt-4">
+              <GoogleGuide onClose={() => setActiveTab(null)} />
+            </div>
+          )}
+        </div>
+
+        {/* Privacy reassurance — addresses "will other companies see my data?" */}
+        <div className="mt-8 bg-gray-50 border border-gray-200 rounded-lg px-5 py-4 text-sm text-gray-600 flex items-start gap-3">
+          <span className="text-lg">🔒</span>
+          <div>
+            <span className="font-semibold text-gray-800">Your data stays private.</span>{" "}
+            Credentials are stored only in your browser&apos;s local storage — never sent to our servers, never shared. Other companies using this platform cannot see your ad data, and you cannot see theirs.
           </div>
         </div>
       </section>

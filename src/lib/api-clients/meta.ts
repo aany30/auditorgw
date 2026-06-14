@@ -7,6 +7,23 @@
 
 const META_API_BASE = "https://graph.facebook.com/v18.0";
 
+/** Convert a raw Meta API error response into a clean human-readable message. */
+function parseMetaError(status: number, body: string): string {
+  if (status === 429) return "Meta API rate limit reached. Please wait a few minutes and try again.";
+  if (status === 401 || status === 403) return "Meta access token expired or lacks permissions. Please reconnect your account.";
+  // HTML error page (e.g. Facebook maintenance / WAF block)
+  if (body.trimStart().startsWith("<")) {
+    return `Meta API error (HTTP ${status}). Facebook may be temporarily unavailable — please try again shortly.`;
+  }
+  // Try to extract message from JSON error response
+  try {
+    const json = JSON.parse(body);
+    const msg = json?.error?.message || json?.message;
+    if (msg) return `Meta API: ${msg}`;
+  } catch {}
+  return `Meta API ${status}: ${body.slice(0, 120)}`;
+}
+
 export interface MetaPixelInfo {
   id: string;
   name: string;
@@ -290,7 +307,7 @@ export class MetaApiClient {
     const res = await fetch(url.toString());
     if (!res.ok) {
       const body = await res.text();
-      throw new Error(`Meta API ${res.status}: ${body.slice(0, 200)}`);
+      throw new Error(parseMetaError(res.status, body));
     }
     return res.json();
   }
@@ -304,7 +321,7 @@ export class MetaApiClient {
     const res = await fetch(absoluteUrl);
     if (!res.ok) {
       const body = await res.text();
-      throw new Error(`Meta API ${res.status}: ${body.slice(0, 200)}`);
+      throw new Error(parseMetaError(res.status, body));
     }
     return res.json();
   }
@@ -785,10 +802,24 @@ export class MetaApiClient {
    */
   async getAccountCurrency(accountPath: string): Promise<string | undefined> {
     try {
-      const res = await this.fetch<{ currency?: string }>(`/${accountPath}`, { fields: "currency" });
-      return res.currency || undefined;
+      // Try account-level currency field first
+      const res = await this.fetch<{ currency?: string; account_currency?: string }>(
+        `/${accountPath}`,
+        { fields: "currency,account_currency" }
+      );
+      return res.currency || res.account_currency || undefined;
     } catch {
-      return undefined;
+      // Fallback: pull from a single-day insights row — account_currency is
+      // always present in every insights response regardless of permissions.
+      try {
+        const res2 = await this.fetch<{ data?: Array<{ account_currency?: string }> }>(
+          `/${accountPath}/insights`,
+          { fields: "account_currency", date_preset: "last_7d", level: "account", limit: "1" }
+        );
+        return res2.data?.[0]?.account_currency || undefined;
+      } catch {
+        return undefined;
+      }
     }
   }
 
@@ -933,6 +964,53 @@ export class MetaApiClient {
    * Window-accurate per-ad-set metrics from the Insights edge (`level=adset`).
    * Used by the campaign drill-down. Returns a map keyed by ad-set id.
    */
+  /** Full ad-set insights — name, spend, impressions, clicks, reach, frequency,
+   *  conversions and conversion value. Used by the Audience Analysis tabs. */
+  async getAdSetFullInsights(
+    accountPath: string,
+    startDate?: string,
+    endDate?: string
+  ): Promise<Array<{
+    id: string; name: string; campaignName?: string;
+    spend: number; impressions: number; clicks: number;
+    reach: number; frequency: number;
+    conversions: number; conversionValue: number;
+  }>> {
+    const params: Record<string, string> = {
+      level: "adset",
+      fields: "adset_id,adset_name,campaign_name,spend,impressions,clicks,reach,frequency,actions,action_values",
+      limit: "500",
+    };
+    if (startDate && endDate) params.time_range = `{"since":"${startDate}","until":"${endDate}"}`;
+    else params.date_preset = "last_30d";
+
+    const out: Array<{ id: string; name: string; campaignName?: string; spend: number; impressions: number; clicks: number; reach: number; frequency: number; conversions: number; conversionValue: number }> = [];
+    let path: string | null = `/${accountPath}/insights`;
+    let nextParams: Record<string, string> | undefined = params;
+    for (let guard = 0; guard < 10 && path; guard++) {
+      const res: { data?: any[]; paging?: { next?: string } } = nextParams
+        ? await this.fetch<{ data?: any[]; paging?: { next?: string } }>(path, nextParams)
+        : await this.fetchAbsolute<{ data?: any[]; paging?: { next?: string } }>(path);
+      for (const row of res.data || []) {
+        out.push({
+          id: String(row.adset_id || ""),
+          name: String(row.adset_name || ""),
+          campaignName: row.campaign_name ? String(row.campaign_name) : undefined,
+          spend: row.spend ? parseFloat(row.spend) : 0,
+          impressions: row.impressions ? parseInt(row.impressions, 10) : 0,
+          clicks: row.clicks ? parseInt(row.clicks, 10) : 0,
+          reach: row.reach ? parseInt(row.reach, 10) : 0,
+          frequency: row.frequency ? parseFloat(row.frequency) : 0,
+          conversions: sumConversions(row.actions) || 0,
+          conversionValue: sumConversions(row.action_values) || 0,
+        });
+      }
+      path = res.paging?.next || null;
+      nextParams = undefined;
+    }
+    return out;
+  }
+
   async getAdSetInsights(
     accountPath: string,
     startDate?: string,
@@ -1254,5 +1332,275 @@ export class MetaApiClient {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Ad-level insights — name, creative type, thumbnail, spend/impressions/clicks/conversions.
+   * Used by the Creative report to rank ads and surface creative format breakdown.
+   */
+  async getAdInsights(
+    accountPath: string,
+    startDate?: string,
+    endDate?: string,
+    limit = 100
+  ): Promise<Array<{
+    id: string; name: string; campaignName?: string; adSetName?: string;
+    creativeType?: string; thumbnailUrl?: string;
+    spend: number; impressions: number; clicks: number;
+    conversions: number; conversionValue: number;
+  }>> {
+    const params: Record<string, string> = {
+      level: "ad",
+      fields: "ad_id,ad_name,campaign_name,adset_name,spend,impressions,clicks,actions,action_values",
+      limit: String(limit),
+      sort: "spend_descending",
+    };
+    if (startDate && endDate) params.time_range = `{"since":"${startDate}","until":"${endDate}"}`;
+    else params.date_preset = "last_30d";
+
+    const out: Array<{
+      id: string; name: string; campaignName?: string; adSetName?: string;
+      creativeType?: string; thumbnailUrl?: string;
+      spend: number; impressions: number; clicks: number;
+      conversions: number; conversionValue: number;
+    }> = [];
+
+    let res: { data?: any[] };
+    try {
+      res = await this.fetch<{ data?: any[] }>(`/${accountPath}/insights`, params);
+    } catch {
+      return out;
+    }
+    const baseRows = (res.data || []).map((row: any) => ({
+      id: String(row.ad_id || ""),
+      name: String(row.ad_name || ""),
+      campaignName: row.campaign_name ? String(row.campaign_name) : undefined,
+      adSetName:    row.adset_name    ? String(row.adset_name)    : undefined,
+      spend: row.spend ? parseFloat(row.spend) : 0,
+      impressions: row.impressions ? parseInt(row.impressions, 10) : 0,
+      clicks: row.clicks ? parseInt(row.clicks, 10) : 0,
+      conversions: sumConversions(row.actions) || 0,
+      conversionValue: sumConversions(row.action_values) || 0,
+    }));
+
+    // Hydrate top 30 with creative details — keep it bounded so we don't burn quota.
+    const topForCreative = baseRows.slice(0, 30);
+    await Promise.all(
+      topForCreative.map(async (r) => {
+        try {
+          const c = await this.fetch<{ creative?: { object_type?: string; thumbnail_url?: string } }>(`/${r.id}`, {
+            fields: "creative{object_type,thumbnail_url}",
+          });
+          (r as any).creativeType = c.creative?.object_type;
+          (r as any).thumbnailUrl = c.creative?.thumbnail_url;
+        } catch { /* ignore — leave undefined */ }
+      })
+    );
+
+    return baseRows;
+  }
+
+  /**
+   * Account-level insights grouped by a Meta breakdown dimension.
+   *
+   * Returns one row per dimension value (e.g. one row per age bucket, country,
+   * device platform). Used by the Targeting Insights audit to recommend which
+   * demographics / places to invest more in.
+   *
+   * Valid `breakdown` values per Meta Graph API:
+   *   - "age"                  → 13-17, 18-24, 25-34, 35-44, 45-54, 55-64, 65+, unknown
+   *   - "gender"               → male, female, unknown
+   *   - "country"              → ISO country code
+   *   - "region"               → sub-country region name
+   *   - "impression_device"    → iPhone, Android, Desktop, etc.
+   *   - "device_platform"      → mobile, desktop
+   *   - "publisher_platform"   → facebook, instagram, audience_network, messenger
+   *   - "platform_position"    → feed, stories, reels, etc.
+   *   - "age,gender"           → cross-tab (age × gender)
+   *
+   * Conversions/ROAS use the account's default attribution (7d_click + 1d_view).
+   * Spend/impressions/clicks are attribution-independent — always exact.
+   */
+  async getInsightsBreakdown(
+    accountPath: string,
+    breakdown: string,
+    startDate?: string,
+    endDate?: string
+  ): Promise<Array<{
+    label: string;
+    breakdownValues: Record<string, string>;
+    spend: number;
+    impressions: number;
+    clicks: number;
+    conversions: number;
+    conversionValue: number;
+  }>> {
+    const params: Record<string, string> = {
+      breakdowns: breakdown,
+      fields: "spend,impressions,clicks,actions,action_values",
+      limit: "500",
+      action_attribution_windows: JSON.stringify([...META_ATTRIBUTION_WINDOW.raw]),
+    };
+    if (startDate && endDate) params.time_range = `{"since":"${startDate}","until":"${endDate}"}`;
+    else params.date_preset = "last_30d";
+
+    const out: Array<{
+      label: string;
+      breakdownValues: Record<string, string>;
+      spend: number;
+      impressions: number;
+      clicks: number;
+      conversions: number;
+      conversionValue: number;
+    }> = [];
+
+    // Inner runner handles a 400 by retrying without attribution windows
+    // (matches the resilience pattern used by getCampaignInsights).
+    const runFetch = async (withAttribution: boolean) => {
+      const p = { ...params };
+      if (!withAttribution) delete p.action_attribution_windows;
+
+      let path: string | null = `/${accountPath}/insights`;
+      let nextParams: Record<string, string> | undefined = p;
+      for (let guard = 0; guard < 10 && path; guard++) {
+        const res: { data?: any[]; paging?: { next?: string } } = nextParams
+          ? await this.fetch<{ data?: any[]; paging?: { next?: string } }>(path, nextParams)
+          : await this.fetchAbsolute<{ data?: any[]; paging?: { next?: string } }>(path);
+
+        for (const row of res.data || []) {
+          // Collect the breakdown values (e.g. { age: "25-34", gender: "female" })
+          const breakdownValues: Record<string, string> = {};
+          for (const dim of breakdown.split(",")) {
+            if (row[dim] !== undefined) breakdownValues[dim] = String(row[dim]);
+          }
+          const label = Object.values(breakdownValues).join(" · ") || "Unknown";
+          out.push({
+            label,
+            breakdownValues,
+            spend: row.spend !== undefined ? parseFloat(row.spend) : 0,
+            impressions: row.impressions !== undefined ? parseInt(row.impressions, 10) : 0,
+            clicks: row.clicks !== undefined ? parseInt(row.clicks, 10) : 0,
+            conversions: sumConversions(row.actions) || 0,
+            conversionValue: sumConversions(row.action_values) || 0,
+          });
+        }
+        const next = res.paging?.next;
+        path = next || null;
+        nextParams = undefined;
+      }
+    };
+
+    try {
+      await runFetch(true);
+    } catch {
+      // Retry without attribution windows in case the account uses a
+      // non-standard window (e.g. engaged-view) the default rejects.
+      out.length = 0;
+      await runFetch(false);
+    }
+
+    return out;
+  }
+
+  /** List custom audiences for an ad account.
+   *  Returns id, name, and approximate_count for each audience. */
+  async getCustomAudiences(accountPath: string): Promise<Array<{
+    id: string;
+    name: string;
+    size: number;
+  }>> {
+    const out: Array<{ id: string; name: string; size: number }> = [];
+    let path: string | null = `/${accountPath}/customaudiences`;
+    let nextParams: Record<string, string> | undefined = {
+      fields: "id,name,approximate_count_lower_bound,approximate_count_upper_bound",
+      limit: "200",
+    };
+
+    for (let guard = 0; guard < 10 && path; guard++) {
+      const res: { data?: any[]; paging?: { next?: string } } = nextParams
+        ? await this.fetch<{ data?: any[]; paging?: { next?: string } }>(path, nextParams)
+        : await this.fetchAbsolute<{ data?: any[]; paging?: { next?: string } }>(path);
+
+      for (const row of res.data || []) {
+        const lower = parseInt(row.approximate_count_lower_bound || "0", 10);
+        const upper = parseInt(row.approximate_count_upper_bound || "0", 10);
+        out.push({
+          id: row.id,
+          name: row.name || `Audience ${row.id}`,
+          size: lower > 0 && upper > 0 ? Math.round((lower + upper) / 2) : lower || upper,
+        });
+      }
+
+      const next = res.paging?.next;
+      path = next || null;
+      nextParams = undefined;
+    }
+
+    return out.sort((a, b) => b.size - a.size);
+  }
+
+  /** Estimate reach for a set of custom audiences via reachestimate.
+   *  Used to approximate overlap between two audiences:
+   *    overlap ≈ sizeA + sizeB − combinedReach */
+  async getReachEstimate(accountPath: string, audienceIds: string[]): Promise<number> {
+    const targetingSpec = JSON.stringify({
+      custom_audiences: audienceIds.map((id) => ({ id })),
+    });
+    const res = await this.fetch<{ users?: number; estimate_ready?: boolean }>(
+      `/${accountPath}/reachestimate`,
+      { targeting_spec: targetingSpec, currency: "USD" }
+    );
+    return res.users ?? 0;
+  }
+
+  /** Account-level daily insights — one row per day aggregated across all campaigns.
+   *  Used by BreakdownsReport "Daily" dimension. */
+  async getAccountDailyInsights(
+    accountPath: string,
+    startDate?: string,
+    endDate?: string
+  ): Promise<Array<{
+    label: string;
+    breakdownValues: Record<string, string>;
+    spend: number;
+    impressions: number;
+    clicks: number;
+    conversions: number;
+    conversionValue: number;
+  }>> {
+    const params: Record<string, string> = {
+      time_increment: "1",
+      fields: "spend,impressions,clicks,actions,action_values,date_start",
+      limit: "500",
+    };
+    if (startDate && endDate) params.time_range = `{"since":"${startDate}","until":"${endDate}"}`;
+    else params.date_preset = "last_30d";
+
+    const dayMap = new Map<string, { spend: number; impressions: number; clicks: number; conversions: number; conversionValue: number }>();
+
+    let path: string | null = `/${accountPath}/insights`;
+    let nextParams: Record<string, string> | undefined = params;
+    for (let guard = 0; guard < 15 && path; guard++) {
+      const res: { data?: any[]; paging?: { next?: string } } = nextParams
+        ? await this.fetch<{ data?: any[]; paging?: { next?: string } }>(path, nextParams)
+        : await this.fetchAbsolute<{ data?: any[]; paging?: { next?: string } }>(path);
+      for (const row of res.data || []) {
+        const date: string = row.date_start || "Unknown";
+        const cur = dayMap.get(date) || { spend: 0, impressions: 0, clicks: 0, conversions: 0, conversionValue: 0 };
+        cur.spend += row.spend ? parseFloat(row.spend) : 0;
+        cur.impressions += row.impressions ? parseInt(row.impressions, 10) : 0;
+        cur.clicks += row.clicks ? parseInt(row.clicks, 10) : 0;
+        cur.conversions += sumConversions(row.actions) || 0;
+        cur.conversionValue += sumConversions(row.action_values) || 0;
+        dayMap.set(date, cur);
+      }
+      const next = res.paging?.next;
+      path = next || null;
+      nextParams = undefined;
+    }
+
+    return Array.from(dayMap.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, v]) => ({ label: date, breakdownValues: { date }, ...v }));
   }
 }

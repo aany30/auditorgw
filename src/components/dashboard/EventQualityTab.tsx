@@ -9,6 +9,7 @@ import { useSort } from "@/hooks/useSort";
 import SortTh from "@/components/shared/SortTh";
 import { TermText } from "@/components/shared/Term";
 import EMQBenchmarkTable from "@/components/dashboard/EMQBenchmarkTable";
+import AIRecommendationButton from "@/components/shared/AIRecommendationButton";
 
 interface Props {
   platform?: "meta" | "google" | "both";
@@ -178,7 +179,7 @@ type MatchKeyRow = {
 
 export default function EventQualityTab({ platform = "both", dateRange = "30d", customStart, customEnd }: Props) {
   const { customBenchmarks, metaAccessToken, addAiCredits, emqKeyBenchmarks, setEmqKeyBenchmark, resetEmqKeyBenchmark } = useAuthStore();
-  const { meta, loading } = useAudit(platform, dateRange, customStart, customEnd);
+  const { meta, loading, error } = useAudit(platform, dateRange, customStart, customEnd);
 
   // ALL hooks must run unconditionally on every render — React enforces this.
   // We compute matchKeyRows + run useSort at the TOP of the component, then
@@ -312,6 +313,14 @@ export default function EventQualityTab({ platform = "both", dateRange = "30d", 
         </div>
       );
     }
+    if (error) {
+      return (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-6 text-red-700">
+          <p className="font-semibold mb-1">Failed to load event quality data</p>
+          <p className="text-sm">{error}</p>
+        </div>
+      );
+    }
 
     const pixels = meta?.pixels || [];
     const piiPcts = pixels.map((p) => p.emq.piiCoveragePct ?? 0).filter((v) => v > 0);
@@ -329,7 +338,7 @@ export default function EventQualityTab({ platform = "both", dateRange = "30d", 
         : "text-red-700 bg-red-100";
 
     return (
-      <div className="space-y-6">
+      <div className="space-y-6 section-enter">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Event Quality (EMQ) Analysis</h1>
           <p className="text-gray-600 mt-1">Real match-key &amp; PII coverage from your pixel (Meta Graph API)</p>
@@ -337,12 +346,12 @@ export default function EventQualityTab({ platform = "both", dateRange = "30d", 
 
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="bg-white rounded-lg border border-gray-200 p-5 shadow-sm">
+          <div className="bg-white rounded-lg border border-gray-200 p-5 shadow-sm animate-fade-in-up stagger-1">
             <div className="text-sm text-gray-600"><TermText>Avg. Match-Key Coverage</TermText></div>
             <div className="text-3xl font-bold text-gray-900 mt-1">{avgKeyCoverage}%</div>
             <div className="text-xs text-gray-500 mt-1">Across {matchKeyRows.length} keys</div>
           </div>
-          <div className="bg-white rounded-lg border border-gray-200 p-5 shadow-sm">
+          <div className="bg-white rounded-lg border border-gray-200 p-5 shadow-sm animate-fade-in-up stagger-2">
             <div className="text-sm text-gray-600">Events with PII / Match Data</div>
             <div className="text-3xl font-bold text-gray-900 mt-1">{avgPii}%</div>
             <div className="text-xs text-gray-500 mt-1">Higher = better matching</div>
@@ -532,24 +541,24 @@ export default function EventQualityTab({ platform = "both", dateRange = "30d", 
     s === "Healthy" ? "text-green-700 bg-green-100" : s === "Moderate" ? "text-yellow-700 bg-yellow-100" : "text-red-700 bg-red-100";
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 section-enter">
       <div>
         <h1 className="text-3xl font-bold text-gray-900">Event Quality (EMQ) Analysis</h1>
         <p className="text-gray-600 mt-1">Event Match Quality scores benchmarked against Meta recommendations</p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-white rounded-lg border border-gray-200 p-5 shadow-sm">
+        <div className="bg-white rounded-lg border border-gray-200 p-5 shadow-sm animate-fade-in-up stagger-1">
           <div className="text-sm text-gray-600">Overall EMQ Score</div>
           <div className="text-3xl font-bold text-yellow-600 mt-1">7.1 / 10</div>
           <div className="text-xs text-gray-500 mt-1">Target: {(customBenchmarks.metaEMQScore * 10).toFixed(1)}+</div>
         </div>
-        <div className="bg-white rounded-lg border border-gray-200 p-5 shadow-sm">
+        <div className="bg-white rounded-lg border border-gray-200 p-5 shadow-sm animate-fade-in-up stagger-2">
           <div className="text-sm text-gray-600"><TermText>Avg. Match Key Coverage</TermText></div>
           <div className="text-3xl font-bold text-gray-900 mt-1">75%</div>
           <div className="text-xs text-yellow-600 mt-1">↓ 5% below benchmark</div>
         </div>
-        <div className="bg-white rounded-lg border border-gray-200 p-5 shadow-sm">
+        <div className="bg-white rounded-lg border border-gray-200 p-5 shadow-sm animate-fade-in-up stagger-3">
           <div className="text-sm text-gray-600">Est. Lift if Fixed</div>
           <div className="text-3xl font-bold text-green-600 mt-1">+28%</div>
           <div className="text-xs text-gray-500 mt-1">Conversion improvement</div>
@@ -586,7 +595,19 @@ export default function EventQualityTab({ platform = "both", dateRange = "30d", 
                       {gap}
                     </td>
                     <td className="px-6 py-4 text-right">
-                      <span className={`px-3 py-1 rounded-full text-xs font-semibold ${statusColor(e.status)}`}>{e.status}</span>
+                      <div className="flex flex-col items-end gap-1">
+                        <span className={`px-3 py-1 rounded-full text-xs font-semibold ${statusColor(e.status)}`}>{e.status}</span>
+                        {(e.status === "Moderate" || e.status === "Critical") && (
+                          <AIRecommendationButton
+                            metric={`EMQ ${e.event}`}
+                            value={e.current}
+                            status={e.status === "Critical" ? "critical" : "warn"}
+                            platform="meta"
+                            auditContext={{ module: "Event Quality EMQ", siblingMetrics: { event: e.event, current: e.current, benchmark: e.benchmark } }}
+                            compact
+                          />
+                        )}
+                      </div>
                     </td>
                     <td className="px-6 py-4 text-right text-green-600 font-semibold">{e.impact}</td>
                   </tr>
@@ -634,7 +655,19 @@ export default function EventQualityTab({ platform = "both", dateRange = "30d", 
                     {m.gap}%
                   </td>
                   <td className="px-6 py-4 text-right">
-                    <span className={`px-3 py-1 rounded-full text-xs font-semibold ${statusColor(m.status)}`}>{m.status}</span>
+                    <div className="flex flex-col items-end gap-1">
+                      <span className={`px-3 py-1 rounded-full text-xs font-semibold ${statusColor(m.status)}`}>{m.status}</span>
+                      {(m.status === "Moderate" || m.status === "Critical") && (
+                        <AIRecommendationButton
+                          metric={`Match Key: ${m.key} coverage`}
+                          value={m.coverage}
+                          status={m.status === "Critical" ? "critical" : "warn"}
+                          platform="meta"
+                          auditContext={{ module: "Event Quality Match Keys", siblingMetrics: { key: m.key, coverage: `${m.coverage}%`, benchmark: `${m.benchmark}%`, gap: m.gap } }}
+                          compact
+                        />
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}

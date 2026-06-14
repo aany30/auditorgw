@@ -13,18 +13,211 @@ html, body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-.health-score {
-  @apply text-4xl font-bold;
+/* ─── Health score ────────────────────────────────────────── */
+.health-score    { @apply text-4xl font-bold; }
+.health-healthy  { @apply text-healthy; }
+.health-warning  { @apply text-warning; }
+.health-critical { @apply text-critical; }
+
+/* ─── Stagger delays ──────────────────────────────────────── */
+.stagger-1 { animation-delay: 60ms;  opacity: 0; }
+.stagger-2 { animation-delay: 120ms; opacity: 0; }
+.stagger-3 { animation-delay: 180ms; opacity: 0; }
+.stagger-4 { animation-delay: 240ms; opacity: 0; }
+.stagger-5 { animation-delay: 300ms; opacity: 0; }
+.stagger-6 { animation-delay: 360ms; opacity: 0; }
+.stagger-7 { animation-delay: 420ms; opacity: 0; }
+.stagger-8 { animation-delay: 480ms; opacity: 0; }
+.stagger-9 { animation-delay: 540ms; opacity: 0; }
+
+/* ─── Universal card hover lift ──────────────────────────── */
+/* Targets any white bordered card (metric cards, chart cards, etc.)
+   Excludes overflow containers and tables by checking they aren't too large */
+.bg-white.rounded-xl.border,
+.bg-white.rounded-lg.border {
+  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+              border-color 0.22s ease;
+}
+/* Only lift elements that are "leaf" cards — not containers with children overflow */
+.bg-white.rounded-xl.border:not(:has(table)):not(:has(.overflow-x-auto)):hover,
+.bg-white.rounded-lg.border:not(:has(table)):not(:has(.overflow-x-auto)):hover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 32px rgba(59, 130, 246, 0.08), 0 3px 10px rgba(0, 0, 0, 0.05);
+  border-color: rgba(59, 130, 246, 0.2);
 }
 
-.health-healthy {
-  @apply text-healthy;
+/* Metric/KPI cards — slightly stronger lift */
+.bg-white.rounded-xl.border.shadow-sm.p-5:hover,
+.bg-white.rounded-xl.border.shadow-sm.p-4:hover,
+.bg-white.rounded-xl.border.p-5:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 16px 40px rgba(59, 130, 246, 0.11), 0 4px 12px rgba(0, 0, 0, 0.06);
+  border-color: rgba(59, 130, 246, 0.28);
 }
 
-.health-warning {
-  @apply text-warning;
+/* ─── Explicit helper classes ─────────────────────────────── */
+.card-hover {
+  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.card-hover:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.09), 0 2px 8px rgba(0, 0, 0, 0.05);
 }
 
-.health-critical {
-  @apply text-critical;
+.metric-card {
+  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+              border-color 0.22s ease;
+}
+.metric-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 16px 40px rgba(59, 130, 246, 0.1), 0 4px 12px rgba(0, 0, 0, 0.06);
+  border-color: rgba(59, 130, 246, 0.25);
+}
+
+/* ─── Shimmer skeleton ────────────────────────────────────── */
+.skeleton {
+  background: linear-gradient(90deg, #f3f4f6 25%, #e0e8ff 50%, #f3f4f6 75%);
+  background-size: 800px 100%;
+  border-radius: 8px;
+  animation: shimmer 1.6s linear infinite;
+}
+
+/* ─── Progress bars ───────────────────────────────────────── */
+.progress-bar-inner {
+  transform-origin: left;
+  animation: barFill 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+/* All progress bars with bg-blue / bg-green etc. get smooth transition */
+[class*="rounded-full"][class*="h-"][class*="bg-blue"],
+[class*="rounded-full"][class*="h-"][class*="bg-green"],
+[class*="rounded-full"][class*="h-"][class*="bg-orange"],
+[class*="rounded-full"][class*="h-"][class*="bg-red"],
+[class*="rounded-full"][class*="h-"][class*="bg-purple"],
+[class*="rounded-full"][class*="h-"][class*="bg-indigo"] {
+  transition: width 0.9s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ─── Table rows ──────────────────────────────────────────── */
+tbody tr {
+  transition: background-color 0.12s ease;
+}
+
+/* ─── Number pulse ────────────────────────────────────────── */
+.number-pulse {
+  animation: countPulse 0.45s ease-out;
+}
+
+/* ─── Glow badge for critical ─────────────────────────────── */
+.badge-critical-glow {
+  animation: pulseGlow 2.2s ease-in-out infinite;
+}
+
+/* ─── Premium gradient text ──────────────────────────────── */
+.gradient-text {
+  background: linear-gradient(135deg, #3b82f6 0%, #6366f1 50%, #8b5cf6 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ─── Float animation (for icons/badges) ─────────────────── */
+.float-element {
+  animation: float 3.5s ease-in-out infinite;
+}
+
+/* ─── Section entry ───────────────────────────────────────── */
+.section-enter {
+  opacity: 0;
+  animation: fadeInUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* ─── Chart entry ─────────────────────────────────────────── */
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.chart-enter {
+  opacity: 0;
+  animation: scaleIn 0.45s cubic-bezier(0.16, 1, 0.3, 1) 0.1s forwards;
+}
+
+/* ─── Recharts polish ─────────────────────────────────────── */
+.recharts-wrapper {
+  transition: opacity 0.3s ease;
+}
+.recharts-default-tooltip {
+  border-radius: 10px !important;
+  border: 1px solid rgba(229, 231, 235, 0.8) !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08) !important;
+  padding: 10px 14px !important;
+  backdrop-filter: blur(4px);
+}
+.recharts-tooltip-label {
+  font-weight: 600 !important;
+  color: #111827 !important;
+  margin-bottom: 4px !important;
+}
+.recharts-legend-item-text {
+  font-size: 12px !important;
+  color: #6b7280 !important;
+}
+.recharts-cartesian-axis-tick-value {
+  font-size: 11px !important;
+  fill: #9ca3af !important;
+}
+.recharts-cartesian-grid-horizontal line,
+.recharts-cartesian-grid-vertical line {
+  stroke: #f3f4f6 !important;
+}
+
+/* ─── Sidebar nav ─────────────────────────────────────────── */
+aside nav button {
+  transition: background-color 0.15s ease, color 0.15s ease,
+              transform 0.15s ease, box-shadow 0.15s ease;
+}
+aside nav button:hover:not([class*="bg-blue"]) {
+  transform: translateX(2px);
+}
+
+/* ─── Button interactions ─────────────────────────────────── */
+button {
+  transition: opacity 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease,
+              background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+button:active:not(:disabled) {
+  transform: scale(0.97) !important;
+}
+
+/* ─── Dropdown / select polish ────────────────────────────── */
+select {
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+select:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+}
+
+/* ─── Input focus glow ────────────────────────────────────── */
+input[type="text"], input[type="email"], input[type="search"], textarea {
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+input:focus, textarea:focus {
+  outline: none;
+  border-color: #3b82f6 !important;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+}
+
+/* ─── Tab content page-level fade-in ─────────────────────── */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+main > div {
+  animation: fadeIn 0.3s ease-out;
 }

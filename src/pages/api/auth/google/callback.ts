@@ -1,4 +1,21 @@
-import { NextApiRequest, NextApiResponse } from 'next';
+/**
+ * Google OAuth callback — returns the refresh_token to the dashboard.
+ *
+ * The auditor's API client uses Google Ads API which needs:
+ *   - refresh_token (long-lived; what we save)
+ *   - developer_token (separate, manually applied for at ads.google.com → API Center)
+ *
+ * Flow:
+ *   1. User clicks "Connect with Google" → /api/auth/google/start
+ *   2. Google consent → redirects here with ?code=...
+ *   3. Exchange code → { access_token, refresh_token, scope }
+ *   4. List Google Ads customers + GA4 properties + GTM containers (best-effort)
+ *   5. Redirect to dashboard with refresh_token as the "googleAccessToken" the
+ *      Zustand store knows about (the audit endpoints mint fresh access tokens
+ *      from this refresh_token + the developer_token on each call).
+ */
+
+import type { NextApiRequest, NextApiResponse } from "next";
 
 interface GoogleTokenResponse {
   access_token: string;
@@ -8,141 +25,125 @@ interface GoogleTokenResponse {
   token_type: string;
 }
 
-interface GoogleAdsCustomer {
-  resourceName: string;
-  id: string;
-  descriptiveName: string;
-}
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  const { code, error } = req.query;
 
-interface GoogleAdsCustomerResponse {
-  resource: GoogleAdsCustomer | null;
-}
-
-interface GoogleAnalyticsProperty {
-  name: string;
-  displayName: string;
-}
-
-interface GoogleAnalyticsListResponse {
-  properties: GoogleAnalyticsProperty[];
-}
-
-interface GoogleTagManagerContainer {
-  name: string;
-  publicId: string;
-}
-
-interface GoogleTagManagerResponse {
-  container: GoogleTagManagerContainer | null;
-}
-
-export default async function handler(
-  req: NextApiRequest,
-  res: NextApiResponse
-) {
-  const { code } = req.query;
-
+  if (error) {
+    return res.redirect(`/?error=google_oauth_${error}`);
+  }
   if (!code) {
-    return res.status(400).json({ error: 'No authorization code provided' });
+    return res.redirect("/?error=google_no_code");
+  }
+
+  const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  const redirectUri =
+    process.env.NEXT_PUBLIC_GOOGLE_REDIRECT_URI ||
+    `${req.headers.origin || `http://${req.headers.host}`}/api/auth/google/callback`;
+
+  if (!clientId || !clientSecret) {
+    console.error("Missing Google OAuth env vars");
+    return res.redirect("/?error=google_oauth_not_configured");
   }
 
   try {
-    const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
-    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-    const redirectUri = process.env.NEXT_PUBLIC_GOOGLE_REDIRECT_URI || 'http://localhost:3000/api/auth/google/callback';
-
-    if (!clientId || !clientSecret) {
-      console.error('Missing Google OAuth configuration');
-      return res.redirect('/?error=missing_config');
-    }
-
-    // Exchange code for tokens
-    const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    // STEP 1 — Exchange auth code for tokens
+    const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         client_id: clientId,
         client_secret: clientSecret,
         redirect_uri: redirectUri,
         code: code as string,
-        grant_type: 'authorization_code',
+        grant_type: "authorization_code",
       }).toString(),
     });
 
-    if (!tokenResponse.ok) {
-      const error = await tokenResponse.json();
-      console.error('Google token exchange failed:', error);
-      return res.redirect('/?error=token_exchange_failed');
+    if (!tokenRes.ok) {
+      const err = await tokenRes.json().catch(() => ({}));
+      console.error("Google token exchange failed:", err);
+      return res.redirect(`/?error=google_token_exchange&detail=${encodeURIComponent(err.error_description || "")}`);
     }
 
-    const tokenData = (await tokenResponse.json()) as GoogleTokenResponse;
+    const tokenData = (await tokenRes.json()) as GoogleTokenResponse;
     const accessToken = tokenData.access_token;
+    const refreshToken = tokenData.refresh_token;
 
-    let customerId = '';
-    let propertyId = '';
-    let containerId = '';
-
-    // Try to fetch Google Ads customer ID
-    try {
-      const customerResponse = await fetch('https://googleads.googleapis.com/v15/customers:listAccessibleCustomers', {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-
-      if (customerResponse.ok) {
-        const customerData = (await customerResponse.json()) as { resource_names: string[] };
-        if (customerData.resource_names && customerData.resource_names.length > 0) {
-          customerId = customerData.resource_names[0].split('/')[1];
-        }
-      }
-    } catch (error) {
-      console.warn('Failed to fetch Google Ads customer ID:', error);
+    if (!refreshToken) {
+      // This happens if the user previously authorized this app — Google won't
+      // re-issue a refresh_token unless we forced prompt=consent in /start.
+      // (We do force it, so this is rare.)
+      console.warn("Google did not return a refresh_token");
+      return res.redirect("/?error=google_no_refresh_token");
     }
 
-    // Try to fetch GA4 property ID
+    // STEP 2 — Best-effort fetch of the user's first Google Ads customer,
+    // GA4 property, and GTM container so the dashboard auto-selects them.
+    // We use the short-lived access_token for these (only valid for 1 hour,
+    // but that's fine for this one-time discovery call).
+    let customerId = "";
+    let propertyId = "";
+    let containerId = "";
+
+    // Google Ads — list accessible customers
     try {
-      const propertiesResponse = await fetch(
-        'https://analyticsadmin.googleapis.com/v1alpha/properties?filter=parent:organizations/',
-        {
-          headers: { Authorization: `Bearer ${accessToken}` },
-        }
+      const r = await fetch(
+        "https://googleads.googleapis.com/v16/customers:listAccessibleCustomers",
+        { headers: { Authorization: `Bearer ${accessToken}` } }
       );
-
-      if (propertiesResponse.ok) {
-        const propertiesData = (await propertiesResponse.json()) as GoogleAnalyticsListResponse;
-        if (propertiesData.properties && propertiesData.properties.length > 0) {
-          propertyId = propertiesData.properties[0].name.split('/')[1];
-        }
+      if (r.ok) {
+        const data = (await r.json()) as { resourceNames?: string[] };
+        const first = data.resourceNames?.[0];
+        if (first) customerId = first.split("/").pop() || "";
       }
-    } catch (error) {
-      console.warn('Failed to fetch GA4 property ID:', error);
-    }
+    } catch (_e) { /* not fatal */ }
 
-    // Try to fetch GTM container ID
+    // GA4 — list properties (uses Admin API)
     try {
-      const containerResponse = await fetch('https://www.googleapis.com/tagmanager/v2/accounts', {
+      const r = await fetch(
+        "https://analyticsadmin.googleapis.com/v1beta/accountSummaries",
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+      if (r.ok) {
+        const data = (await r.json()) as { accountSummaries?: Array<{ propertySummaries?: Array<{ property?: string }> }> };
+        const firstProp = data.accountSummaries?.[0]?.propertySummaries?.[0]?.property;
+        if (firstProp) propertyId = firstProp.split("/").pop() || "";
+      }
+    } catch (_e) { /* not fatal */ }
+
+    // GTM — list accounts + containers
+    try {
+      const r = await fetch("https://www.googleapis.com/tagmanager/v2/accounts", {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
-
-      if (containerResponse.ok) {
-        const containerData = (await containerResponse.json()) as { account: any[] };
-        if (containerData.account && containerData.account.length > 0) {
-          if (containerData.account[0].container && containerData.account[0].container.length > 0) {
-            containerId = containerData.account[0].container[0].publicId;
+      if (r.ok) {
+        const data = (await r.json()) as { account?: Array<{ path?: string }> };
+        const acctPath = data.account?.[0]?.path;
+        if (acctPath) {
+          const c = await fetch(
+            `https://www.googleapis.com/tagmanager/v2/${acctPath}/containers`,
+            { headers: { Authorization: `Bearer ${accessToken}` } }
+          );
+          if (c.ok) {
+            const cd = (await c.json()) as { container?: Array<{ publicId?: string }> };
+            containerId = cd.container?.[0]?.publicId || "";
           }
         }
       }
-    } catch (error) {
-      console.warn('Failed to fetch GTM container ID:', error);
-    }
+    } catch (_e) { /* not fatal */ }
 
-    // Redirect to dashboard with token and IDs
+    // STEP 3 — Redirect to dashboard. We save the refresh_token AS the
+    // "googleAccessToken" field — the existing audit endpoints know to mint
+    // a fresh access token from it + the developer_token on each call.
     res.redirect(
-      `/app/dashboard?google_token=${encodeURIComponent(
-        accessToken
-      )}&customer_id=${customerId}&property_id=${propertyId}&container_id=${containerId}`
+      `/app/dashboard?google_token=${encodeURIComponent(refreshToken)}` +
+        `&customer_id=${encodeURIComponent(customerId)}` +
+        `&property_id=${encodeURIComponent(propertyId)}` +
+        `&container_id=${encodeURIComponent(containerId)}`
     );
-  } catch (error) {
-    console.error('OAuth callback error:', error);
-    res.redirect('/?error=oauth_error');
+  } catch (e) {
+    console.error("Google OAuth callback error:", e);
+    res.redirect("/?error=google_oauth_error");
   }
 }

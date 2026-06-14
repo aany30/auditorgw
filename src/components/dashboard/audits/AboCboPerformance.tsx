@@ -305,12 +305,13 @@ export default function AboCboPerformance({ campaigns }: Props) {
         <div style={{ width: "100%", height: 320 }}>
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={chartData} margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
-              <XAxis dataKey="structure" stroke="#6b7280" tick={{ fill: "#374151", fontSize: 12 }} />
+              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
+              <XAxis dataKey="structure" stroke="#6b7280" tick={{ fill: "#374151", fontSize: 12 }} axisLine={false} tickLine={false} />
               <YAxis
                 yAxisId="left"
                 stroke="#4f46e5"
                 tick={{ fill: "#4f46e5", fontSize: 11 }}
+                axisLine={false} tickLine={false}
                 tickFormatter={(v) => formatValue(v, primary.unit, acctCurrency)}
               />
               <YAxis
@@ -318,18 +319,20 @@ export default function AboCboPerformance({ campaigns }: Props) {
                 orientation="right"
                 stroke="#10b981"
                 tick={{ fill: "#10b981", fontSize: 11 }}
+                axisLine={false} tickLine={false}
                 tickFormatter={(v) => formatValue(v, secondary.unit, acctCurrency)}
               />
               <Tooltip
+                cursor={{ fill: "rgba(99,102,241,0.06)" }}
                 formatter={(value: number, name: string) => {
                   const metric = name === primary.label ? primary : secondary;
                   return [formatValue(value, metric.unit, acctCurrency), name];
                 }}
-                contentStyle={{ borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12 }}
+                contentStyle={{ background: "#fff", borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12 }}
               />
               <Legend wrapperStyle={{ fontSize: 12 }} />
-              <Bar yAxisId="left" dataKey={primaryMetric} name={primary.label} fill="#4f46e5" radius={[4, 4, 0, 0]} />
-              <Line yAxisId="right" dataKey={secondaryMetric} name={secondary.label} stroke="#10b981" strokeWidth={2} dot={{ r: 5, fill: "#10b981" }} activeDot={{ r: 7 }} />
+              <Bar yAxisId="left" dataKey={primaryMetric} name={primary.label} fill="#4f46e5" radius={[4, 4, 0, 0]} animationDuration={600} animationEasing="ease-out" />
+              <Line yAxisId="right" dataKey={secondaryMetric} name={secondary.label} stroke="#10b981" strokeWidth={2} dot={{ r: 5, fill: "#10b981" }} activeDot={{ r: 7 }} animationDuration={700} animationEasing="ease-out" />
             </ComposedChart>
           </ResponsiveContainer>
         </div>
