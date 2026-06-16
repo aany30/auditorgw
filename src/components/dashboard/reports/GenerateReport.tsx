@@ -22,6 +22,7 @@ import { detectCurrency, formatMoney } from "@/lib/currency";
 import { toCSV, downloadCSV } from "@/lib/csv-export";
 import AIExecutiveSummary from "@/components/shared/AIExecutiveSummary";
 import type { AdInsightRow } from "@/pages/api/reporting/ad-insights/meta";
+import type { PdfReportPagesProps } from "./PdfReportPages";
 import type { DateRange } from "@/components/shared/DateRangePicker";
 
 interface Props {
@@ -205,34 +206,47 @@ async function generateExcel(opts: {
   XLSX.writeFile(wb, `auditor-report-${opts.startDate}-${opts.endDate}.xlsx`);
 }
 
-// ─── PDF via server-side Puppeteer (real vector PDF, selectable text) ──────────
+// ─── PDF via the browser's own print engine (real vector PDF, no server) ───────
+// Renders the same <PdfReportPages> deck to HTML, opens it in a new window, and
+// triggers the browser's native "Save as PDF" — identical vector quality to a
+// headless-Chrome render, but with zero server, zero Puppeteer, deploys anywhere.
 
-async function generatePdf(opts: {
-  startDate: string; endDate: string; currency: string; platform: string;
-  campaigns: any[]; pubRows: any[]; ageRows: any[]; genderRows: any[];
-  countryRows: any[]; deviceRows: any[];
-}) {
-  const res = await fetch("/api/reporting/pdf", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(opts),
+async function generatePdf(opts: PdfReportPagesProps) {
+  const [{ renderToStaticMarkup }, React, { default: PdfReportPages }] = await Promise.all([
+    import("react-dom/server"),
+    import("react"),
+    import("./PdfReportPages"),
+  ]);
+
+  const body = renderToStaticMarkup(React.createElement(PdfReportPages, opts));
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Auditor — Ad Performance Report (${opts.startDate} – ${opts.endDate})</title>
+<style>
+  @page { size: 1280px 720px; margin: 0; }
+  * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  html, body { margin: 0; padding: 0; background: #EEF1F6; }
+  @media screen { body { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 16px; } }
+</style>
+</head>
+<body>${body}</body>
+</html>`;
+
+  const win = window.open("", "_blank");
+  if (!win) throw new Error("Popup blocked — allow popups for this site, then click Download PDF again.");
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
+
+  // Give the new window a beat to lay out, then open its print dialog once.
+  await new Promise<void>((resolve) => {
+    let printed = false;
+    const fire = () => { if (printed) return; printed = true; try { win.focus(); win.print(); } catch { /* user closed it */ } resolve(); };
+    win.onload = fire;
+    setTimeout(fire, 500); // fallback if onload doesn't fire for document.write content
   });
-
-  if (!res.ok) {
-    let detail = `${res.status}`;
-    try { detail = (await res.json()).error || detail; } catch { /* non-JSON */ }
-    throw new Error(detail);
-  }
-
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `auditor-report-${opts.startDate}-${opts.endDate}.pdf`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
 }
 
 // ─── Format cards ─────────────────────────────────────────────────────────────
@@ -371,7 +385,7 @@ export default function GenerateReport({ platform, dateRange, customStart, custo
     setFlash(null); setFlashErr(null);
     try {
       await generatePdf(commonOpts());
-      showFlash("PDF downloaded — agency report ready to share");
+      showFlash("Report opened — choose “Save as PDF” in the print dialog (landscape, background graphics on).");
     } catch (err) {
       showErr(`PDF failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
