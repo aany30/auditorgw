@@ -3,11 +3,12 @@
  * Used by all Audience Analysis tabs (Funnel, Performance, Saturation, etc.).
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAuthStore } from "@/store/auth";
 import { rangeToDates } from "@/lib/date-range";
 import type { AdSetRow } from "@/pages/api/audience/adset-insights/meta";
 import type { DateRange } from "@/components/shared/DateRangePicker";
+import { buildAudienceMap, type CustomAudienceDetail } from "@/lib/audience-classifier";
 
 export type { AdSetRow };
 
@@ -19,6 +20,7 @@ export function useAdSetInsights(
 ) {
   const { metaAccessToken, metaBusinessId, demoMode } = useAuthStore();
   const [adsets, setAdsets] = useState<AdSetRow[]>([]);
+  const [audiences, setAudiences] = useState<CustomAudienceDetail[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [currency, setCurrency] = useState("INR");
@@ -28,11 +30,12 @@ export function useAdSetInsights(
   useEffect(() => {
     if (platform === "google") {
       setAdsets([]);
+      setAudiences([]);
       return;
     }
     const effectiveToken = demoMode ? "demo-meta-token" : metaAccessToken;
     const effectiveBiz = demoMode ? "demo-business-123" : metaBusinessId;
-    if (!effectiveToken || !effectiveBiz) { setAdsets([]); return; }
+    if (!effectiveToken || !effectiveBiz) { setAdsets([]); setAudiences([]); return; }
 
     let cancelled = false;
     setLoading(true);
@@ -48,6 +51,7 @@ export function useAdSetInsights(
         if (cancelled) return;
         if (data.error) { setError(data.error); return; }
         setAdsets(data.adsets || []);
+        setAudiences(data.audiences || []);
         if (data.currency) setCurrency(data.currency);
       })
       .catch((e) => { if (!cancelled) setError(e.message); })
@@ -57,5 +61,7 @@ export function useAdSetInsights(
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [platform, startDate, endDate, metaAccessToken, metaBusinessId, demoMode]);
 
-  return { adsets, loading, error, currency, startDate, endDate };
+  const audienceMap = useMemo(() => buildAudienceMap(audiences), [audiences]);
+
+  return { adsets, audiences, audienceMap, loading, error, currency, startDate, endDate };
 }

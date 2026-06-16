@@ -254,6 +254,8 @@ export function getDemoMetaCampaigns() {
       conversions: 142,
       conversionValue: 11360,
       currency: "USD",
+      effectiveAttribution: "7d_click + 1d_view",
+      conv1dClick: 88, conv7dClick: 131, conv1dView: 11,
     },
     {
       id: "1002",
@@ -269,6 +271,8 @@ export function getDemoMetaCampaigns() {
       conversions: 312,
       conversionValue: 38900,
       currency: "USD",
+      effectiveAttribution: "7d_click + 1d_view",
+      conv1dClick: 198, conv7dClick: 289, conv1dView: 23,
     },
     {
       id: "1003",
@@ -284,6 +288,8 @@ export function getDemoMetaCampaigns() {
       conversions: 38,
       conversionValue: 4180,
       currency: "USD",
+      effectiveAttribution: "1d_click",
+      conv1dClick: 38, conv7dClick: 38, conv1dView: 0,
     },
     {
       id: "1004",
@@ -299,6 +305,8 @@ export function getDemoMetaCampaigns() {
       conversions: 4,
       conversionValue: 80,
       currency: "USD",
+      effectiveAttribution: "7d_click + 1d_view",
+      conv1dClick: 2, conv7dClick: 4, conv1dView: 0,
     },
     {
       id: "1005",
@@ -314,6 +322,8 @@ export function getDemoMetaCampaigns() {
       conversions: 65,
       conversionValue: 7200,
       currency: "USD",
+      effectiveAttribution: "7d_click + 1d_view",
+      conv1dClick: 41, conv7dClick: 60, conv1dView: 5,
     },
     {
       id: "1006",
@@ -329,6 +339,8 @@ export function getDemoMetaCampaigns() {
       conversions: 410,
       conversionValue: 82000,
       currency: "USD",
+      effectiveAttribution: "7d_click + 1d_view",
+      conv1dClick: 254, conv7dClick: 381, conv1dView: 29,
     },
     {
       id: "1007",
@@ -344,6 +356,8 @@ export function getDemoMetaCampaigns() {
       conversions: 91,
       conversionValue: 6370,
       currency: "USD",
+      effectiveAttribution: "7d_click + 1d_view",
+      conv1dClick: 58, conv7dClick: 84, conv1dView: 7,
     },
   ];
 }

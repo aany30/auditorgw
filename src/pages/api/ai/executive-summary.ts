@@ -30,15 +30,22 @@ interface SummaryResponse {
   creditsUsedUsd?: number;
 }
 
-const SYSTEM_PROMPT = `You are a senior paid-media analyst writing an executive summary for a marketing dashboard tab. You will receive the tab name, platform, date range, and a JSON snapshot of the current tab data. Your job is to produce a concise but insightful executive summary that highlights what's working, what needs attention, and concrete next steps.
+const SYSTEM_PROMPT = `You are a senior paid-media analyst writing an executive summary for a marketing dashboard tab. You receive the tab name, platform, date range, and a JSON snapshot of the current tab's live data. Your job: produce a data-grounded executive summary that tells the user EXACTLY what is happening in their account right now.
 
-Rules:
-- Use the actual numbers from the data — never be generic.
-- Headline: one punchy sentence (under 90 chars) that names the biggest takeaway.
-- Overview: 2-3 sentences giving the big picture.
-- Key Findings: 3-5 bullet points, each naming a specific metric and its value.
-- Recommendations: 3-5 actionable bullet points with specific UI steps (Meta Ads Manager, Google Ads, etc.).
-- Output ONLY valid JSON matching the schema. No prose outside JSON.`;
+HARD RULES — violating any of these makes the output useless:
+1. Every keyFinding bullet MUST quote at least one specific number from the data (e.g. "ROAS: 2.4×", "CPM ₹31.2", "CTR 1.8%"). A finding that contains no number is forbidden.
+2. Every recommendation MUST name a specific metric, campaign, audience type, or platform UI step. Never write "review your campaigns", "optimize your budget", or any advice that could apply to ANY account.
+3. If a campaign name, audience label, or ad set name is present in the data, use it explicitly in the finding or recommendation.
+4. If the context data is sparse or empty, state what IS visible and what's missing — do not invent generic filler.
+5. The headline must state the single most important number or trend visible in THIS data snapshot.
+6. Recommendations must cite the current state (e.g. "Your Interest audience has CPA ₹420 vs Broad's ₹280 — pause Interest and reallocate budget") not abstract best-practices.
+
+Format:
+- Headline: under 90 chars, names the biggest takeaway with a number.
+- Overview: 2-3 sentences, big picture with actual totals.
+- Key Findings: 3-5 bullets, each with specific metric + value from the data.
+- Recommendations: 3-5 bullets, each naming what to do, where, and why based on THIS account's numbers.
+- Output ONLY valid JSON. No prose outside JSON.`;
 
 const OUTPUT_SCHEMA = {
   type: "object" as const,
@@ -53,20 +60,40 @@ const OUTPUT_SCHEMA = {
 };
 
 // Static fallback when no API key is set (demo mode)
-function staticFallback(tabName: string): SummaryResponse {
+function staticFallback(tabName: string, context: Record<string, unknown>): SummaryResponse {
+  // Derive real findings from context data rather than generic filler
+  const findings: string[] = [];
+  const recs: string[] = [];
+
+  const extract = (obj: Record<string, unknown>, depth = 0): void => {
+    if (depth > 2) return;
+    for (const [k, v] of Object.entries(obj)) {
+      if (typeof v === "number" && v > 0) {
+        const label = k.replace(/([A-Z])/g, " $1").replace(/_/g, " ").toLowerCase();
+        const fmt = v > 1000 ? v.toLocaleString("en-IN") : v % 1 !== 0 ? v.toFixed(2) : String(v);
+        if (findings.length < 4) findings.push(`${label}: ${fmt}`);
+      } else if (typeof v === "object" && v !== null && !Array.isArray(v) && findings.length < 4) {
+        extract(v as Record<string, unknown>, depth + 1);
+      }
+    }
+  };
+  extract(context);
+
+  const hasData = findings.length > 0;
   return {
-    headline: `${tabName} — sample executive summary (connect AI for real insights)`,
-    overview: `This is a sample summary for the ${tabName} tab. Connect an Anthropic API key to generate a real analysis based on your actual account data.`,
-    keyFindings: [
-      "Sample finding: review your top-spending campaigns against ROAS targets.",
-      "Sample finding: check audience overlap between similar ad sets.",
-      "Sample finding: verify conversion events are firing correctly across all pages.",
-    ],
-    recommendations: [
-      "Connect your Meta or Google account for data-driven insights.",
-      "Set an Anthropic API key (ANTHROPIC_API_KEY) to enable AI analysis.",
-      "Widen the date range for more statistical significance.",
-    ],
+    headline: hasData
+      ? `${tabName} — AI key needed for full analysis (${findings.length} metrics detected)`
+      : `${tabName} — set ANTHROPIC_API_KEY for AI-powered analysis`,
+    overview: hasData
+      ? `Data is loading for the ${tabName} tab — ${findings.length} metrics detected. Set ANTHROPIC_API_KEY to unlock AI analysis that cites these exact numbers.`
+      : `No data detected for the ${tabName} tab yet. Connect a Meta or Google account and set ANTHROPIC_API_KEY to generate a personalised executive summary.`,
+    keyFindings: hasData ? findings : ["No numeric data detected in this tab's current snapshot."],
+    recommendations: hasData
+      ? [
+          "Set ANTHROPIC_API_KEY in .env.local and restart the dev server to unlock AI analysis.",
+          "The analysis will reference the exact metrics visible in this tab — no generic advice.",
+        ]
+      : recs.concat(["Set ANTHROPIC_API_KEY in .env.local to enable personalised AI analysis."]),
     source: "fallback",
     creditsUsedUsd: 0,
   };
@@ -84,7 +111,7 @@ export default async function handler(
   const apiKey = process.env.ANTHROPIC_API_KEY;
 
   if (!apiKey) {
-    return res.status(200).json(staticFallback(tabName));
+    return res.status(200).json(staticFallback(tabName, context ?? {}));
   }
 
   try {
@@ -129,7 +156,7 @@ export default async function handler(
 
     return res.status(200).json({ ...parsed, source: "ai", creditsUsedUsd });
   } catch (err) {
-    if (isDemo) return res.status(200).json(staticFallback(tabName));
+    if (isDemo) return res.status(200).json(staticFallback(tabName, context ?? {}));
     const msg = err instanceof Error ? err.message : String(err);
     return res.status(502).json({ error: `AI summary failed: ${msg}` });
   }

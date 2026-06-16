@@ -104,6 +104,28 @@ export default function BudgetAllocationAudit({ campaigns, dateRange }: AuditPro
 
   const avg6mPerMonth = spend6m !== null ? spend6m / 6 : null;
 
+  // ── Today's spend so far — live partial-day total from Meta ────────────────
+  // The daily trail uses date_preset=last_28d which EXCLUDES today, so the 7-day
+  // avg only covers completed days. This tile shows what's been spent so far
+  // today across all active campaigns, refreshed alongside the page.
+  const [spendToday, setSpendToday] = useState<number | null>(null);
+  useEffect(() => {
+    if (!metaAccessToken || !metaBusinessId) return;
+    const today = new Date().toISOString().slice(0, 10);
+    fetch("/api/naming/campaigns/meta", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ accessToken: metaAccessToken, businessId: metaBusinessId, startDate: today, endDate: today }),
+    })
+      .then((r) => r.json())
+      .then((data: CampaignData[]) => {
+        if (!Array.isArray(data)) return;
+        setSpendToday(data.reduce((s, c) => s + (c.spend || 0), 0));
+      })
+      .catch(() => { /* silent */ });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [metaAccessToken, metaBusinessId]);
+
   // ── Last-3-month fetch → derive "prev 3 months" without an extra call ───────
   // recent3m = last 91 days spend; prior3m = 6m total − recent3m (days 92–182).
   const [spend3m, setSpend3m] = useState<number | null>(null);
@@ -189,18 +211,21 @@ export default function BudgetAllocationAudit({ campaigns, dateRange }: AuditPro
     return { daily, lifetime };
   }, [visible]);
 
-  // Account-level pacing (real, from the rolling trail). Sum per-campaign avgs
-  // across visible campaigns; missing trail entries contribute 0.
+  // Account-level pacing — ACTIVE campaigns only so numerator and denominator
+  // cover the same set. Inactive campaigns that had recent spend must not inflate
+  // avg7d while their budgets are absent from budgetSetting.daily.
   const pacing = useMemo(() => {
+    const activeCampaigns = visible.filter(isActive);
     let avg7d = 0, avg14d = 0, avg28d = 0;
-    for (const c of visible) {
+    for (const c of activeCampaigns) {
       const t = trail[c.id];
       if (t) { avg7d += t.avg7d; avg14d += t.avg14d; avg28d += t.avg28d; }
     }
+    // wow = current 7d vs prior 7d — both windows come directly from Meta daily trail
     const wow = avg14d > 0 ? ((avg7d - avg14d) / avg14d) * 100 : null;
     const pacePct = budgetSetting.daily > 0 ? (avg7d / budgetSetting.daily) * 100 : null;
-    const hasTrail = visible.some((c) => c.id in trail);
-    return { avg7d, avg28d, wow, pacePct, hasTrail };
+    const hasTrail = activeCampaigns.some((c) => c.id in trail);
+    return { avg7d, avg14d, avg28d, wow, pacePct, hasTrail };
   }, [visible, trail, budgetSetting.daily]);
 
   // Month-over-month proxy from the 28-day trail — no extra API call.
@@ -545,7 +570,20 @@ export default function BudgetAllocationAudit({ campaigns, dateRange }: AuditPro
             <span className="text-sm font-bold text-gray-900">Spend pacing</span>
             <span className="text-[11px] text-gray-400">· rolling 7 / 28-day, anchored to today</span>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+
+            {/* Today (so far) — live partial-day spend, separate from rolling avgs */}
+            <div>
+              <div className="text-[11px] text-gray-500">Today (so far)</div>
+              {spendToday !== null ? (
+                <>
+                  <div className="text-xl font-bold text-blue-600">{cur(spendToday)}</div>
+                  <div className="text-[10px] text-gray-400 mt-0.5">live · {new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}</div>
+                </>
+              ) : (
+                <div className="text-sm text-gray-400 mt-1">Loading…</div>
+              )}
+            </div>
 
             {/* Last 7-day avg — per day, with comparison badge */}
             <div>
@@ -554,16 +592,8 @@ export default function BudgetAllocationAudit({ campaigns, dateRange }: AuditPro
                 {cur(pacing.avg7d)}
                 <span className="text-xs text-gray-400 font-normal">/day</span>
               </div>
-              {pacing.wow !== null && (
-                <span className={`inline-flex items-center gap-0.5 mt-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ${
-                  pacing.wow > 0
-                    ? "bg-red-100 text-red-700"
-                    : pacing.wow < 0
-                    ? "bg-green-100 text-green-700"
-                    : "bg-gray-100 text-gray-500"
-                }`}>
-                  {pacing.wow >= 0 ? "▲" : "▼"} {Math.abs(Math.round(pacing.wow))}% vs prev 7d
-                </span>
+              {pacing.avg14d > 0 && (
+                <div className="text-[10px] text-gray-400 mt-0.5">prev 7d: {cur(pacing.avg14d)}/day</div>
               )}
             </div>
 
@@ -574,17 +604,7 @@ export default function BudgetAllocationAudit({ campaigns, dateRange }: AuditPro
                 {cur(pacing.avg28d * 7)}
                 <span className="text-xs text-gray-400 font-normal">/wk</span>
               </div>
-              {pacing.wow !== null && (
-                <span className={`inline-flex items-center gap-0.5 mt-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ${
-                  pacing.avg7d > pacing.avg28d * 1.1
-                    ? "bg-red-100 text-red-700"
-                    : pacing.avg7d < pacing.avg28d * 0.9
-                    ? "bg-green-100 text-green-700"
-                    : "bg-gray-100 text-gray-500"
-                }`}>
-                  {pacing.avg7d >= pacing.avg28d ? "▲" : "▼"} {Math.abs(Math.round(pacing.wow))}% this wk
-                </span>
-              )}
+              <div className="text-[10px] text-gray-400 mt-0.5">{cur(pacing.avg28d)}/day avg</div>
             </div>
 
             {/* 6-month avg — per month, with badge vs last-month estimate */}
@@ -596,23 +616,7 @@ export default function BudgetAllocationAudit({ campaigns, dateRange }: AuditPro
                     {cur(avg6mPerMonth)}
                     <span className="text-xs text-gray-400 font-normal">/mo</span>
                   </div>
-                  {(() => {
-                    // Use current monthly pace (avg28d×30) vs 6m baseline.
-                    // Works even when the account is new (no prior-3m data needed).
-                    // Guard: only show when 6m avg is meaningful (> ₹10k/mo).
-                    if (!avg6mPerMonth || avg6mPerMonth < 10_000 || !pacing.avg28d) return null;
-                    const currentMonthly = pacing.avg28d * 30;
-                    const delta = ((currentMonthly - avg6mPerMonth) / avg6mPerMonth) * 100;
-                    if (Math.abs(delta) > 500) return null; // still extreme → skip
-                    return (
-                      <span className={`inline-flex items-center gap-0.5 mt-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ${
-                        delta > 0 ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"
-                      }`}>
-                        {delta >= 0 ? "▲" : "▼"} {Math.abs(Math.round(delta))}% vs 6m avg
-                      </span>
-                    );
-                  })()}
-                  <div className="text-[10px] text-gray-400 mt-0.5">last 182 days ÷ 6 · current pace vs baseline</div>
+                  <div className="text-[10px] text-gray-400 mt-0.5">total spend last 182 days ÷ 6</div>
                 </>
               ) : (
                 <div className="text-sm text-gray-400 mt-1">Loading…</div>

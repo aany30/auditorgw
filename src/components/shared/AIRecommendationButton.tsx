@@ -38,14 +38,6 @@ export interface AIRecommendationButtonProps {
   compact?: boolean;
 }
 
-function bucket(value: string | number): string {
-  if (typeof value === "string") return value;
-  if (isNaN(value)) return "unknown";
-  if (value <= 100) return `${Math.floor(value / 10) * 10}-${Math.floor(value / 10) * 10 + 10}`;
-  const mag = Math.pow(10, Math.floor(Math.log10(value)));
-  return `${Math.floor(value / mag) * mag}-${(Math.floor(value / mag) + 1) * mag}`;
-}
-
 const SESSION_CACHE = new Map<string, FixApiResponse>();
 
 export default function AIRecommendationButton({
@@ -65,10 +57,14 @@ export default function AIRecommendationButton({
     [metaAccessToken, googleAccessToken]
   );
 
-  const cacheKey = useMemo(
-    () => `airec-${metric}-${bucket(value)}-${platform ?? "any"}`,
-    [metric, value, platform]
-  );
+  // Cache key includes campaign name + exact value so each campaign gets its own
+  // personalised response rather than sharing a cached generic one.
+  const cacheKey = useMemo(() => {
+    const campaignId = (campaignContext as Record<string, unknown> | undefined)?.name
+      ?? (campaignContext as Record<string, unknown> | undefined)?.id
+      ?? "account";
+    return `airec-${metric}-${String(value)}-${platform ?? "any"}-${campaignId}`;
+  }, [metric, value, platform, campaignContext]);
 
   const fetchFix = useCallback(async () => {
     const cached = SESSION_CACHE.get(cacheKey);

@@ -1,19 +1,18 @@
 /**
- * Reporting → Attribution Modeling
+ * Reporting → Attribution
  *
- * Sections:
- *   1. Full-Funnel View (drop-off funnel) + Touchpoint Path (top campaigns as journey nodes)
- *   2. Five attribution model cards: First Click, Last Click, Linear, Position Based, Data Driven
- *   3. Model Comparison — Last-Click vs Data-Driven grouped bar chart
- *   4. Attribution windows currently in use (Meta-specific)
+ * Shows ONLY data fetchable from Meta's Insights API:
+ *   1. Full-Funnel View  — impressions → clicks → conversions (drop-off rates)
+ *   2. Campaign Performance — Meta-reported last-click conversions per campaign
+ *   3. Attribution Windows in use — which window each campaign group uses
+ *
+ * Removed: First-Click / Linear / Position-Based / Data-Driven model cards
+ * and the Model Comparison chart — all were client-side math, not Meta data.
  */
 
 import React, { useMemo, useState } from "react";
-import { GitBranch, Info } from "lucide-react";
-import {
-  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, Legend, Cell,
-} from "recharts";
+import { GitBranch, Info, TrendingUp, ArrowRight } from "lucide-react";
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from "recharts";
 import AIExecutiveSummary from "@/components/shared/AIExecutiveSummary";
 import { useCampaigns } from "@/hooks/useCampaigns";
 import { detectCurrency, formatMoney } from "@/lib/currency";
@@ -32,106 +31,36 @@ function fmtBig(n: number): string {
   if (n >= 1_000)     return `${(n / 1_000).toFixed(1)}k`;
   return n.toLocaleString("en-IN");
 }
-function truncate(s: string, n = 22) { return s.length > n ? s.slice(0, n) + "…" : s; }
+function truncate(s: string, n = 28) { return s.length > n ? s.slice(0, n) + "…" : s; }
 
-// ─── Attribution model computation ───────────────────────────────────────────
-
-interface TouchCredit { name: string; spend: number; lastClick: number; credit: number }
-
-type ModelKey = "firstClick" | "lastClick" | "linear" | "positionBased" | "dataDriven";
-
-const MODEL_META: Record<ModelKey, { label: string; desc: string; color: string }> = {
-  firstClick:    { label: "First Click",    desc: "100% credit to the first touchpoint",       color: "#6366f1" },
-  lastClick:     { label: "Last Click",     desc: "100% credit to the final touchpoint",       color: "#10b981" },
-  linear:        { label: "Linear",         desc: "Equal credit across all touches",            color: "#f59e0b" },
-  positionBased: { label: "Position Based", desc: "40% first, 40% last, 20% middle",           color: "#8b5cf6" },
-  dataDriven:    { label: "Data Driven",    desc: "AI-derived from observed conversion paths", color: "#06b6d4" },
+const WINDOW_NOTES: Record<string, string> = {
+  "7d_click + 1d_view": "Meta default — recommended for most accounts.",
+  "1d_click":           "Strict click-only — may undercount assisted conversions.",
+  "7d_click":           "Click-only — view-through not credited.",
+  "28d_click":          "Legacy long window — Meta is deprecating this.",
+  "Account default":    "Using the account-level default attribution setting.",
 };
 
-function computeModels(touchpoints: CampaignData[]): Record<ModelKey, TouchCredit[]> {
-  const n = touchpoints.length;
-  if (n === 0) return { firstClick: [], lastClick: [], linear: [], positionBased: [], dataDriven: [] };
+// ─── §1 Full-Funnel View ──────────────────────────────────────────────────────
 
-  const totalConv = touchpoints.reduce((s, c) => s + (c.conversions || 0), 0);
-
-  // Last-click = actual Meta reported conversions per campaign
-  const lastClickCredits = touchpoints.map(c => ({
-    name: c.name, spend: c.spend || 0,
-    lastClick: c.conversions || 0,
-    credit:    c.conversions || 0,
-  }));
-
-  // First-click: all credit to touchpoint[0]
-  const firstClickCredits = touchpoints.map((c, i) => ({
-    name: c.name, spend: c.spend || 0,
-    lastClick: c.conversions || 0,
-    credit: i === 0 ? totalConv : 0,
-  }));
-
-  // Linear: equal split
-  const perTouch = n > 0 ? totalConv / n : 0;
-  const linearCredits = touchpoints.map(c => ({
-    name: c.name, spend: c.spend || 0,
-    lastClick: c.conversions || 0,
-    credit: parseFloat(perTouch.toFixed(1)),
-  }));
-
-  // Position-based (U-shaped): 40% first, 40% last, 20% middle split
-  const positionCredits = touchpoints.map((c, i) => {
-    let credit: number;
-    if (n === 1) {
-      credit = totalConv;
-    } else if (n === 2) {
-      credit = totalConv * 0.5;
-    } else if (i === 0) {
-      credit = totalConv * 0.40;
-    } else if (i === n - 1) {
-      credit = totalConv * 0.40;
-    } else {
-      credit = (totalConv * 0.20) / (n - 2);
-    }
-    return { name: c.name, spend: c.spend || 0, lastClick: c.conversions || 0, credit: parseFloat(credit.toFixed(1)) };
-  });
-
-  // Data-driven: weighted by spend × (conversions/spend efficiency), then normalized
-  const efficiencies = touchpoints.map(c => {
-    const eff = (c.spend || 0) > 0 ? (c.conversionValue || 0) / (c.spend || 1) : 0;
-    return Math.max(0.1, eff);
-  });
-  const effSum = efficiencies.reduce((s, e) => s + e, 0);
-  const dataDrivenCredits = touchpoints.map((c, i) => ({
-    name: c.name, spend: c.spend || 0,
-    lastClick: c.conversions || 0,
-    credit: parseFloat(((efficiencies[i] / effSum) * totalConv).toFixed(1)),
-  }));
-
-  return {
-    firstClick:    firstClickCredits,
-    lastClick:     lastClickCredits,
-    linear:        linearCredits,
-    positionBased: positionCredits,
-    dataDriven:    dataDrivenCredits,
-  };
-}
-
-// ─── Full Funnel View ─────────────────────────────────────────────────────────
-
-function FunnelBar({ label, value, max, color, convPct }: {
-  label: string; value: number; max: number; color: string; convPct?: string;
+function FunnelStep({ label, value, pct, color, isLast }: {
+  label: string; value: number; pct?: string; color: string; isLast?: boolean;
 }) {
-  const barW = max > 0 ? Math.max(3, (value / max) * 100) : 3;
   return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between text-xs">
-        <span className="font-semibold text-gray-800">{label}</span>
-        <span className="flex items-center gap-2 text-gray-600 tabular-nums">
-          <span className="font-bold text-gray-900">{fmtBig(value)}</span>
-          {convPct && <span className="text-gray-400 text-[10px]">{convPct}</span>}
-        </span>
+    <div className="flex items-center gap-3">
+      <div className="flex-1">
+        <div className="flex items-center justify-between mb-1">
+          <span className="text-sm font-semibold text-gray-800">{label}</span>
+          <span className="text-sm font-bold text-gray-900 tabular-nums">{fmtBig(value)}</span>
+        </div>
+        <div className="w-full bg-gray-100 rounded-full h-3 overflow-hidden">
+          <div className="h-3 rounded-full" style={{ width: pct ? "100%" : "100%", background: color }} />
+        </div>
+        {pct && (
+          <div className="text-[10px] text-gray-400 mt-1">{pct} conversion rate</div>
+        )}
       </div>
-      <div className="w-full bg-gray-100 rounded-full h-5 overflow-hidden">
-        <div className="h-5 rounded-full transition-all duration-700" style={{ width: `${barW}%`, background: color }} />
-      </div>
+      {!isLast && <ArrowRight className="w-4 h-4 text-gray-300 shrink-0" />}
     </div>
   );
 }
@@ -140,248 +69,411 @@ function FullFunnelView({ campaigns }: { campaigns: CampaignData[] }) {
   const impressions = campaigns.reduce((s, c) => s + (c.impressions || 0), 0);
   const clicks      = campaigns.reduce((s, c) => s + (c.clicks || 0), 0);
   const conversions = campaigns.reduce((s, c) => s + (c.conversions || 0), 0);
-  const max = impressions;
 
-  const impToClick = impressions > 0 ? ((1 - clicks / impressions) * 100).toFixed(1) : "—";
-  const clickToConv = clicks > 0 ? ((1 - conversions / clicks) * 100).toFixed(1) : "—";
+  const ctr  = impressions > 0 ? (clicks / impressions) * 100 : 0;
+  const cvr  = clicks > 0 ? (conversions / clicks) * 100 : 0;
+  const end2end = impressions > 0 ? (conversions / impressions) * 100 : 0;
 
-  return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col gap-4">
-      <div>
-        <h3 className="text-base font-bold text-gray-900">Full-Funnel View</h3>
-        <p className="text-xs text-gray-500 mt-0.5">Drop-off across the conversion journey</p>
-      </div>
-      <div className="space-y-3">
-        <FunnelBar label="Impressions" value={impressions} max={max} color="#6366f1" />
-        <FunnelBar
-          label="Clicks"
-          value={clicks}
-          max={max}
-          color="#10b981"
-          convPct={impressions > 0 ? `${((clicks / impressions) * 100).toFixed(2)}% conv` : undefined}
-        />
-        <FunnelBar
-          label="Conversions"
-          value={conversions}
-          max={max}
-          color="#8b5cf6"
-          convPct={clicks > 0 ? `${((conversions / clicks) * 100).toFixed(2)}% conv` : undefined}
-        />
-      </div>
-      <div className="space-y-1 pt-1 border-t border-gray-100">
-        <div className="flex justify-between text-xs text-gray-500">
-          <span>Impressions → Clicks</span>
-          <span className="font-semibold text-gray-700">{impToClick}% drop</span>
-        </div>
-        <div className="flex justify-between text-xs text-gray-500">
-          <span>Clicks → Conversions</span>
-          <span className="font-semibold text-gray-700">{clickToConv}% drop</span>
-        </div>
-      </div>
-    </div>
-  );
-}
+  const steps = [
+    { label: "Impressions", value: impressions, color: "#6366f1", barPct: 100 },
+    { label: "Clicks",      value: clicks,      color: "#10b981", barPct: impressions > 0 ? (clicks / impressions) * 100 : 0 },
+    { label: "Conversions", value: conversions, color: "#8b5cf6", barPct: impressions > 0 ? (conversions / impressions) * 100 : 0 },
+  ];
 
-// ─── Touchpoint Path ──────────────────────────────────────────────────────────
-
-function TouchpointPath({ touchpoints, currency }: { touchpoints: CampaignData[]; currency: string }) {
-  const cur = (n: number) => formatMoney(n, currency, 1);
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-      <h3 className="text-base font-bold text-gray-900">Touchpoint Path</h3>
-      <p className="text-xs text-gray-500 mt-0.5 mb-5">
-        Top {touchpoints.length} campaigns ordered by spend — used as the modeled customer journey
-      </p>
-      <div className="flex items-start gap-0 relative">
-        {/* Connecting line */}
-        <div className="absolute top-5 left-0 right-0 h-px bg-blue-200" style={{ zIndex: 0 }} />
-        <div className="flex items-start justify-around w-full gap-2 relative z-10">
-          {touchpoints.map((c, i) => (
-            <div key={c.id} className="flex flex-col items-center gap-2 flex-1 min-w-0">
-              <div className="w-10 h-10 rounded-full border-2 border-blue-400 bg-white flex items-center justify-center text-sm font-bold text-blue-600 shadow-sm shrink-0">
-                {i + 1}
-              </div>
-              <div className="text-center min-w-0 w-full">
-                <div className="text-xs font-semibold text-gray-900 truncate" title={c.name}>
-                  {truncate(c.name, 18)}
-                </div>
-                <div className="text-[10px] text-gray-500 mt-0.5">
-                  {cur(c.spend || 0)}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
+      <div className="mb-4">
+        <h3 className="text-base font-bold text-gray-900">Full-Funnel View</h3>
+        <p className="text-xs text-gray-500 mt-0.5">Drop-off across the conversion journey — from Meta Insights API</p>
       </div>
-    </div>
-  );
-}
 
-// ─── Attribution Model Card ───────────────────────────────────────────────────
-
-function ModelCard({ model, credits, color }: {
-  model: { label: string; desc: string };
-  credits: TouchCredit[];
-  color: string;
-}) {
-  const maxCredit = Math.max(...credits.map(c => c.credit), 0.01);
-  const top = credits.slice().sort((a, b) => b.credit - a.credit)[0];
-  return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex flex-col gap-3 min-w-0">
-      <div>
-        <div className="text-sm font-bold text-gray-900">{model.label}</div>
-        <div className="text-[11px] text-gray-500 mt-0.5 leading-tight">{model.desc}</div>
-      </div>
-      <div className="space-y-2 flex-1">
-        {credits.slice(0, 4).map(c => (
-          <div key={c.name} className="space-y-0.5">
-            <div className="flex items-center justify-between gap-1">
-              <span className="text-[11px] text-gray-700 truncate min-w-0" title={c.name}>
-                {truncate(c.name, 22)}
-              </span>
-              <span className="text-[11px] font-bold text-gray-900 tabular-nums shrink-0">
-                {c.credit % 1 === 0 ? c.credit.toFixed(0) : c.credit.toFixed(1)}
-              </span>
+      <div className="space-y-3">
+        {steps.map((s) => (
+          <div key={s.label}>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-sm font-semibold text-gray-800">{s.label}</span>
+              <span className="text-sm font-bold text-gray-900 tabular-nums">{fmtBig(s.value)}</span>
             </div>
-            <div className="w-full bg-gray-100 rounded-full h-1 overflow-hidden">
+            <div className="w-full bg-gray-100 rounded-full h-3 overflow-hidden">
               <div
-                className="h-1 rounded-full transition-all duration-500"
-                style={{ width: `${maxCredit > 0 ? (c.credit / maxCredit) * 100 : 0}%`, background: color }}
+                className="h-3 rounded-full transition-all duration-700"
+                style={{ width: `${Math.max(s.barPct, 1)}%`, background: s.color }}
               />
             </div>
           </div>
         ))}
       </div>
-      {top && (
-        <div className="text-[10px] text-gray-500 border-t border-gray-100 pt-2">
-          Top contributor: <span className="font-bold text-gray-800">{truncate(top.name, 28)}</span>
-        </div>
-      )}
+
+      <div className="mt-4 pt-4 border-t border-gray-100 grid grid-cols-3 gap-3">
+        {[
+          { label: "CTR",          value: `${ctr.toFixed(2)}%`,     sub: "Impr → Click" },
+          { label: "CVR",          value: `${cvr.toFixed(2)}%`,     sub: "Click → Conv" },
+          { label: "End-to-end",   value: `${end2end.toFixed(3)}%`, sub: "Impr → Conv"  },
+        ].map(m => (
+          <div key={m.label} className="text-center">
+            <div className="text-base font-bold text-gray-900">{m.value}</div>
+            <div className="text-[10px] text-gray-400 mt-0.5">{m.sub}</div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
 
-// ─── Model Comparison Chart ───────────────────────────────────────────────────
+// ─── §2 Campaign Performance (Last-Click, Meta Reported) ─────────────────────
 
-function ModelComparisonChart({
-  touchpoints, models,
-}: {
-  touchpoints: CampaignData[];
-  models: Record<ModelKey, TouchCredit[]>;
-}) {
-  const data = touchpoints.slice(0, 5).map((c, i) => ({
-    name: truncate(c.name, 16),
-    "Last Click":    models.lastClick[i]?.credit    ?? 0,
-    "Data Driven":   models.dataDriven[i]?.credit   ?? 0,
-    "Linear":        models.linear[i]?.credit       ?? 0,
-    "Position Based": models.positionBased[i]?.credit ?? 0,
-  }));
+type SortKey = "spend" | "conversions" | "roas" | "cpa" | "ctr";
 
-  const [showModels, setShowModels] = useState<string[]>(["Last Click", "Data Driven"]);
-  const ALL_MODELS = ["Last Click", "Data Driven", "Linear", "Position Based"];
-  const COLORS: Record<string, string> = {
-    "Last Click":    "#6366f1",
-    "Data Driven":   "#94a3b8",
-    "Linear":        "#f59e0b",
-    "Position Based": "#8b5cf6",
+function CampaignPerformanceTable({ campaigns, currency }: { campaigns: CampaignData[]; currency: string }) {
+  const [sort, setSort] = useState<SortKey>("spend");
+  const [dir, setDir]   = useState<"desc" | "asc">("desc");
+  const cur = (n: number) => formatMoney(n, currency, 0);
+
+  const sorted = useMemo(() => {
+    return [...campaigns].sort((a, b) => {
+      const val = (c: CampaignData): number => {
+        if (sort === "spend")       return c.spend || 0;
+        if (sort === "conversions") return c.conversions || 0;
+        if (sort === "roas")        return (c.spend || 0) > 0 ? (c.conversionValue || 0) / (c.spend || 1) : 0;
+        if (sort === "cpa")         return (c.conversions || 0) > 0 ? (c.spend || 0) / (c.conversions || 1) : Infinity;
+        if (sort === "ctr")         return (c.impressions || 0) > 0 ? (c.clicks || 0) / (c.impressions || 1) : 0;
+        return 0;
+      };
+      return dir === "desc" ? val(b) - val(a) : val(a) - val(b);
+    });
+  }, [campaigns, sort, dir]);
+
+  const toggleSort = (key: SortKey) => {
+    if (sort === key) setDir(d => d === "desc" ? "asc" : "desc");
+    else { setSort(key); setDir("desc"); }
   };
+
+  const SortTh = ({ id, label }: { id: SortKey; label: string }) => (
+    <th
+      onClick={() => toggleSort(id)}
+      className="px-4 py-2.5 text-right text-[11px] font-semibold text-gray-600 uppercase cursor-pointer select-none hover:bg-gray-100 whitespace-nowrap"
+    >
+      {label}{sort === id ? (dir === "desc" ? " ↓" : " ↑") : ""}
+    </th>
+  );
+
+  const maxSpend = Math.max(...campaigns.map(c => c.spend || 0), 1);
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
-      <div className="px-5 py-4 border-b border-gray-100">
-        <div className="flex items-start justify-between gap-3 flex-wrap">
-          <div>
-            <h3 className="text-sm font-bold text-gray-900">
-              Model Comparison · {showModels.join(" vs ")}
-            </h3>
-            <p className="text-xs text-gray-500 mt-0.5">How attributed conversions shift between models</p>
-          </div>
-          <div className="flex items-center gap-1.5 flex-wrap">
-            {ALL_MODELS.map(m => (
-              <button
-                key={m}
-                onClick={() => setShowModels(prev =>
-                  prev.includes(m) ? (prev.length > 1 ? prev.filter(x => x !== m) : prev) : [...prev, m]
-                )}
-                className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition ${
-                  showModels.includes(m) ? "text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                }`}
-                style={showModels.includes(m) ? { background: COLORS[m] } : {}}
-              >
-                {m}
-              </button>
-            ))}
-          </div>
+      <div className="px-5 py-4 border-b border-gray-100 flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-bold text-gray-900">Campaign Performance</h3>
+          <p className="text-xs text-gray-500 mt-0.5">
+            Conversions as reported by Meta (last-click, account default window) · Click headers to sort
+          </p>
         </div>
+        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-green-50 text-green-700 border border-green-200 shrink-0">
+          Meta API
+        </span>
       </div>
-      <div className="px-4 py-5 chart-enter">
-        <ResponsiveContainer width="100%" height={240}>
-          <BarChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 20 }} barGap={2} barCategoryGap="25%">
-            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
-            <XAxis dataKey="name" fontSize={11} stroke="#9ca3af" tickLine={false} angle={-15} textAnchor="end" interval={0} />
-            <YAxis fontSize={10} stroke="#9ca3af" tickLine={false} axisLine={false} />
-            <Tooltip
-              cursor={{ fill: "rgba(99,102,241,0.06)" }}
-              contentStyle={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 8, fontSize: 12 }}
-              formatter={(v: number, name: string) => [v.toFixed(1), name]}
-            />
-            <Legend wrapperStyle={{ fontSize: 11, paddingTop: 8 }} />
-            {showModels.map((m, mi) => (
-              <Bar key={m} dataKey={m} fill={COLORS[m]} radius={[3, 3, 0, 0]} animationDuration={600 + mi * 80} animationEasing="ease-out" />
-            ))}
-          </BarChart>
-        </ResponsiveContainer>
-        <p className="text-[11px] text-gray-500 mt-2 text-center">
-          Data-driven typically credits mid-funnel touches higher than last-click
-        </p>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 border-b border-gray-200">
+            <tr>
+              <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-gray-600 uppercase">Campaign</th>
+              <SortTh id="spend"       label="Spend" />
+              <SortTh id="conversions" label="Conv." />
+              <SortTh id="roas"        label="ROAS" />
+              <SortTh id="cpa"         label="CPA" />
+              <SortTh id="ctr"         label="CTR" />
+              <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-gray-600 uppercase">Window</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map(c => {
+              const roas = (c.spend || 0) > 0 ? (c.conversionValue || 0) / (c.spend || 1) : 0;
+              const cpa  = (c.conversions || 0) > 0 ? (c.spend || 0) / (c.conversions || 1) : 0;
+              const ctr  = (c.impressions || 0) > 0 ? ((c.clicks || 0) / (c.impressions || 1)) * 100 : 0;
+              const spendPct = maxSpend > 0 ? ((c.spend || 0) / maxSpend) * 100 : 0;
+              return (
+                <tr key={c.id} className="border-b border-gray-100 hover:bg-gray-50">
+                  <td className="px-4 py-2.5 max-w-[260px]">
+                    <div className="font-mono text-xs text-gray-900 truncate" title={c.name}>{c.name}</div>
+                    <div className="w-full bg-gray-100 rounded-full h-1 mt-1 overflow-hidden">
+                      <div className="h-1 rounded-full bg-blue-400" style={{ width: `${spendPct}%` }} />
+                    </div>
+                  </td>
+                  <td className="px-4 py-2.5 text-right font-semibold text-gray-900 tabular-nums">{cur(c.spend || 0)}</td>
+                  <td className="px-4 py-2.5 text-right text-gray-700 tabular-nums">{Math.round(c.conversions || 0).toLocaleString("en-IN")}</td>
+                  <td className="px-4 py-2.5 text-right font-semibold tabular-nums" style={{ color: roas >= 2 ? "#059669" : roas >= 1 ? "#d97706" : "#dc2626" }}>
+                    {roas > 0 ? `${roas.toFixed(2)}×` : "—"}
+                  </td>
+                  <td className="px-4 py-2.5 text-right text-gray-700 tabular-nums">{cpa > 0 ? cur(cpa) : "—"}</td>
+                  <td className="px-4 py-2.5 text-right text-gray-700 tabular-nums">{ctr > 0 ? `${ctr.toFixed(2)}%` : "—"}</td>
+                  <td className="px-4 py-2.5">
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-gray-100 text-gray-600">
+                      {c.effectiveAttribution || "acct default"}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   );
 }
 
-// ─── Attribution Windows (Meta-specific) ─────────────────────────────────────
+// ─── §3 Attribution Windows ───────────────────────────────────────────────────
 
-const WINDOW_NOTES: Record<string, string> = {
-  "7d_click + 1d_view": "Meta default — recommended for most accounts.",
-  "1d_click":           "Strict click-only — undercounts assisted conversions.",
-  "7d_click":           "Click-only — view-throughs not credited.",
-  "28d_click":          "Legacy long window — Meta deprecating; do not use.",
-};
+function AttributionWindowsSection({ campaigns, currency }: { campaigns: CampaignData[]; currency: string }) {
+  const cur = (n: number) => formatMoney(n, currency, 0);
+
+  const windowRows = useMemo(() => {
+    const map = new Map<string, { window: string; campaigns: number; spend: number; conversions: number; conversionValue: number }>();
+    campaigns.forEach(c => {
+      const w = c.effectiveAttribution || "Account default";
+      const row = map.get(w) || { window: w, campaigns: 0, spend: 0, conversions: 0, conversionValue: 0 };
+      row.campaigns++; row.spend += c.spend || 0;
+      row.conversions += c.conversions || 0; row.conversionValue += c.conversionValue || 0;
+      map.set(w, row);
+    });
+    return [...map.values()].sort((a, b) => b.spend - a.spend);
+  }, [campaigns]);
+
+  const chartData = windowRows.map(r => ({ name: r.window, Spend: r.spend, Conversions: r.conversions }));
+
+  if (windowRows.length === 0) return null;
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
+      <div className="px-5 py-4 border-b border-gray-100 flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-bold text-gray-900">Attribution Windows in Use</h3>
+          <p className="text-xs text-gray-500 mt-0.5">
+            Effective attribution window per campaign group — from Meta campaign settings
+          </p>
+        </div>
+        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-green-50 text-green-700 border border-green-200 shrink-0">
+          Meta API
+        </span>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-0 divide-y lg:divide-y-0 lg:divide-x divide-gray-100">
+        {/* Table */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 border-b border-gray-200">
+              <tr>
+                <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-gray-600 uppercase">Window</th>
+                <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-gray-600 uppercase">Camps</th>
+                <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-gray-600 uppercase">Spend</th>
+                <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-gray-600 uppercase">Conv.</th>
+                <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-gray-600 uppercase">ROAS</th>
+              </tr>
+            </thead>
+            <tbody>
+              {windowRows.map(r => {
+                const roas = r.spend > 0 ? r.conversionValue / r.spend : 0;
+                return (
+                  <tr key={r.window} className="border-b border-gray-100 hover:bg-gray-50">
+                    <td className="px-4 py-2.5">
+                      <div className="font-mono text-xs text-gray-900">{r.window}</div>
+                      <div className="text-[10px] text-gray-400 mt-0.5">{WINDOW_NOTES[r.window] || "—"}</div>
+                    </td>
+                    <td className="px-4 py-2.5 text-right text-gray-700">{r.campaigns}</td>
+                    <td className="px-4 py-2.5 text-right font-semibold text-gray-900">{cur(r.spend)}</td>
+                    <td className="px-4 py-2.5 text-right text-gray-700">{Math.round(r.conversions).toLocaleString("en-IN")}</td>
+                    <td className="px-4 py-2.5 text-right font-semibold text-blue-700">{roas > 0 ? `${roas.toFixed(2)}×` : "—"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Bar chart */}
+        <div className="p-5">
+          <p className="text-xs font-semibold text-gray-600 mb-3 uppercase tracking-wide">Spend by Window</p>
+          <ResponsiveContainer width="100%" height={180}>
+            <BarChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 30 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
+              <XAxis dataKey="name" fontSize={10} stroke="#9ca3af" tickLine={false} angle={-20} textAnchor="end" interval={0} />
+              <YAxis fontSize={10} stroke="#9ca3af" tickLine={false} axisLine={false} tickFormatter={v => fmtBig(v)} />
+              <Tooltip
+                cursor={{ fill: "rgba(99,102,241,0.06)" }}
+                contentStyle={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 8, fontSize: 11 }}
+                formatter={(v: number) => [fmtBig(v), "Spend"]}
+              />
+              <Bar dataKey="Spend" fill="#6366f1" radius={[3, 3, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── §4 Conversion Window Comparison ─────────────────────────────────────────
+
+function ConversionWindowComparison({ campaigns, currency }: { campaigns: CampaignData[]; currency: string }) {
+  const cur = (n: number) => formatMoney(n, currency, 0);
+
+  const rows = useMemo(() => {
+    return campaigns
+      .filter(c => c.conv1dClick !== undefined || c.conv7dClick !== undefined || c.conv1dView !== undefined)
+      .map(c => ({
+        id: c.id,
+        name: c.name,
+        spend: c.spend || 0,
+        conv1dClick: c.conv1dClick ?? 0,
+        conv7dClick: c.conv7dClick ?? 0,
+        conv1dView:  c.conv1dView  ?? 0,
+        reported:    c.conversions  ?? 0,
+      }))
+      .sort((a, b) => b.spend - a.spend);
+  }, [campaigns]);
+
+  if (rows.length === 0) return null;
+
+  const totals = rows.reduce((acc, r) => ({
+    conv1dClick: acc.conv1dClick + r.conv1dClick,
+    conv7dClick: acc.conv7dClick + r.conv7dClick,
+    conv1dView:  acc.conv1dView  + r.conv1dView,
+    reported:    acc.reported    + r.reported,
+  }), { conv1dClick: 0, conv7dClick: 0, conv1dView: 0, reported: 0 });
+
+  const chartData = rows.slice(0, 8).map(r => ({
+    name: truncate(r.name, 20),
+    "1d Click": r.conv1dClick,
+    "7d Click": r.conv7dClick,
+    "1d View":  r.conv1dView,
+  }));
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
+      <div className="px-5 py-4 border-b border-gray-100 flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-bold text-gray-900">Conversion Window Comparison</h3>
+          <p className="text-xs text-gray-500 mt-0.5">
+            How many conversions Meta attributes depending on the window — from{" "}
+            <span className="font-mono">action_attribution_windows</span> API · same campaign, different credit rules
+          </p>
+        </div>
+        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-green-50 text-green-700 border border-green-200 shrink-0">
+          Meta API
+        </span>
+      </div>
+
+      {/* Summary totals */}
+      <div className="grid grid-cols-4 divide-x divide-gray-100 border-b border-gray-100">
+        {[
+          { label: "1-Day Click", value: totals.conv1dClick, color: "#6366f1", note: "Strictest — only same-day click" },
+          { label: "7-Day Click", value: totals.conv7dClick, color: "#10b981", note: "Most common default window" },
+          { label: "1-Day View",  value: totals.conv1dView,  color: "#f59e0b", note: "View-through only" },
+          { label: "Reported",    value: totals.reported,    color: "#3b82f6", note: "Account window (in use)" },
+        ].map(m => (
+          <div key={m.label} className="px-4 py-3 text-center">
+            <div className="text-lg font-bold tabular-nums" style={{ color: m.color }}>
+              {Math.round(m.value).toLocaleString("en-IN")}
+            </div>
+            <div className="text-[11px] font-semibold text-gray-700 mt-0.5">{m.label}</div>
+            <div className="text-[10px] text-gray-400 mt-0.5">{m.note}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Chart */}
+      <div className="p-5 border-b border-gray-100">
+        <ResponsiveContainer width="100%" height={200}>
+          <BarChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 50 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
+            <XAxis dataKey="name" fontSize={9} stroke="#9ca3af" tickLine={false} angle={-30} textAnchor="end" interval={0} />
+            <YAxis fontSize={10} stroke="#9ca3af" tickLine={false} axisLine={false} />
+            <Tooltip
+              cursor={{ fill: "rgba(99,102,241,0.06)" }}
+              contentStyle={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 8, fontSize: 11 }}
+            />
+            <Bar dataKey="1d Click" fill="#6366f1" radius={[2, 2, 0, 0]} />
+            <Bar dataKey="7d Click" fill="#10b981" radius={[2, 2, 0, 0]} />
+            <Bar dataKey="1d View"  fill="#f59e0b" radius={[2, 2, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* Per-campaign table */}
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 border-b border-gray-200">
+            <tr>
+              <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-gray-600 uppercase">Campaign</th>
+              <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-gray-600 uppercase">Spend</th>
+              <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-indigo-600 uppercase">1d Click</th>
+              <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-emerald-600 uppercase">7d Click</th>
+              <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-amber-600 uppercase">1d View</th>
+              <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-blue-600 uppercase">Reported</th>
+              <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-gray-600 uppercase">7d/1d ratio</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(r => {
+              const ratio = r.conv1dClick > 0 ? r.conv7dClick / r.conv1dClick : null;
+              return (
+                <tr key={r.id} className="border-b border-gray-100 hover:bg-gray-50">
+                  <td className="px-4 py-2.5 max-w-[240px]">
+                    <div className="text-xs text-gray-800 truncate font-mono" title={r.name}>{r.name}</div>
+                  </td>
+                  <td className="px-4 py-2.5 text-right text-gray-700 tabular-nums text-xs">{cur(r.spend)}</td>
+                  <td className="px-4 py-2.5 text-right font-semibold text-indigo-700 tabular-nums">{r.conv1dClick}</td>
+                  <td className="px-4 py-2.5 text-right font-semibold text-emerald-700 tabular-nums">{r.conv7dClick}</td>
+                  <td className="px-4 py-2.5 text-right font-semibold text-amber-700 tabular-nums">{r.conv1dView}</td>
+                  <td className="px-4 py-2.5 text-right font-semibold text-blue-700 tabular-nums">{r.reported}</td>
+                  <td className="px-4 py-2.5 text-right text-xs tabular-nums">
+                    {ratio !== null ? (
+                      <span className={ratio > 1.5 ? "text-orange-600 font-semibold" : "text-gray-500"}>
+                        {ratio.toFixed(2)}×
+                        {ratio > 1.5 && <span className="ml-1 text-[9px]">↑</span>}
+                      </span>
+                    ) : "—"}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+          <tfoot className="bg-gray-50 border-t-2 border-gray-300">
+            <tr>
+              <td className="px-4 py-2.5 text-xs font-bold text-gray-700">Total</td>
+              <td className="px-4 py-2.5" />
+              <td className="px-4 py-2.5 text-right font-bold text-indigo-700 tabular-nums">{Math.round(totals.conv1dClick).toLocaleString("en-IN")}</td>
+              <td className="px-4 py-2.5 text-right font-bold text-emerald-700 tabular-nums">{Math.round(totals.conv7dClick).toLocaleString("en-IN")}</td>
+              <td className="px-4 py-2.5 text-right font-bold text-amber-700 tabular-nums">{Math.round(totals.conv1dView).toLocaleString("en-IN")}</td>
+              <td className="px-4 py-2.5 text-right font-bold text-blue-700 tabular-nums">{Math.round(totals.reported).toLocaleString("en-IN")}</td>
+              <td className="px-4 py-2.5 text-right text-xs text-gray-400">
+                {totals.conv1dClick > 0 ? `${(totals.conv7dClick / totals.conv1dClick).toFixed(2)}× avg` : "—"}
+              </td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      <div className="px-5 py-3 bg-amber-50 border-t border-amber-100 rounded-b-xl text-xs text-amber-800">
+        <strong>What the ratio means:</strong> A 7d/1d ratio above 1.5× means many conversions are credited between day 2 and day 7 after the click.
+        If you switched to a 1d window, your reported conversions would drop significantly — your budget decisions may be based on 7d-inflated numbers.
+      </div>
+    </div>
+  );
+}
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 export default function AttributionReport({ platform, dateRange, customStart, customEnd }: Props) {
   const { campaigns, loading, startDate, endDate } = useCampaigns(platform, dateRange, customStart, customEnd);
   const currency = detectCurrency(campaigns);
-  const cur = (n: number) => formatMoney(n, currency, 0);
 
   const metaCampaigns = useMemo(
     () => campaigns.filter(c => c.platform === "meta"),
     [campaigns]
   );
 
-  // Top 5 by spend = the customer touchpoints
-  const touchpoints = useMemo(
-    () => [...metaCampaigns].sort((a, b) => (b.spend || 0) - (a.spend || 0)).slice(0, 5),
-    [metaCampaigns]
-  );
-
-  const models = useMemo(() => computeModels(touchpoints), [touchpoints]);
-
-  // Attribution window summary
-  const windowRows = useMemo(() => {
-    const map = new Map<string, { window: string; campaigns: number; spend: number; conversions: number; conversionValue: number }>();
-    metaCampaigns.forEach(c => {
-      const w = c.effectiveAttribution || "Account default";
-      const cur2 = map.get(w) || { window: w, campaigns: 0, spend: 0, conversions: 0, conversionValue: 0 };
-      cur2.campaigns += 1; cur2.spend += c.spend || 0;
-      cur2.conversions += c.conversions || 0; cur2.conversionValue += c.conversionValue || 0;
-      map.set(w, cur2);
-    });
-    return [...map.values()].sort((a, b) => b.spend - a.spend);
-  }, [metaCampaigns]);
-
-  const totalConversions = touchpoints.reduce((s, c) => s + (c.conversions || 0), 0);
+  const totalConversions = metaCampaigns.reduce((s, c) => s + (c.conversions || 0), 0);
+  const totalSpend       = metaCampaigns.reduce((s, c) => s + (c.spend || 0), 0);
 
   return (
     <div className="space-y-6 section-enter">
@@ -390,22 +482,17 @@ export default function AttributionReport({ platform, dateRange, customStart, cu
         <div className="flex items-center gap-3">
           <GitBranch className="w-8 h-8 text-blue-600" />
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">Attribution Modeling</h1>
+            <h1 className="text-3xl font-bold text-gray-900">Attribution</h1>
             <p className="text-gray-600 mt-1">
               {metaCampaigns.length} campaign{metaCampaigns.length !== 1 ? "s" : ""} ·{" "}
-              {Math.round(totalConversions).toLocaleString()} conversion{totalConversions !== 1 ? "s" : ""} across the modeled path
+              {Math.round(totalConversions).toLocaleString()} conversions · all values from Meta Insights API
             </p>
           </div>
         </div>
         {platform !== "google" && (
           <AIExecutiveSummary
             tabName="Attribution"
-            context={{
-              window: `${startDate} → ${endDate}`,
-              campaignCount: metaCampaigns.length,
-              totalConversions,
-              topTouchpoint: touchpoints[0]?.name,
-            }}
+            context={{ window: `${startDate} → ${endDate}`, campaignCount: metaCampaigns.length, totalConversions, totalSpend }}
             platform="meta"
             inline
           />
@@ -414,83 +501,44 @@ export default function AttributionReport({ platform, dateRange, customStart, cu
 
       {platform === "google" && (
         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-xs text-yellow-800">
-          Attribution modeling shown here uses Meta campaign data. Switch Platform to Meta or Both to see data.
+          Attribution data shown here uses Meta campaign data. Switch platform to Meta or Both.
+        </div>
+      )}
+
+      {/* Data source notice */}
+      {platform !== "google" && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 flex items-start gap-2 text-xs text-blue-800">
+          <Info className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>
+            All numbers on this page are <strong>fetched directly from Meta&apos;s Insights API</strong>.
+            Conversions use Meta&apos;s default last-click attribution window for each campaign.
+            Multi-touch models (First Click, Linear, Position-Based) require cross-session journey data that Meta does not expose via API and have been removed.
+          </span>
         </div>
       )}
 
       {platform !== "google" && (
         <>
-          {/* Section 1: Full-Funnel View + Touchpoint Path */}
           {loading ? (
             <div className="h-48 flex items-center justify-center text-sm text-gray-400">Loading…</div>
+          ) : metaCampaigns.length === 0 ? (
+            <div className="bg-white border-2 border-dashed border-gray-300 rounded-xl p-10 text-center text-sm text-gray-500">
+              No Meta campaign data for this date range.
+            </div>
           ) : (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+            <>
+              {/* §1 Full-Funnel View */}
               <FullFunnelView campaigns={metaCampaigns} />
-              <div className="lg:col-span-2">
-                <TouchpointPath touchpoints={touchpoints} currency={currency} />
-              </div>
-            </div>
-          )}
 
-          {/* Section 2: 5 Model Cards */}
-          {!loading && touchpoints.length > 0 && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
-              {(Object.keys(MODEL_META) as ModelKey[]).map((key, i) => (
-                <div key={key} className={`animate-fade-in-up stagger-${Math.min(i + 1, 9)}`}>
-                  <ModelCard
-                    model={MODEL_META[key]}
-                    credits={models[key]}
-                    color={MODEL_META[key].color}
-                  />
-                </div>
-              ))}
-            </div>
-          )}
+              {/* §2 Campaign Performance */}
+              <CampaignPerformanceTable campaigns={metaCampaigns} currency={currency} />
 
-          {/* Section 3: Model Comparison Chart */}
-          {!loading && touchpoints.length > 0 && (
-            <ModelComparisonChart touchpoints={touchpoints} models={models} />
-          )}
+              {/* §3 Attribution Windows */}
+              <AttributionWindowsSection campaigns={metaCampaigns} currency={currency} />
 
-          {/* Section 4: Attribution windows in use */}
-          {!loading && windowRows.length > 0 && (
-            <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
-              <div className="px-5 py-3 border-b border-gray-100 flex items-start gap-2">
-                <div>
-                  <h3 className="text-sm font-bold text-gray-900">Attribution windows in use</h3>
-                  <p className="text-xs text-gray-500 mt-0.5">Effective window per group of campaigns (derived from ad-set settings)</p>
-                </div>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-gray-50 border-b border-gray-200">
-                    <tr>
-                      <th className="px-4 py-2 text-left text-[11px] font-semibold text-gray-600 uppercase">Window</th>
-                      <th className="px-4 py-2 text-right text-[11px] font-semibold text-gray-600 uppercase">Campaigns</th>
-                      <th className="px-4 py-2 text-right text-[11px] font-semibold text-gray-600 uppercase">Spend</th>
-                      <th className="px-4 py-2 text-right text-[11px] font-semibold text-gray-600 uppercase">Conv</th>
-                      <th className="px-4 py-2 text-right text-[11px] font-semibold text-gray-600 uppercase">ROAS</th>
-                      <th className="px-4 py-2 text-left text-[11px] font-semibold text-gray-600 uppercase">Notes</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {windowRows.map(r => {
-                      const roas = r.spend > 0 ? r.conversionValue / r.spend : 0;
-                      return (
-                        <tr key={r.window} className="border-b border-gray-100 hover:bg-gray-50">
-                          <td className="px-4 py-2.5 font-mono text-xs text-gray-900">{r.window}</td>
-                          <td className="px-4 py-2.5 text-right text-gray-700">{r.campaigns}</td>
-                          <td className="px-4 py-2.5 text-right font-semibold text-gray-900">{cur(r.spend)}</td>
-                          <td className="px-4 py-2.5 text-right text-gray-700">{Math.round(r.conversions).toLocaleString("en-IN")}</td>
-                          <td className="px-4 py-2.5 text-right font-semibold text-blue-700">{roas.toFixed(2)}×</td>
-                          <td className="px-4 py-2.5 text-[11px] text-gray-500">{WINDOW_NOTES[r.window] || "—"}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+              {/* §4 Conversion Window Comparison */}
+              <ConversionWindowComparison campaigns={metaCampaigns} currency={currency} />
+            </>
           )}
         </>
       )}

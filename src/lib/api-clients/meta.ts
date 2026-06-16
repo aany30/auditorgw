@@ -227,6 +227,37 @@ function sumConversions(rows: Array<{ action_type: string; value: string }> | un
   return counted ? total : undefined;
 }
 
+/** Same dedup logic as sumConversions but reads a per-window sub-field (e.g. "1d_click",
+ *  "7d_click", "1d_view") instead of the default `value` field.
+ *  Meta includes these sub-fields on every action row when action_attribution_windows
+ *  includes that window key in the request. */
+function sumConversionsByWindow(rows: any[] | undefined, windowKey: string): number | undefined {
+  if (!rows || rows.length === 0) return undefined;
+  const byType: Record<string, number> = {};
+  for (const r of rows) {
+    const v = r[windowKey];
+    if (v !== undefined) byType[r.action_type] = (byType[r.action_type] || 0) + (parseFloat(v) || 0);
+  }
+  const groups: Array<[string, ...string[]]> = [
+    ["purchase", "offsite_conversion.fb_pixel_purchase"],
+    ["subscribe", "offsite_conversion.fb_pixel_subscribe"],
+    ["start_trial", "offsite_conversion.fb_pixel_start_trial"],
+    ["lead", "offsite_conversion.fb_pixel_lead"],
+    ["onsite_conversion.lead_grouped"],
+    ["complete_registration", "offsite_conversion.fb_pixel_complete_registration"],
+    ["app_install", "mobile_app_install"],
+    ["onsite_conversion.messaging_conversation_started_7d"],
+    ["onsite_conversion.total_messaging_connection"],
+  ];
+  let total = 0; let counted = false;
+  for (const group of groups) {
+    for (const t of group) {
+      if (byType[t] !== undefined) { total += byType[t]; counted = true; break; }
+    }
+  }
+  return counted ? total : undefined;
+}
+
 /**
  * The attribution window we ask Meta to use when computing conversions /
  * ROAS. Exported so the UI can display it explicitly (so users know exactly
@@ -665,10 +696,11 @@ export class MetaApiClient {
       }
 
       // STEP 3 — fetch the rest in parallel, using the derived attribution.
-      const [campaignInsights, adsetInsights, accountCurrency] = await Promise.all([
+      const [campaignInsights, adsetInsights, accountCurrency, windowBreakdown] = await Promise.all([
         this.getCampaignInsights(accountPath, startDate, endDate, dominantWindows),
         this.getAdSetInsights(accountPath, startDate, endDate),
         this.getAccountCurrency(accountPath),
+        this.getCampaignWindowBreakdown(accountPath, startDate, endDate),
       ]);
 
       const currency = accountCurrency || "USD";
@@ -767,6 +799,7 @@ export class MetaApiClient {
         }
         const effectiveAttribution = attributionWindowsToLabel(effectiveWindows);
 
+        const wb = windowBreakdown[String(c.id)] || {};
         return {
           id: c.id,
           name: c.name,
@@ -786,6 +819,9 @@ export class MetaApiClient {
           currency,
           adSets,
           effectiveAttribution,
+          conv1dClick: wb.conv1dClick,
+          conv7dClick: wb.conv7dClick,
+          conv1dView:  wb.conv1dView,
         };
       });
     } catch (e) {
@@ -956,6 +992,50 @@ export class MetaApiClient {
       } catch {
         // Both failed — degrade gracefully (campaigns render "—").
       }
+    }
+    return out;
+  }
+
+  /**
+   * Fetch per-campaign conversion breakdown across 1d_click, 7d_click, and 1d_view windows.
+   * Makes a single Insights call with action_attribution_windows=["1d_click","7d_click","1d_view"].
+   * Meta includes per-window sub-fields on each action row; we read those fields rather than `value`.
+   */
+  async getCampaignWindowBreakdown(
+    accountPath: string,
+    startDate?: string,
+    endDate?: string
+  ): Promise<Record<string, { conv1dClick?: number; conv7dClick?: number; conv1dView?: number }>> {
+    const out: Record<string, { conv1dClick?: number; conv7dClick?: number; conv1dView?: number }> = {};
+    try {
+      const params: Record<string, string> = {
+        level: "campaign",
+        fields: "campaign_id,actions",
+        action_attribution_windows: JSON.stringify(["1d_click", "7d_click", "1d_view"]),
+        limit: "500",
+      };
+      if (startDate && endDate) params.time_range = `{"since":"${startDate}","until":"${endDate}"}`;
+      else params.date_preset = "last_30d";
+
+      let path: string | null = `/${accountPath}/insights`;
+      let nextParams: Record<string, string> | undefined = params;
+      for (let guard = 0; guard < 10 && path; guard++) {
+        const res: { data?: any[]; paging?: { next?: string } } = nextParams
+          ? await this.fetch<{ data?: any[]; paging?: { next?: string } }>(path, nextParams)
+          : await this.fetchAbsolute<{ data?: any[]; paging?: { next?: string } }>(path);
+        for (const row of res.data || []) {
+          const id = String(row.campaign_id);
+          out[id] = {
+            conv1dClick: sumConversionsByWindow(row.actions, "1d_click"),
+            conv7dClick: sumConversionsByWindow(row.actions, "7d_click"),
+            conv1dView:  sumConversionsByWindow(row.actions, "1d_view"),
+          };
+        }
+        path = res.paging?.next || null;
+        nextParams = undefined;
+      }
+    } catch {
+      // Degrade gracefully — window breakdown is supplemental; main conversions unaffected.
     }
     return out;
   }
@@ -1344,14 +1424,14 @@ export class MetaApiClient {
     endDate?: string,
     limit = 100
   ): Promise<Array<{
-    id: string; name: string; campaignName?: string; adSetName?: string;
+    id: string; name: string; campaignName?: string; adSetName?: string; adSetId?: string;
     creativeType?: string; thumbnailUrl?: string;
     spend: number; impressions: number; clicks: number;
     conversions: number; conversionValue: number;
   }>> {
     const params: Record<string, string> = {
       level: "ad",
-      fields: "ad_id,ad_name,campaign_name,adset_name,spend,impressions,clicks,actions,action_values",
+      fields: "ad_id,ad_name,adset_id,campaign_name,adset_name,spend,impressions,clicks,actions,action_values",
       limit: String(limit),
       sort: "spend_descending",
     };
@@ -1376,6 +1456,7 @@ export class MetaApiClient {
       name: String(row.ad_name || ""),
       campaignName: row.campaign_name ? String(row.campaign_name) : undefined,
       adSetName:    row.adset_name    ? String(row.adset_name)    : undefined,
+      adSetId:      row.adset_id      ? String(row.adset_id)      : undefined,
       spend: row.spend ? parseFloat(row.spend) : 0,
       impressions: row.impressions ? parseInt(row.impressions, 10) : 0,
       clicks: row.clicks ? parseInt(row.clicks, 10) : 0,
@@ -1503,16 +1584,25 @@ export class MetaApiClient {
   }
 
   /** List custom audiences for an ad account.
-   *  Returns id, name, and approximate_count for each audience. */
+   *  Returns id, name, size, and the subtype/lookalike fields needed for
+   *  marketing-meaning audience classification. */
   async getCustomAudiences(accountPath: string): Promise<Array<{
     id: string;
     name: string;
     size: number;
+    subtype?: string;
+    lookalikeSpec?: { ratio?: number; type?: string; origin?: any[] };
+    customerFileSource?: string;
   }>> {
-    const out: Array<{ id: string; name: string; size: number }> = [];
+    const out: Array<{
+      id: string; name: string; size: number;
+      subtype?: string;
+      lookalikeSpec?: { ratio?: number; type?: string; origin?: any[] };
+      customerFileSource?: string;
+    }> = [];
     let path: string | null = `/${accountPath}/customaudiences`;
     let nextParams: Record<string, string> | undefined = {
-      fields: "id,name,approximate_count_lower_bound,approximate_count_upper_bound",
+      fields: "id,name,approximate_count_lower_bound,approximate_count_upper_bound,subtype,lookalike_spec,customer_file_source",
       limit: "200",
     };
 
@@ -1528,6 +1618,11 @@ export class MetaApiClient {
           id: row.id,
           name: row.name || `Audience ${row.id}`,
           size: lower > 0 && upper > 0 ? Math.round((lower + upper) / 2) : lower || upper,
+          subtype: row.subtype || undefined,
+          lookalikeSpec: row.lookalike_spec
+            ? { ratio: row.lookalike_spec.ratio, type: row.lookalike_spec.type, origin: row.lookalike_spec.origin }
+            : undefined,
+          customerFileSource: row.customer_file_source || undefined,
         });
       }
 
@@ -1537,6 +1632,78 @@ export class MetaApiClient {
     }
 
     return out.sort((a, b) => b.size - a.size);
+  }
+
+  /** Fetch per-ad-set targeting + promoted_object + campaign objective.
+   *  Used by the audience tabs to classify ad sets by their REAL Meta targeting
+   *  setup instead of regex-parsing the ad-set name. Batched via the IDs param. */
+  async getAdSetsTargeting(
+    accountPath: string,
+    adSetIds: string[]
+  ): Promise<Record<string, {
+    id: string;
+    name: string;
+    targeting?: any;
+    promotedObject?: { product_set_id?: string; custom_event_type?: string };
+    campaignId?: string;
+    campaignObjective?: string;
+  }>> {
+    if (adSetIds.length === 0) return {};
+    const out: Record<string, any> = {};
+
+    // Step 1 — pull ad-set targeting + campaign_id, batched ~50 IDs per call.
+    const chunks: string[][] = [];
+    for (let i = 0; i < adSetIds.length; i += 50) chunks.push(adSetIds.slice(i, i + 50));
+
+    const seenCampaignIds = new Set<string>();
+    for (const chunk of chunks) {
+      try {
+        const res = await this.fetch<Record<string, any>>("/", {
+          ids: chunk.join(","),
+          fields: "id,name,targeting,promoted_object,campaign_id",
+        });
+        for (const [id, row] of Object.entries(res || {})) {
+          const r = row as any;
+          if (!r || typeof r !== "object") continue;
+          out[id] = {
+            id,
+            name: r.name || "",
+            targeting: r.targeting || undefined,
+            promotedObject: r.promoted_object || undefined,
+            campaignId: r.campaign_id || undefined,
+          };
+          if (r.campaign_id) seenCampaignIds.add(r.campaign_id);
+        }
+      } catch {
+        // Some ad sets may 403 (Advantage+) — silent skip, name-fallback will handle them.
+      }
+    }
+
+    // Step 2 — pull campaign objectives in one batched call so we can detect
+    // ASC / OUTCOME_SALES via real data, not the ad-set name.
+    if (seenCampaignIds.size > 0) {
+      const campIds = Array.from(seenCampaignIds);
+      const objectives: Record<string, string> = {};
+      for (let i = 0; i < campIds.length; i += 50) {
+        const chunk = campIds.slice(i, i + 50);
+        try {
+          const res = await this.fetch<Record<string, any>>("/", {
+            ids: chunk.join(","),
+            fields: "id,objective",
+          });
+          for (const [id, row] of Object.entries(res || {})) {
+            const r = row as any;
+            if (r?.objective) objectives[id] = r.objective;
+          }
+        } catch { /* ignore */ }
+      }
+      for (const id of Object.keys(out)) {
+        const cid = out[id].campaignId;
+        if (cid && objectives[cid]) out[id].campaignObjective = objectives[cid];
+      }
+    }
+
+    return out;
   }
 
   /** Estimate reach for a set of custom audiences via reachestimate.

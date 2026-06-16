@@ -16,6 +16,7 @@ import {
 import AIExecutiveSummary from "@/components/shared/AIExecutiveSummary";
 import { useMetaBreakdown, type BreakdownRow } from "@/hooks/useMetaBreakdown";
 import { useAdSetInsights } from "@/hooks/useAdSetInsights";
+import { classifyAdSet, AUDIENCE_COLORS, type AudienceClass } from "@/lib/audience-classifier";
 import { formatMoney } from "@/lib/currency";
 import { rangeToDates } from "@/lib/date-range";
 import type { DateRange } from "@/components/shared/DateRangePicker";
@@ -757,32 +758,10 @@ function CustomCohorts({
 
 // ─── Cohort Detailing ─────────────────────────────────────────────────────────
 
-type AudienceType = "Broad" | "Interest" | "Retargeting" | "Lookalike" | "ASC" | "Catalog/DPA" | "Brand" | "Creative Test" | "Other";
-
-function parseAudienceType(name: string): AudienceType {
-  const n = name.toLowerCase();
-  if (/\bgw_all\b|_all_|__all__/.test(n) || /\bopen\b/.test(n)) return "Broad";
-  if (/\basa\b|advantage.shopping|asc/.test(n)) return "ASC";
-  if (/retarg|retarget/.test(n)) return "Retargeting";
-  if (/dpa|catalog/.test(n)) return "Catalog/DPA";
-  if (/look.?alike|lal|\blal\b/.test(n)) return "Lookalike";
-  if (/interest|behav|affin/.test(n)) return "Interest";
-  if (/brand/.test(n)) return "Brand";
-  if (/test|creative|cr_/.test(n)) return "Creative Test";
-  return "Other";
-}
-
-const AT_COLORS: Record<AudienceType, string> = {
-  "Broad":         "bg-blue-100 text-blue-700",
-  "Interest":      "bg-sky-100 text-sky-700",
-  "Retargeting":   "bg-orange-100 text-orange-700",
-  "Lookalike":     "bg-violet-100 text-violet-700",
-  "ASC":           "bg-cyan-100 text-cyan-700",
-  "Catalog/DPA":   "bg-green-100 text-green-700",
-  "Brand":         "bg-pink-100 text-pink-700",
-  "Creative Test": "bg-yellow-100 text-yellow-700",
-  "Other":         "bg-gray-100 text-gray-500",
-};
+// AudienceType is now the marketing-meaning AudienceClass from the shared classifier,
+// so badges and grouping align with the rest of the app.
+type AudienceType = AudienceClass;
+const AT_COLORS: Record<AudienceClass, string> = AUDIENCE_COLORS;
 
 type CohortCol = "impressions" | "clicks" | "ctr" | "convRate" | "cpm" | "spend";
 interface CohortRow {
@@ -953,12 +932,12 @@ export default function AudienceAnalysisReport({ platform, dateRange, customStar
   const { rows: regionRows,  loading: regionLoading  } = useMetaBreakdown("region",           dateRange, customStart, customEnd);
   const { rows: deviceRows                           } = useMetaBreakdown("impression_device", dateRange, customStart, customEnd);
 
-  const { adsets, currency } = useAdSetInsights(effective, dateRange, customStart, customEnd);
+  const { adsets, audienceMap, currency } = useAdSetInsights(effective, dateRange, customStart, customEnd);
 
   const cohortRows = useMemo((): CohortRow[] => {
     const byType = new Map<AudienceType, { impr: number; clk: number; conv: number; spend: number }>();
     for (const a of adsets) {
-      const t = parseAudienceType(a.name);
+      const t = classifyAdSet(a.targeting, audienceMap, a.campaignObjective, a.name).cls;
       const cur = byType.get(t) ?? { impr: 0, clk: 0, conv: 0, spend: 0 };
       cur.impr  += a.impressions;
       cur.clk   += a.clicks;
@@ -976,7 +955,7 @@ export default function AudienceAnalysisReport({ platform, dateRange, customStar
       convRate: d.clk > 0 ? (d.conv / d.clk) * 100 : 0,
       cpm:     d.impr > 0 ? (d.spend / d.impr) * 1000 : 0,
     }));
-  }, [adsets]);
+  }, [adsets, audienceMap]);
 
   return (
     <div className="space-y-5">

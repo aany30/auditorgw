@@ -46,7 +46,6 @@ const FORMAT_COLORS: Record<CFormat, string> = {
   "CTV":           "#64748b",
 };
 
-const LANGUAGES = ["English", "Hindi", "Spanish", "French", "Tamil", "German"];
 
 const FATIGUE_WEEKS = ["WK 1", "WK 2–3", "WK 4–6", "WK 7–10", "WK 11+"] as const;
 type FatigueWk = typeof FATIGUE_WEEKS[number];
@@ -750,7 +749,7 @@ export default function CreativeReport({ platform, dateRange, customStart, custo
     rawAds.map((a, i) => ({
       id: a.id, name: a.name,
       format: detectFormat(a, i),
-      language: LANGUAGES[i % LANGUAGES.length],
+      language: a.language ?? "All Languages",
       spend: a.spend, impressions: a.impressions, clicks: a.clicks, conversions: a.conversions,
       ctr: a.impressions > 0 ? (a.clicks / a.impressions) * 100 : 0,
       cpm: a.impressions > 0 ? (a.spend / a.impressions) * 1000 : 0,
@@ -823,13 +822,17 @@ export default function CreativeReport({ platform, dateRange, customStart, custo
       {/* Section 2: Creative Fatigue */}
       <CreativeFatigueSection rows={fatigueRows} />
 
-      {/* Section 3: Best 5 + Languages */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-        <div className="lg:col-span-2">
-          <BestCreativesPanel ads={ads} currency={currency} />
+      {/* Section 3: Best 5 (+ Languages only when Meta returns real locale data) */}
+      {ads.some(a => a.language && a.language !== "All Languages") ? (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+          <div className="lg:col-span-2">
+            <BestCreativesPanel ads={ads} currency={currency} />
+          </div>
+          <LanguagesPanel ads={ads} />
         </div>
-        <LanguagesPanel ads={ads} />
-      </div>
+      ) : (
+        <BestCreativesPanel ads={ads} currency={currency} />
+      )}
 
       {/* Section 4: Top 50 */}
       <TopCreativesTable ads={ads} currency={currency} />

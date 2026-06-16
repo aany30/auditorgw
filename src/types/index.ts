@@ -163,6 +163,11 @@ export interface CampaignData {
    * (derived from the most common ad-set `attributionSpec`, or account default).
    * Example: "1d_click + 1d_view" or "7d_click + 1d_view". */
   effectiveAttribution?: string;
+  /** Per-window conversion breakdown from Meta's action_attribution_windows API.
+   * Populated for Meta campaigns only; undefined for Google. */
+  conv1dClick?: number;
+  conv7dClick?: number;
+  conv1dView?: number;
 }
 
 export interface AdData {

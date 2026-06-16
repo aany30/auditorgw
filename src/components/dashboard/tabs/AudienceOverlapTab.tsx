@@ -10,8 +10,12 @@ import React, { useState, useMemo } from "react";
 import { Users, ExternalLink, AlertCircle, Info } from "lucide-react";
 import type { DateRange } from "@/components/shared/DateRangePicker";
 import AIExecutiveSummary from "@/components/shared/AIExecutiveSummary";
-import { useAdSetInsights } from "@/hooks/useAdSetInsights";
+import { useAdSetInsights, type AdSetRow } from "@/hooks/useAdSetInsights";
 import { formatMoney } from "@/lib/currency";
+import {
+  classifyAdSet, AUDIENCE_COLORS, STAGE_COLORS,
+  type AudienceClassification, type AudienceClass, type CustomAudienceDetail,
+} from "@/lib/audience-classifier";
 
 interface Props {
   platform: "meta" | "google" | "both";
@@ -22,68 +26,33 @@ interface Props {
   setActiveTab?: (id: string) => void;
 }
 
-// ─── Audience / funnel helpers (mirrors AudienceFunnelTab logic) ─────────────
+// ─── Audience / funnel helpers — delegate to the shared classifier ──────────
 
 type FunnelStage = "TOF" | "MOF" | "BOF" | "Loyalty";
 
-function parseFunnelStage(name: string): FunnelStage {
-  const n = name.toLowerCase();
-  if (/\btof\b|top.of.funnel|prosp|cold|\bbroad\b|interest|\blal\b|lookalike/.test(n)) return "TOF";
-  if (/\bmof\b|mid.of.funnel|visitor|website|\bweb\b|video|engaged/.test(n)) return "MOF";
-  if (/\bbof\b|bottom.of.funnel|\batc\b|add.to.cart|checkout|abandon/.test(n)) return "BOF";
-  if (/loyal|existing|customer|\bvip\b/.test(n)) return "Loyalty";
-  return "TOF";
-}
-
-function parseAudienceType(name: string): string {
-  const n = name.toLowerCase();
-  if (/\blal\b|lookalike/.test(n)) return "LAL";
-  if (/interest/.test(n)) return "Interest";
-  if (/\bbroad\b|gw_all|gw-all|_all_/.test(n)) return "Broad";
-  if (/video/.test(n)) return "Video Viewers";
-  if (/\batc\b|add.to.cart/.test(n)) return "ATC";
-  if (/checkout|abandon/.test(n)) return "Checkout";
-  if (/ig\b|instagram|engaged/.test(n)) return "IG Engaged";
-  if (/visitor|website|\bweb\b/.test(n)) return "Web Visitors";
-  if (/customer|loyal|existing/.test(n)) return "Customers";
-  if (/prosp|cold/.test(n)) return "Prospecting";
-  if (/\bopen\b/.test(n)) return "Broad";
-  if (/\basa\b|advantage.shopping|\basc\b/.test(n)) return "ASC";
-  if (/retarg|retarget/.test(n)) return "Retargeting";
-  if (/dpa|catalog/.test(n)) return "Catalog/DPA";
-  if (/\bbrand\b/.test(n)) return "Brand";
-  if (/\btest\b|creative|cr_/.test(n)) return "Creative Test";
-  return "Other";
-}
-
-// Overlap heuristic: 0–1 score based on audience type + stage proximity
+// Overlap heuristic: 0–1 score based on audience class + funnel-stage proximity.
+// Uses the marketing-meaning AudienceClass keys (real Meta-targeting categories).
 const STAGE_ORDER: Record<FunnelStage, number> = { TOF: 0, MOF: 1, BOF: 2, Loyalty: 3 };
 
-const TYPE_BASE: Record<string, Record<string, number>> = {
-  Broad:           { Broad: 0.65, Interest: 0.40, LAL: 0.30, Prospecting: 0.50, ASC: 0.55, Other: 0.35 },
-  Interest:        { Broad: 0.40, Interest: 0.55, LAL: 0.30, Prospecting: 0.35, ASC: 0.35, Other: 0.25 },
-  LAL:             { Broad: 0.30, Interest: 0.30, LAL: 0.55, Prospecting: 0.30, ASC: 0.25, Other: 0.20 },
-  ASC:             { Broad: 0.55, Interest: 0.35, LAL: 0.25, ASC: 0.60, Prospecting: 0.45, Other: 0.30 },
-  "Web Visitors":  { "Web Visitors": 0.75, "IG Engaged": 0.45, "Video Viewers": 0.35, Retargeting: 0.65, Other: 0.25 },
-  "Video Viewers": { "Video Viewers": 0.70, "Web Visitors": 0.35, "IG Engaged": 0.35, Retargeting: 0.50, Other: 0.20 },
-  "IG Engaged":    { "IG Engaged": 0.70, "Web Visitors": 0.45, "Video Viewers": 0.35, Retargeting: 0.55, Other: 0.20 },
-  Retargeting:     { Retargeting: 0.72, "Web Visitors": 0.65, "IG Engaged": 0.55, ATC: 0.45, Checkout: 0.40, Other: 0.25 },
-  ATC:             { ATC: 0.78, Checkout: 0.60, "Web Visitors": 0.30, Retargeting: 0.45, Other: 0.20 },
-  Checkout:        { Checkout: 0.80, ATC: 0.60, Retargeting: 0.40, Other: 0.15 },
-  Customers:       { Customers: 0.75, Other: 0.10 },
-  Prospecting:     { Broad: 0.50, Interest: 0.35, LAL: 0.30, Prospecting: 0.55, ASC: 0.40, Other: 0.25 },
+const TYPE_BASE: Partial<Record<AudienceClass, Partial<Record<AudienceClass, number>>>> = {
+  Broad:                       { Broad: 0.65, Interest: 0.40, Lookalike: 0.30, "Advantage+ Audience": 0.55, "ASC / Shopping": 0.55, Unclassified: 0.35 },
+  "Advantage+ Audience":       { "Advantage+ Audience": 0.62, Broad: 0.55, Interest: 0.35, Lookalike: 0.28, "ASC / Shopping": 0.50, Unclassified: 0.30 },
+  Interest:                    { Broad: 0.40, Interest: 0.55, Lookalike: 0.30, "Advantage+ Audience": 0.35, Unclassified: 0.25 },
+  Lookalike:                   { Broad: 0.30, Interest: 0.30, Lookalike: 0.55, "Advantage+ Audience": 0.28, Unclassified: 0.20 },
+  "ASC / Shopping":            { Broad: 0.55, Interest: 0.35, Lookalike: 0.25, "ASC / Shopping": 0.60, "Advantage+ Audience": 0.45, Unclassified: 0.30 },
+  "Retargeting — Website":     { "Retargeting — Website": 0.75, "Retargeting — Engagement": 0.45, "Retargeting — App": 0.35, "Mixed Custom": 0.55, "Catalog/DPA": 0.45, Unclassified: 0.25 },
+  "Retargeting — Engagement":  { "Retargeting — Engagement": 0.70, "Retargeting — Website": 0.45, "Retargeting — App": 0.35, "Mixed Custom": 0.55, Unclassified: 0.20 },
+  "Retargeting — App":         { "Retargeting — App": 0.70, "Retargeting — Engagement": 0.35, "Retargeting — Website": 0.30, "Mixed Custom": 0.45, Unclassified: 0.20 },
+  "Customer List":             { "Customer List": 0.75, "Mixed Custom": 0.40, Unclassified: 0.10 },
+  "Mixed Custom":              { "Mixed Custom": 0.55, "Retargeting — Website": 0.50, "Retargeting — Engagement": 0.45, "Customer List": 0.40, Unclassified: 0.20 },
+  "Catalog/DPA":               { "Catalog/DPA": 0.70, "Retargeting — Website": 0.45, "Customer List": 0.30, Unclassified: 0.20 },
+  Unclassified:                { Unclassified: 0.20 },
 };
 
-function estimateOverlapPct(nameA: string, nameB: string): number {
-  const typeA = parseAudienceType(nameA);
-  const typeB = parseAudienceType(nameB);
-  const stageA = parseFunnelStage(nameA);
-  const stageB = parseFunnelStage(nameB);
-
-  const baseAB = TYPE_BASE[typeA]?.[typeB] ?? TYPE_BASE[typeB]?.[typeA] ?? 0.15;
+function estimateOverlapPct(clsA: AudienceClass, stageA: FunnelStage, clsB: AudienceClass, stageB: FunnelStage): number {
+  const baseAB = TYPE_BASE[clsA]?.[clsB] ?? TYPE_BASE[clsB]?.[clsA] ?? 0.15;
   const stageDiff = Math.abs(STAGE_ORDER[stageA] - STAGE_ORDER[stageB]);
   const stageMod = stageDiff === 0 ? 1.0 : stageDiff === 1 ? 0.7 : stageDiff === 2 ? 0.4 : 0.2;
-
   return Math.min(0.95, baseAB * stageMod) * 100;
 }
 
@@ -111,44 +80,30 @@ function riskLabel(pct: number): { label: string; color: string } {
   return            { label: "Low overlap",                   color: "text-green-700 bg-green-50 border-green-200" };
 }
 
-const STAGE_COLORS: Record<FunnelStage, string> = {
-  TOF:     "bg-blue-100 text-blue-800",
-  MOF:     "bg-yellow-100 text-yellow-800",
-  BOF:     "bg-orange-100 text-orange-800",
-  Loyalty: "bg-green-100 text-green-800",
-};
-
-const AUDIENCE_COLORS: Record<string, string> = {
-  Broad:           "bg-sky-100 text-sky-800",
-  Interest:        "bg-blue-100 text-blue-800",
-  LAL:             "bg-indigo-100 text-indigo-800",
-  Prospecting:     "bg-cyan-100 text-cyan-800",
-  ASC:             "bg-sky-100 text-sky-800",
-  "Web Visitors":  "bg-violet-100 text-violet-800",
-  "Video Viewers": "bg-purple-100 text-purple-800",
-  "IG Engaged":    "bg-fuchsia-100 text-fuchsia-800",
-  ATC:             "bg-orange-100 text-orange-800",
-  Checkout:        "bg-red-100 text-red-800",
-  Retargeting:     "bg-rose-100 text-rose-800",
-  Customers:       "bg-green-100 text-green-800",
-  "Catalog/DPA":   "bg-gray-100 text-gray-700",
-  "Creative Test": "bg-pink-100 text-pink-800",
-  Brand:           "bg-yellow-100 text-yellow-800",
-  Other:           "bg-gray-100 text-gray-600",
-};
-
-function audienceBadge(label: string) {
-  const cls = AUDIENCE_COLORS[label] ?? "bg-gray-100 text-gray-600";
-  return <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${cls}`}>{label}</span>;
+function audienceBadge(cls: AudienceClassification) {
+  const color = AUDIENCE_COLORS[cls.cls] ?? "bg-gray-100 text-gray-600";
+  return (
+    <span
+      className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${color} ${cls.source === "name-fallback" ? "border border-dashed border-gray-400" : ""}`}
+      title={cls.source === "name-fallback"
+        ? "Inferred from ad-set name — Meta didn't return targeting (likely Advantage+ Shopping)."
+        : (cls.detail || "Classified from Meta targeting setup")}
+    >
+      {cls.cls}
+    </span>
+  );
 }
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function AudienceOverlapTab({ platform, dateRange, customStart, customEnd }: Props) {
-  const { adsets, loading, currency } = useAdSetInsights(
+  const { adsets, audienceMap, loading, currency } = useAdSetInsights(
     platform === "both" ? "meta" : platform,
     dateRange, customStart, customEnd
   );
+  // Classify every ad set once, reused below.
+  const classifyRow = (a: AdSetRow): AudienceClassification =>
+    classifyAdSet(a.targeting, audienceMap, a.campaignObjective, a.name);
   const cur = (n: number) => formatMoney(n, currency, 0);
 
   const [adSetA, setAdSetA] = useState("");
@@ -165,17 +120,24 @@ export default function AudienceOverlapTab({ platform, dateRange, customStart, c
 
     const sizeA = a.reach || a.impressions || 0;
     const sizeB = b.reach || b.impressions || 0;
-    const overlapPct = estimateOverlapPct(a.name, b.name);
+    const cA = classifyRow(a);
+    const cB = classifyRow(b);
+    const overlapPct = estimateOverlapPct(cA.cls, cA.funnelStage, cB.cls, cB.funnelStage);
     const overlap = Math.round(Math.min(sizeA, sizeB) * (overlapPct / 100));
     const unionReach = sizeA + sizeB - overlap;
 
     return { sizeA, sizeB, unionReach, overlap, overlapPct };
-  }, [adSetA, adSetB, adSetMap]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adSetA, adSetB, adSetMap, audienceMap]);
 
-  const nameA = adSetMap.get(adSetA)?.name ?? "";
-  const nameB = adSetMap.get(adSetB)?.name ?? "";
-  const stageA = nameA ? parseFunnelStage(nameA) : null;
-  const stageB = nameB ? parseFunnelStage(nameB) : null;
+  const adA = adSetMap.get(adSetA);
+  const adB = adSetMap.get(adSetB);
+  const nameA = adA?.name ?? "";
+  const nameB = adB?.name ?? "";
+  const classA = adA ? classifyRow(adA) : null;
+  const classB = adB ? classifyRow(adB) : null;
+  const stageA: FunnelStage | null = classA?.funnelStage ?? null;
+  const stageB: FunnelStage | null = classB?.funnelStage ?? null;
 
   return (
     <div className="space-y-6">
@@ -250,7 +212,10 @@ export default function AudienceOverlapTab({ platform, dateRange, customStart, c
                       <div className="mt-1.5 flex items-center gap-2">
                         {stageA && label === "A" && <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${STAGE_COLORS[stageA]}`}>{stageA}</span>}
                         {stageB && label === "B" && <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${STAGE_COLORS[stageB]}`}>{stageB}</span>}
-                        {audienceBadge(parseAudienceType(label === "A" ? nameA : nameB))}
+                        {(() => {
+                          const c = label === "A" ? classA : classB;
+                          return c ? audienceBadge(c) : null;
+                        })()}
                       </div>
                     )}
                   </div>
@@ -287,7 +252,7 @@ export default function AudienceOverlapTab({ platform, dateRange, customStart, c
                   {riskLabel(result.overlapPct).label} — {result.overlapPct.toFixed(1)}% overlap
                 </div>
                 <p className="text-[11px] text-gray-400">
-                  Estimated from audience type ({parseAudienceType(nameA)} vs {parseAudienceType(nameB)}) and funnel stage ({stageA} vs {stageB}) similarity.
+                  Estimated from audience class ({classA?.cls ?? "?"} vs {classB?.cls ?? "?"}) and funnel stage ({stageA} vs {stageB}) similarity.
                   {result.overlapPct > 30 && " High overlap means these ad sets may be bidding against each other — consider adding exclusions."}
                 </p>
               </div>
@@ -304,7 +269,7 @@ export default function AudienceOverlapTab({ platform, dateRange, customStart, c
                 const cvr  = (r: typeof rowA) => r.clicks > 0 ? (r.conversions / r.clicks) * 100 : null;
                 const rows: { label: string; a: React.ReactNode; b: React.ReactNode; combined: React.ReactNode; muted?: boolean }[] = [
                   { label: "Funnel Stage",   a: stageA ? <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${STAGE_COLORS[stageA]}`}>{stageA}</span> : "—", b: stageB ? <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${STAGE_COLORS[stageB]}`}>{stageB}</span> : "—", combined: "—" },
-                  { label: "Audience Type",  a: audienceBadge(parseAudienceType(nameA)), b: audienceBadge(parseAudienceType(nameB)), combined: "—" },
+                  { label: "Audience Type",  a: classA ? audienceBadge(classA) : "—", b: classB ? audienceBadge(classB) : "—", combined: "—" },
                   { label: "Spend",          a: cur(rowA.spend), b: cur(rowB.spend), combined: cur(rowA.spend + rowB.spend) },
                   { label: "Impressions",    a: fmtSize(rowA.impressions), b: fmtSize(rowB.impressions), combined: fmtSize(rowA.impressions + rowB.impressions) },
                   { label: "Reach (period)", a: result.sizeA > 0 ? fmtSize(result.sizeA) : "—", b: result.sizeB > 0 ? fmtSize(result.sizeB) : "—", combined: result.unionReach > 0 ? fmtSize(result.unionReach) : "—" },

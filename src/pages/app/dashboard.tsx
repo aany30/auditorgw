@@ -7,7 +7,6 @@ import FunnelAuditTab from "@/components/dashboard/FunnelAuditTab";
 import AttributionTab from "@/components/dashboard/AttributionTab";
 import RecommendationsTab from "@/components/dashboard/RecommendationsTab";
 import AccountStructureTab from "@/components/dashboard/AccountStructureTab";
-import AudienceFunnelTab from "@/components/dashboard/tabs/AudienceFunnelTab";
 import AudienceOverlapTab from "@/components/dashboard/tabs/AudienceOverlapTab";
 import AudiencePerformanceTab from "@/components/dashboard/tabs/AudiencePerformanceTab";
 import AudienceQualityTab from "@/components/dashboard/tabs/AudienceQualityTab";
@@ -44,7 +43,6 @@ import {
   Mail,
   Check,
   FileText,
-  Filter,
   BarChart2,
   Star,
   Zap,
@@ -85,9 +83,7 @@ const NAV: NavGroup[] = [
       { id: "event-quality", label: "Event Quality",      Icon: TrendingUp },
       { id: "funnel",        label: "Funnel Audit",       Icon: Target    },
       { id: "attribution",   label: "Attribution Audit",  Icon: Settings2 },
-      { id: "aud-funnel",    label: "Audience Funnel",    Icon: Filter    },
       { id: "aud-overlap",   label: "Audience Overlap",   Icon: Users     },
-      { id: "aud-quality",   label: "Quality & Value",    Icon: Star      },
     ],
   },
   {
@@ -267,8 +263,6 @@ export default function Dashboard() {
         return <FunnelAuditTab {...props} />;
       case "attribution":
         return <AttributionTab {...props} />;
-      case "aud-funnel":
-        return <AudienceFunnelTab {...ctx} />;
       case "aud-overlap":
         return <AudienceOverlapTab {...ctx} />;
       case "aud-quality":
