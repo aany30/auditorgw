@@ -74,14 +74,18 @@ function baseDelivery(
   c: CampaignData | undefined,
   preferFlight = false,
   metaLifetime?: Record<string, { spend: number; impressions: number; clicks: number; reach: number; videoViews: number }>,
+  strictWindow = false,
 ): { spend: number; impressions: number; clicks: number; reach: number; videoViews: number } {
   const winSpend = c?.spend || 0, winImpr = c?.impressions || 0;
   const hasAllTimeDV = c?.platform === "dv360" && ((c?.allTimeSpend || 0) > 0 || (c?.allTimeImpressions || 0) > 0);
-  const useAllTimeDV = hasAllTimeDV && (preferFlight || (winSpend === 0 && winImpr === 0));
+  // strictWindow forces window-only reporting — no DV360 all-time fallback and
+  // no Meta lifetime fallback. Used by the Dashboard tab so switching the date
+  // picker actually changes the numbers instead of collapsing to lifetime.
+  const useAllTimeDV = !strictWindow && hasAllTimeDV && (preferFlight || (winSpend === 0 && winImpr === 0));
 
   // Meta lifetime fallback: when the window shows no delivery, use lifetime data
   const metaLT = c?.platform === "meta" && metaLifetime && c?.id ? metaLifetime[c.id] : undefined;
-  const useMetaLT = !!metaLT && winSpend === 0 && winImpr === 0;
+  const useMetaLT = !strictWindow && !!metaLT && winSpend === 0 && winImpr === 0;
 
   if (useMetaLT && metaLT) {
     return {
@@ -987,8 +991,28 @@ export function PlanningSection({ campaigns, loading, currency, storageSuffix, d
             <span className="text-sm font-semibold text-gray-700">Campaigns:</span>
             <CampaignMultiPicker options={options} values={selected} onChange={setSelected} allLabelText="None selected — pick campaigns to plan" loading={loading} />
           </div>
-          {/* Saved Plans dropdown */}
-          <div className="relative shrink-0">
+          {/* Saved Plans dropdown + New plan button */}
+          <div className="flex items-center gap-2 shrink-0">
+            {/* + New — clears the current viewed plan so you can start a fresh deep-dive */}
+            <button
+              onClick={() => {
+                setActivePlanId(null);
+                setPlanNameDraft("");
+                setSelected([]);
+                setSelectedAdSets([]);
+                setSelectedAds([]);
+                setSelectedAdGroups([]);
+                setSelectedCreatives([]);
+                setPlanned({});
+                setFocusId("");
+                setExtraPanels([]);
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-green-200 bg-green-50 text-green-700 hover:bg-green-100 transition"
+              title="Start a fresh deep-dive (clears current selections)"
+            >
+              <Plus className="w-3.5 h-3.5" /> New
+            </button>
+            <div className="relative">
             <button
               onClick={() => setShowSavedPlans(!showSavedPlans)}
               className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition ${
@@ -1056,6 +1080,7 @@ export function PlanningSection({ campaigns, loading, currency, storageSuffix, d
                 )}
               </div>
             )}
+            </div>
           </div>
         </div>
         {selected.length > 0 && adSetOptions.length > 0 && (
@@ -1609,10 +1634,10 @@ const AGG_METRICS: AggMetric[] = [
   { key: "cpm",         label: "CPM",         kind: "money" },
 ];
 
-function deliveredOfGroup(list: CampaignData[]): Delivered {
+function deliveredOfGroup(list: CampaignData[], strictWindow = false): Delivered {
   let spend = 0, impressions = 0, clicks = 0, reach = 0, videoViews = 0;
   for (const c of list) {
-    const b = baseDelivery(c); // per-campaign window-or-full-flight (DV360) delivery
+    const b = baseDelivery(c, false, undefined, strictWindow); // window-only when strictWindow=true
     spend += b.spend; impressions += b.impressions; clicks += b.clicks;
     reach += b.reach; videoViews += b.videoViews;
   }
@@ -1901,9 +1926,11 @@ export function DailyTrendCharts({ dateRange: parentRange, customStart, customEn
   );
 }
 
-export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Currency, dateRange, customStart, customEnd }: {
+export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Currency, dateRange, customStart, customEnd, strictWindow = false }: {
   campaigns: CampaignData[]; loading: boolean; metaCurrency: string; dv360Currency: string;
   dateRange: DateRange; customStart?: string; customEnd?: string;
+  /** When true, honor the date picker strictly — no DV360 all-time / Meta lifetime fallbacks. */
+  strictWindow?: boolean;
 }) {
   const [groupBy, setGroupBy] = useState<AggGroupBy>("overall");
   const [planned, setPlanned] = usePersistentJSON<AggPlanned>("planning-agg", {});
@@ -2091,17 +2118,17 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
   // The tables currently on screen — drives both the render and CSV export.
   const tables = useMemo<AggTable[]>(() => {
     if (groupBy === "overall") {
-      const delivered = deliveredOfGroup(campaigns);
+      const delivered = deliveredOfGroup(campaigns, strictWindow);
       return [{ key: "overall", label: "Overall — all campaigns", count: campaigns.length, delivered, gcur: metaCurrency }];
     }
     if (groupBy === "channel") {
       const out: AggTable[] = [];
       if (hasMeta) {
-        const d = metaChannel === "all" ? deliveredOfGroup(metaCampaigns) : deliveredFromRow(metaPub.rows.find((r) => r.label === metaChannel));
+        const d = metaChannel === "all" ? deliveredOfGroup(metaCampaigns, strictWindow) : deliveredFromRow(metaPub.rows.find((r) => r.label === metaChannel));
         out.push({ key: `channel:meta:${metaChannel}`, label: "Meta", sub: metaChannel === "all" ? "All channels" : metaPubLabel(metaChannel), count: metaCampaigns.length, delivered: d, gcur: metaCurrency, platform: "meta" });
       }
       if (hasDv) {
-        const d = dv360Channel === "all" ? deliveredOfGroup(dv360Campaigns) : deliveredFromRow(dvExch.rows.find((r) => r.label === dv360Channel));
+        const d = dv360Channel === "all" ? deliveredOfGroup(dv360Campaigns, strictWindow) : deliveredFromRow(dvExch.rows.find((r) => r.label === dv360Channel));
         out.push({ key: `channel:dv360:${dv360Channel}`, label: "DV360", sub: dv360Channel === "all" ? "All exchanges" : dv360Channel, count: dv360Campaigns.length, delivered: d, gcur: dv360Currency, platform: "dv360" });
       }
       return out;
@@ -2110,11 +2137,11 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
       const out: AggTable[] = [];
       if (hasMeta) {
         const mc = metaObjective === "all" ? metaCampaigns : metaCampaigns.filter((c) => prettyObjective(c.objective) === metaObjective);
-        out.push({ key: `obj:meta:${metaObjective}`, label: "Meta", sub: metaObjective === "all" ? "All objectives" : metaObjective, count: mc.length, delivered: deliveredOfGroup(mc), gcur: metaCurrency, platform: "meta" });
+        out.push({ key: `obj:meta:${metaObjective}`, label: "Meta", sub: metaObjective === "all" ? "All objectives" : metaObjective, count: mc.length, delivered: deliveredOfGroup(mc, strictWindow), gcur: metaCurrency, platform: "meta" });
       }
       if (hasDv) {
         const dc = dv360Objective === "all" ? dv360Campaigns : dv360Campaigns.filter((c) => prettyObjective(c.objective) === dv360Objective);
-        out.push({ key: `obj:dv360:${dv360Objective}`, label: "DV360", sub: dv360Objective === "all" ? "All objectives" : dv360Objective, count: dc.length, delivered: deliveredOfGroup(dc), gcur: dv360Currency, platform: "dv360" });
+        out.push({ key: `obj:dv360:${dv360Objective}`, label: "DV360", sub: dv360Objective === "all" ? "All objectives" : dv360Objective, count: dc.length, delivered: deliveredOfGroup(dc, strictWindow), gcur: dv360Currency, platform: "dv360" });
       }
       return out;
     }
@@ -2122,12 +2149,12 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
       const out: AggTable[] = [];
       if (hasMeta) {
         const d = metaCreative === "all"
-          ? deliveredOfGroup(metaCampaigns)
+          ? deliveredOfGroup(metaCampaigns, strictWindow)
           : deliveredFromRow(metaFormatRows.find((r) => r.label === metaCreative));
         out.push({ key: `creative:meta:${metaCreative}`, label: "Meta", sub: metaCreative === "all" ? "All formats" : metaCreative, count: metaCreative === "all" ? metaCampaigns.length : 0, delivered: d, gcur: metaCurrency, platform: "meta" });
       }
       if (hasDv) {
-        const d = dv360Creative === "all" ? deliveredOfGroup(dv360Campaigns) : deliveredFromRow(dvCreativeType.rows.find((r) => normFormat(r.label) === dv360Creative));
+        const d = dv360Creative === "all" ? deliveredOfGroup(dv360Campaigns, strictWindow) : deliveredFromRow(dvCreativeType.rows.find((r) => normFormat(r.label) === dv360Creative));
         out.push({ key: `creative:dv360:${dv360Creative}`, label: "DV360", sub: dv360Creative === "all" ? "All creative types" : dv360Creative, count: dv360Campaigns.length, delivered: d, gcur: dv360Currency, platform: "dv360" });
       }
       return out;
@@ -2146,7 +2173,7 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
       const d = filtered.length > 0
         ? deriveDelivered(filtered.reduce((a, r) => ({ spend: a.spend + r.spend, impressions: a.impressions + r.impressions, clicks: a.clicks + r.clicks, reach: a.reach + r.reach, videoViews: a.videoViews + r.videoViews }), { spend: 0, impressions: 0, clicks: 0, reach: 0, videoViews: 0 }))
         : metaAudFilter === "all"
-          ? deliveredOfGroup(metaCampaigns)
+          ? deliveredOfGroup(metaCampaigns, strictWindow)
           : deriveDelivered({ spend: 0, impressions: 0, clicks: 0, reach: 0, videoViews: 0 });
       const subLabel = metaAdSets.loading
         ? "Loading ad sets…"
@@ -2162,7 +2189,7 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
       const d = filtered.length > 0
         ? deriveDelivered(filtered.reduce((a, r) => ({ spend: a.spend + r.spend, impressions: a.impressions + r.impressions, clicks: a.clicks + r.clicks, reach: 0, videoViews: a.videoViews + r.videoViews }), { spend: 0, impressions: 0, clicks: 0, reach: 0, videoViews: 0 }))
         : dv360AudFilter === "all"
-          ? deliveredOfGroup(dv360Campaigns)
+          ? deliveredOfGroup(dv360Campaigns, strictWindow)
           : deriveDelivered({ spend: 0, impressions: 0, clicks: 0, reach: 0, videoViews: 0 });
       const subLabel = dv360LineItems.loading
         ? "Loading line items…"
@@ -2174,7 +2201,7 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
       out.push({ key: "aud:dv360", label: "DV360", sub: subLabel, count: filtered.length, delivered: d, gcur: dv360Currency, platform: "dv360" });
     }
     return out;
-  }, [groupBy, campaigns, metaCampaigns, dv360Campaigns, hasMeta, hasDv, metaChannel, dv360Channel, metaObjective, dv360Objective, metaCreative, dv360Creative, metaPub.rows, dvExch.rows, dvCreativeType.rows, metaFormatRows, metaCurrency, dv360Currency, metaAudFilter, dv360AudFilter, metaAdSets.rows, metaAdSets.loading, dv360LineItems.rows, dv360LineItems.loading, audNameToAdSetMatch]);
+  }, [groupBy, campaigns, metaCampaigns, dv360Campaigns, hasMeta, hasDv, metaChannel, dv360Channel, metaObjective, dv360Objective, metaCreative, dv360Creative, metaPub.rows, dvExch.rows, dvCreativeType.rows, metaFormatRows, metaCurrency, dv360Currency, metaAudFilter, dv360AudFilter, metaAdSets.rows, metaAdSets.loading, dv360LineItems.rows, dv360LineItems.loading, audNameToAdSetMatch, strictWindow]);
 
   const scopeLabel = groupBy === "overall" ? "Overall"
     : groupBy === "channel" ? "By channel"

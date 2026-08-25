@@ -234,13 +234,14 @@ export default function DashboardReport({
 
   const enrichedCampaigns = useMemo(() => [...metaCampaigns, ...dv360Campaigns], [metaCampaigns, dv360Campaigns]);
 
-  // When the user picks a custom date range, honor the picker strictly:
-  // no all-time fallback for DV360 ended-flight campaigns. Presets keep the
-  // fallback so the default view isn't full of zeros for old flights.
-  const allowFallback = dateRange !== "custom";
-  const overall = useMemo(() => deliveredOfGroup(enrichedCampaigns, allowFallback), [enrichedCampaigns, allowFallback]);
-  const metaD = useMemo(() => deliveredOfGroup(metaCampaigns, allowFallback), [metaCampaigns, allowFallback]);
-  const dvD = useMemo(() => deliveredOfGroup(dv360Campaigns, allowFallback), [dv360Campaigns, allowFallback]);
+  // Honor the date range picker strictly for ALL selections (presets and
+  // custom): no all-time fallback. If a DV360 campaign has 0 spend in the
+  // picked window, it contributes 0 — this way the numbers actually change
+  // when the user switches 7d/30d/90d/custom, instead of collapsing back to
+  // lifetime totals for ended-flight campaigns.
+  const overall = useMemo(() => deliveredOfGroup(enrichedCampaigns, false), [enrichedCampaigns]);
+  const metaD = useMemo(() => deliveredOfGroup(metaCampaigns, false), [metaCampaigns]);
+  const dvD = useMemo(() => deliveredOfGroup(dv360Campaigns, false), [dv360Campaigns]);
 
   const pacing = (key: string) => {
     const p = planned[key] || 0;
@@ -490,6 +491,7 @@ export default function DashboardReport({
           dateRange={dateRange}
           customStart={customStart}
           customEnd={customEnd}
+          strictWindow
         />
       </div>
 
