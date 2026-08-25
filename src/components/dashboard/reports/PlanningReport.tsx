@@ -681,6 +681,10 @@ export function PlanningSection({ campaigns, loading, currency, storageSuffix, d
   const [renameValue, setRenameValue] = useState("");
   const [showSavedPlans, setShowSavedPlans] = useState(false);
 
+  // Prominent plan-name field shown above the deep-dive. Also used as the
+  // "Save plan" name so users don't have to enter it twice.
+  const [planNameDraft, setPlanNameDraft] = useState<string>("");
+
   const handleExtraPanelFocusChange = (panelId: string, newFocusId: string) => {
     setExtraPanels((prev) => prev.map((p) => p.id === panelId ? { ...p, focusId: newFocusId } : p));
   };
@@ -695,6 +699,7 @@ export function PlanningSection({ campaigns, loading, currency, storageSuffix, d
     }
     setPlanned(newPlanned);
     setActivePlanId(group.id);
+    setPlanNameDraft(group.name);
     // Restore deep-dive panels
     const pf = group.panelFocusIds ?? [];
     if (pf.length > 0) {
@@ -1204,49 +1209,41 @@ export function PlanningSection({ campaigns, loading, currency, storageSuffix, d
         };
         return (
           <div ref={deepDiveRef} className="bg-white rounded-xl border border-gray-200 shadow-sm scroll-mt-24">
+            {/* Prominent plan-name row — doubles as the name used when clicking Save plan */}
+            <div className="px-5 pt-4 pb-3 border-b border-gray-100 bg-gradient-to-r from-blue-50/40 to-white">
+              <label className="block text-[11px] uppercase font-bold tracking-wider text-blue-700 mb-1">
+                {activePlanId ? "Currently viewing plan" : "Plan name"}
+              </label>
+              <input
+                value={planNameDraft}
+                onChange={(e) => setPlanNameDraft(e.target.value)}
+                placeholder={isMulti ? `${focusEntries.length} campaigns plan` : `${focus.name} plan`}
+                className="w-full px-3 py-2.5 text-base font-semibold text-gray-900 border border-blue-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-300 focus:border-blue-400 bg-white shadow-sm"
+              />
+            </div>
             <div className="px-5 py-3 border-b border-gray-100">
               <div className="flex items-center justify-between gap-3 flex-wrap">
                 <h3 className="text-sm font-bold text-gray-900">Campaign deep-dive</h3>
                 <div className="flex items-center gap-2">
-                  {savePlanName !== null ? (
-                    <form
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        const trimmed = savePlanName.trim();
-                        if (trimmed) {
-                          const entityKeys = isMulti
-                            ? new Set(focusEntries.map((r) => `campaign:${r.id}`))
-                            : new Set([`campaign:${focus.id}`]);
-                          const eFid = focusId || rows[0]?.id || "";
-                          const pids = [eFid, ...extraPanels.map((p) => p.focusId || rows[0]?.id || "")].filter(Boolean);
-                          savePlanAsGroup(trimmed, entityKeys, pids);
-                        }
-                        setSavePlanName(null);
-                      }}
-                      className="inline-flex items-center gap-1.5"
-                    >
-                      <input
-                        autoFocus
-                        value={savePlanName}
-                        onChange={(e) => setSavePlanName(e.target.value)}
-                        placeholder="Plan name"
-                        className="px-2 py-1 text-xs border border-blue-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-200 w-40"
-                        onKeyDown={(e) => { if (e.key === "Escape") setSavePlanName(null); }}
-                      />
-                      <button type="submit" className="px-2 py-1 text-xs font-semibold bg-blue-600 text-white rounded-md hover:bg-blue-700">Save</button>
-                      <button type="button" onClick={() => setSavePlanName(null)} className="px-2 py-1 text-xs font-semibold text-gray-500 hover:text-gray-700">Cancel</button>
-                    </form>
-                  ) : (
-                    <button
-                      onClick={() => setSavePlanName(isMulti ? `${focusEntries.length} campaigns plan` : `${focus.name} plan`)}
-                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border shadow-sm transition ${
-                        justSavedId ? "bg-green-50 border-green-300 text-green-700" : "bg-blue-600 border-blue-600 text-white hover:bg-blue-700"
-                      }`}
-                    >
-                      <Save className="w-3.5 h-3.5" />
-                      {justSavedId ? "Saved ✓" : "Save plan"}
-                    </button>
-                  )}
+                  <button
+                    onClick={() => {
+                      const trimmed = (planNameDraft || (isMulti ? `${focusEntries.length} campaigns plan` : `${focus.name} plan`)).trim();
+                      if (!trimmed) return;
+                      const entityKeys = isMulti
+                        ? new Set(focusEntries.map((r) => `campaign:${r.id}`))
+                        : new Set([`campaign:${focus.id}`]);
+                      const eFid = focusId || rows[0]?.id || "";
+                      const pids = [eFid, ...extraPanels.map((p) => p.focusId || rows[0]?.id || "")].filter(Boolean);
+                      savePlanAsGroup(trimmed, entityKeys, pids);
+                      if (!planNameDraft) setPlanNameDraft(trimmed);
+                    }}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border shadow-sm transition ${
+                      justSavedId ? "bg-green-50 border-green-300 text-green-700" : "bg-blue-600 border-blue-600 text-white hover:bg-blue-700"
+                    }`}
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    {justSavedId ? "Saved ✓" : "Save plan"}
+                  </button>
                   <GapInsight
                     campaign={focusLabel}
                     planned={focusContext.planned}
@@ -2144,19 +2141,37 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
         : match && (match.ids.size > 0 || match.names.size > 0)
           ? metaAdSets.rows.filter((r) => match.ids.has(r.id) || match.names.has(r.name))
           : metaAdSets.rows.filter((r) => (r.targeting + " " + r.name).toLowerCase().includes(metaAudFilter.toLowerCase()));
+      // When a specific audience is picked but no ad sets match, show honest
+      // zeros — not the all-campaign total (which made the filter look broken).
       const d = filtered.length > 0
         ? deriveDelivered(filtered.reduce((a, r) => ({ spend: a.spend + r.spend, impressions: a.impressions + r.impressions, clicks: a.clicks + r.clicks, reach: a.reach + r.reach, videoViews: a.videoViews + r.videoViews }), { spend: 0, impressions: 0, clicks: 0, reach: 0, videoViews: 0 }))
-        : deliveredOfGroup(metaCampaigns);
-      const subLabel = metaAdSets.loading ? "Loading ad sets…" : metaAudFilter === "all" ? `All ad sets (${filtered.length})` : `${metaAudFilter} (${filtered.length} ad set${filtered.length === 1 ? "" : "s"})`;
-      out.push({ key: "aud:meta", label: "Meta", sub: subLabel, count: filtered.length || metaCampaigns.length, delivered: d, gcur: metaCurrency, platform: "meta" });
+        : metaAudFilter === "all"
+          ? deliveredOfGroup(metaCampaigns)
+          : deriveDelivered({ spend: 0, impressions: 0, clicks: 0, reach: 0, videoViews: 0 });
+      const subLabel = metaAdSets.loading
+        ? "Loading ad sets…"
+        : metaAudFilter === "all"
+          ? `All ad sets (${filtered.length})`
+          : filtered.length === 0
+            ? `${metaAudFilter} — no ad sets target this audience`
+            : `${metaAudFilter} (${filtered.length} ad set${filtered.length === 1 ? "" : "s"})`;
+      out.push({ key: "aud:meta", label: "Meta", sub: subLabel, count: filtered.length, delivered: d, gcur: metaCurrency, platform: "meta" });
     }
     if (hasDv) {
       const filtered = dv360AudFilter === "all" ? dv360LineItems.rows : dv360LineItems.rows.filter((r) => r.audienceType === dv360AudFilter);
       const d = filtered.length > 0
         ? deriveDelivered(filtered.reduce((a, r) => ({ spend: a.spend + r.spend, impressions: a.impressions + r.impressions, clicks: a.clicks + r.clicks, reach: 0, videoViews: a.videoViews + r.videoViews }), { spend: 0, impressions: 0, clicks: 0, reach: 0, videoViews: 0 }))
-        : deliveredOfGroup(dv360Campaigns);
-      const subLabel = dv360LineItems.loading ? "Loading line items…" : dv360AudFilter === "all" ? `All line items (${filtered.length})` : `${dv360AudFilter} (${filtered.length} line item${filtered.length === 1 ? "" : "s"})`;
-      out.push({ key: "aud:dv360", label: "DV360", sub: subLabel, count: filtered.length || dv360Campaigns.length, delivered: d, gcur: dv360Currency, platform: "dv360" });
+        : dv360AudFilter === "all"
+          ? deliveredOfGroup(dv360Campaigns)
+          : deriveDelivered({ spend: 0, impressions: 0, clicks: 0, reach: 0, videoViews: 0 });
+      const subLabel = dv360LineItems.loading
+        ? "Loading line items…"
+        : dv360AudFilter === "all"
+          ? `All line items (${filtered.length})`
+          : filtered.length === 0
+            ? `${dv360AudFilter} — no line items match`
+            : `${dv360AudFilter} (${filtered.length} line item${filtered.length === 1 ? "" : "s"})`;
+      out.push({ key: "aud:dv360", label: "DV360", sub: subLabel, count: filtered.length, delivered: d, gcur: dv360Currency, platform: "dv360" });
     }
     return out;
   }, [groupBy, campaigns, metaCampaigns, dv360Campaigns, hasMeta, hasDv, metaChannel, dv360Channel, metaObjective, dv360Objective, metaCreative, dv360Creative, metaPub.rows, dvExch.rows, dvCreativeType.rows, metaFormatRows, metaCurrency, dv360Currency, metaAudFilter, dv360AudFilter, metaAdSets.rows, metaAdSets.loading, dv360LineItems.rows, dv360LineItems.loading, audNameToAdSetMatch]);
