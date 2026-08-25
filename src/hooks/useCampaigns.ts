@@ -18,8 +18,8 @@ import type { DateRange } from "@/components/shared/DateRangePicker";
 // Keyed by advertiserId + date range so different windows never cross-pollinate.
 const DV360_SWR_TTL_MS = 5 * 60 * 1000;
 
-function swrKey(advertiserId: string, start: string, end: string) {
-  return `dv360_campaigns:${advertiserId}:${start}:${end}`;
+function swrKey(advertiserId: string, start: string, end: string, strict = false) {
+  return `dv360_campaigns:${advertiserId}:${start}:${end}${strict ? ":strict" : ""}`;
 }
 
 function swrRead(key: string): CampaignData[] | null {
@@ -57,7 +57,10 @@ export function useCampaigns(
   platform: "meta" | "dv360" | "both",
   dateRange: DateRange,
   customStart?: string,
-  customEnd?: string
+  customEnd?: string,
+  /** When true, disables DV360's all-time fallback on the server so the picker
+   * is honored strictly — used by the Dashboard tab. */
+  strictWindow = false
 ) {
   const {
     metaAccessToken,
@@ -97,7 +100,7 @@ export function useCampaigns(
     swrSeeded.current = false;
     dvRetries.current = 0; // fresh account/date window — restart the DV360 poll budget
     if (!effectiveAdvertiserId || !(platform === "dv360" || platform === "both")) return;
-    const key = swrKey(effectiveAdvertiserId, startDate, endDate);
+    const key = swrKey(effectiveAdvertiserId, startDate, endDate, strictWindow);
     const cached = swrRead(key);
     if (cached && cached.length > 0) {
       setCampaigns(cached);
@@ -163,6 +166,7 @@ export function useCampaigns(
               partnerId: dv360PartnerId || undefined,
               startDate,
               endDate,
+              strictWindow,
             }),
           });
           if (r.ok) {
@@ -170,7 +174,7 @@ export function useCampaigns(
             all.push(...rows);
             // Write fresh rows to the SWR cache so the next page load is instant.
             if (effectiveAdvertiserId && rows.length > 0) {
-              swrWrite(swrKey(effectiveAdvertiserId, startDate, endDate), rows);
+              swrWrite(swrKey(effectiveAdvertiserId, startDate, endDate, strictWindow), rows);
             }
           } else {
             const body = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
@@ -231,6 +235,7 @@ export function useCampaigns(
     dv360AdvertiserId,
     demoMode,
     reloadTick,
+    strictWindow,
   ]);
 
   // Per-platform account currencies. Detect strictly from each platform's own

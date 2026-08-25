@@ -206,7 +206,7 @@ export default function DashboardReport({
   customEnd?: string;
 }) {
   const { campaigns, loading, metaCurrency, dv360Currency, startDate, endDate } =
-    useCampaigns(platform === "dv360" ? "dv360" : platform, dateRange, customStart, customEnd);
+    useCampaigns(platform === "dv360" ? "dv360" : platform, dateRange, customStart, customEnd, true /* strictWindow */);
   const { demoMode } = useAuthStore();
 
   // planPlatform removed — always show both platforms
@@ -376,10 +376,23 @@ export default function DashboardReport({
                       )}
                       {i > 0 && prevPc === null && <div className="w-3" />}
                       <div className={`flex-1 min-w-[120px] text-center border border-gray-200 bg-white py-3 px-2 ${i === 0 ? "rounded-l-lg" : ""} ${i === HERO_METRICS.length - 1 ? "rounded-r-lg" : ""}`}>
-                        <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1">{m.label}</div>
+                        <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1 flex items-center justify-center gap-1">
+                          {m.label}
+                          {m.key === "reach" && dv360Campaigns.length > 0 && (
+                            <span
+                              className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-gray-200 text-gray-600 text-[9px] font-bold cursor-help"
+                              title="DV360 unique reach is fetched over a wide window (flight-level) because Google's REACH reports return empty for short windows. Spend and Impressions honor the date picker; Reach reflects the campaign's flight."
+                            >
+                              i
+                            </span>
+                          )}
+                        </div>
                         <div className={`font-extrabold tabular-nums ${i === 0 ? "text-2xl text-[#0072F0]" : "text-lg text-gray-900"}`}>
                           {m.kind === "money" ? fmtVal("money", val, cur) : fmtBig(val)}
                         </div>
+                        {m.key === "reach" && dv360Campaigns.length > 0 && (
+                          <div className="mt-1 text-[9px] text-gray-400 leading-tight">DV360 reach uses flight window</div>
+                        )}
                       </div>
                     </div>
                   );

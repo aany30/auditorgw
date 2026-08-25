@@ -138,7 +138,7 @@ export default async function handler(
     return;
   }
 
-  const { clientId, clientSecret, refreshToken, advertiserId, partnerId, startDate, endDate } = req.body || {};
+  const { clientId, clientSecret, refreshToken, advertiserId, partnerId, startDate, endDate, strictWindow } = req.body || {};
 
   if (!refreshToken || !advertiserId) {
     res.status(400).json({ error: "Missing refreshToken or advertiserId" });
@@ -634,8 +634,10 @@ export default async function handler(
       const liId = String(li.lineItemId);
       const m = liMetrics.get(liId) ?? emptyMetrics();
       // Fall back to all-time metrics when the window report has zero delivery
-      // (line item flight ended before the selected date range).
-      const useAllTime = !m.spend && !m.impressions && !m.clicks;
+      // (line item flight ended before the selected date range). Disabled when
+      // the caller passes strictWindow — Dashboard tab needs the picker to be
+      // honored strictly, or the KPIs collapse to lifetime and never change.
+      const useAllTime = !strictWindow && !m.spend && !m.impressions && !m.clicks;
       const at = useAllTime ? allTimeByLi.get(liId) : undefined;
       const liFlightStart = li.flight?.dateRange?.startDate ? rawDateToIso(li.flight.dateRange.startDate) : undefined;
       const liFlightEnd = li.flight?.dateRange?.endDate ? rawDateToIso(li.flight.dateRange.endDate) : undefined;
