@@ -8,7 +8,7 @@
  */
 
 import { useMemo, useState, useRef, useEffect } from "react";
-import { LayoutDashboard, Sparkles, Trash2, Save, ChevronDown, ChevronUp, X } from "lucide-react";
+import { LayoutDashboard, Sparkles, Trash2, Save, ChevronDown, ChevronUp, X, Info } from "lucide-react";
 import SmartNumberInput from "@/components/shared/SmartNumberInput";
 import type { DateRange } from "@/components/shared/DateRangePicker";
 import { useCampaigns } from "@/hooks/useCampaigns";
@@ -380,18 +380,37 @@ export default function DashboardReport({
                           {m.label}
                           {m.key === "reach" && dv360Campaigns.length > 0 && (
                             <span
-                              className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-gray-200 text-gray-600 text-[9px] font-bold cursor-help"
+                              className="inline-flex items-center justify-center cursor-help text-gray-400 hover:text-gray-600"
                               title="DV360 unique reach is fetched over a wide window (flight-level) because Google's REACH reports return empty for short windows. Spend and Impressions honor the date picker; Reach reflects the campaign's flight."
                             >
-                              i
+                              <Info className="w-3 h-3" />
+                            </span>
+                          )}
+                          {m.key === "frequency" && dv360Campaigns.length > 0 && overall.reach > overall.impressions && (
+                            <span
+                              className="inline-flex items-center justify-center cursor-help text-gray-400 hover:text-gray-600"
+                              title="Frequency is impressions ÷ reach. DV360 reach uses the campaign's flight window while impressions honor your date picker, so Frequency isn't meaningful when they don't match. Switch the picker to cover the full flight to see a real frequency."
+                            >
+                              <Info className="w-3 h-3" />
                             </span>
                           )}
                         </div>
                         <div className={`font-extrabold tabular-nums ${i === 0 ? "text-2xl text-[#0072F0]" : "text-lg text-gray-900"}`}>
-                          {m.kind === "money" ? fmtVal("money", val, cur) : fmtBig(val)}
+                          {m.kind === "money"
+                            ? fmtVal("money", val, cur)
+                            : m.key === "frequency"
+                              ? (overall.reach > overall.impressions
+                                  ? "—"
+                                  : val >= 1
+                                    ? val.toFixed(1)
+                                    : "—")
+                              : fmtBig(val)}
                         </div>
                         {m.key === "reach" && dv360Campaigns.length > 0 && (
                           <div className="mt-1 text-[9px] text-gray-400 leading-tight">DV360 reach uses flight window</div>
+                        )}
+                        {m.key === "frequency" && dv360Campaigns.length > 0 && overall.reach > overall.impressions && (
+                          <div className="mt-1 text-[9px] text-gray-400 leading-tight">reach & impressions windows differ</div>
                         )}
                       </div>
                     </div>
