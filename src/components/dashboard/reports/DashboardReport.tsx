@@ -32,8 +32,13 @@ interface Delivered {
   videoViews: number; frequency: number; cpm: number; ctr: number; vtr: number;
 }
 
-function baseDelivery(c: CampaignData) {
-  const useAllTime = c.platform === "dv360" && (c.allTimeSpend ?? 0) > 0 && c.spend === 0;
+function baseDelivery(c: CampaignData, allowAllTimeFallback = true) {
+  // DV360 has an "all-time" fallback so ended-flight campaigns still show
+  // real numbers on the default 30d view (window would otherwise be empty).
+  // When the user picks a specific window (custom date range or a preset),
+  // the caller can pass allowAllTimeFallback=false to honor the picker
+  // strictly — showing 0 rather than lifetime data outside the window.
+  const useAllTime = allowAllTimeFallback && c.platform === "dv360" && (c.allTimeSpend ?? 0) > 0 && c.spend === 0;
   return {
     spend: useAllTime ? (c.allTimeSpend ?? 0) : (c.spend ?? 0),
     impressions: useAllTime ? (c.allTimeImpressions ?? 0) : (c.impressions ?? 0),
@@ -53,10 +58,10 @@ function deriveDelivered(b: { spend: number; impressions: number; clicks: number
   };
 }
 
-function deliveredOfGroup(list: CampaignData[]): Delivered {
+function deliveredOfGroup(list: CampaignData[], allowAllTimeFallback = true): Delivered {
   let spend = 0, impressions = 0, clicks = 0, reach = 0, videoViews = 0;
   for (const c of list) {
-    const b = baseDelivery(c);
+    const b = baseDelivery(c, allowAllTimeFallback);
     spend += b.spend; impressions += b.impressions; clicks += b.clicks;
     reach += b.reach; videoViews += b.videoViews;
   }
@@ -229,9 +234,13 @@ export default function DashboardReport({
 
   const enrichedCampaigns = useMemo(() => [...metaCampaigns, ...dv360Campaigns], [metaCampaigns, dv360Campaigns]);
 
-  const overall = useMemo(() => deliveredOfGroup(enrichedCampaigns), [enrichedCampaigns]);
-  const metaD = useMemo(() => deliveredOfGroup(metaCampaigns), [metaCampaigns]);
-  const dvD = useMemo(() => deliveredOfGroup(dv360Campaigns), [dv360Campaigns]);
+  // When the user picks a custom date range, honor the picker strictly:
+  // no all-time fallback for DV360 ended-flight campaigns. Presets keep the
+  // fallback so the default view isn't full of zeros for old flights.
+  const allowFallback = dateRange !== "custom";
+  const overall = useMemo(() => deliveredOfGroup(enrichedCampaigns, allowFallback), [enrichedCampaigns, allowFallback]);
+  const metaD = useMemo(() => deliveredOfGroup(metaCampaigns, allowFallback), [metaCampaigns, allowFallback]);
+  const dvD = useMemo(() => deliveredOfGroup(dv360Campaigns, allowFallback), [dv360Campaigns, allowFallback]);
 
   const pacing = (key: string) => {
     const p = planned[key] || 0;
