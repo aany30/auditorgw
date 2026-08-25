@@ -73,6 +73,116 @@ const ratio = (a: number, b: number, suffix = "×") => (b > 0 && a > 0 ? `${(a /
 // Shared building blocks
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── BBD-style primitives ────────────────────────────────────────────────────
+// These match Flipkart's BBD "Digital Performance Report" template: bordered
+// KPI boxes in a strip, orange pacing circles between deliveries and targets,
+// blue-headered tables with white bar-chart marks inside cells, and green
+// heatmap cells for the Spend column of creative tables.
+
+const BBD_BLUE = "#3773F1";
+const BBD_ORANGE = "#F5A623";
+const BBD_BAR_BLUE = "#4A9EFF";
+const BBD_BAR_CYAN = "#5AC8D9";
+const BBD_BAR_PINK = "#EC4899";
+const BBD_BAR_GREEN = "#A3D96C";
+const BBD_HEAT_1 = "#DBF3D3";
+const BBD_HEAT_2 = "#A8E28C";
+const BBD_HEAT_3 = "#66C947";
+
+function BbdKpiBox({ label, value, active = true }: { label: string; value: string; active?: boolean }) {
+  return (
+    <div style={{
+      flex: 1, minWidth: 120,
+      border: `1.5px solid ${active ? BBD_BLUE : "#D6DEE9"}`,
+      borderRadius: 6,
+      padding: "10px 14px",
+      textAlign: "center",
+      background: "#FFFFFF",
+    }}>
+      <div style={{ fontSize: 10, color: MUTED, marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 22, fontWeight: 700, color: active ? "#111" : "#6B7280", lineHeight: 1.1 }}>{value}</div>
+    </div>
+  );
+}
+
+function BbdPacingCircle({ pct }: { pct: number | null }) {
+  if (pct === null || !Number.isFinite(pct)) return <div style={{ width: 44 }} />;
+  return (
+    <div style={{
+      width: 44, height: 44, borderRadius: 22,
+      background: BBD_ORANGE, color: "#FFF",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      fontSize: 12, fontWeight: 800,
+      boxShadow: "0 2px 4px rgba(0,0,0,0.15)",
+      flexShrink: 0, zIndex: 2, position: "relative",
+    }}>
+      {Math.round(pct)}%
+    </div>
+  );
+}
+
+/** Row that pairs a left-side label ("Overall Deliveries") with 4 KPI boxes.
+ *  When `pacingBelow` is provided, pacing circles overlap the box borders
+ *  between this row and the row below. */
+function BbdKpiRow({
+  label, values, active = true,
+}: { label: string; values: { label: string; value: string }[]; active?: boolean }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+      <div style={{ width: 160, fontSize: 14, fontWeight: 700, color: TEXT }}>{label}</div>
+      <div style={{ flex: 1, display: "flex", gap: 8 }}>
+        {values.map((v, i) => (
+          <BbdKpiBox key={i} label={v.label} value={v.value} active={active} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Table cell with a background bar sized to the value's share of the max. */
+function InlineBarCell({ value, max, color, formatted }: {
+  value: number; max: number; color: string; formatted: string;
+}) {
+  const pct = max > 0 ? Math.max(2, Math.min(100, (value / max) * 100)) : 0;
+  return (
+    <td style={{ padding: "6px 10px", position: "relative", fontSize: 11, textAlign: "right" }}>
+      <div style={{
+        position: "absolute", left: 8, right: 8, bottom: 4, top: "50%",
+        background: color, opacity: 0.85, borderRadius: 1,
+        width: `calc((100% - 16px) * ${pct / 100})`,
+        transformOrigin: "left center",
+      }} />
+      <span style={{ position: "relative", zIndex: 1 }}>{formatted}</span>
+    </td>
+  );
+}
+
+/** Green-heatmap cell for the Spend column of creative tables. */
+function HeatmapCell({ value, max, formatted }: { value: number; max: number; formatted: string }) {
+  const share = max > 0 ? value / max : 0;
+  const bg = share > 0.66 ? BBD_HEAT_3 : share > 0.33 ? BBD_HEAT_2 : share > 0 ? BBD_HEAT_1 : "transparent";
+  return (
+    <td style={{
+      padding: "6px 10px", background: bg, fontSize: 11, textAlign: "right", fontWeight: 600,
+    }}>{formatted}</td>
+  );
+}
+
+function BbdTableHeader({ cols }: { cols: string[] }) {
+  return (
+    <thead>
+      <tr style={{ background: BBD_BLUE, color: "#FFFFFF" }}>
+        {cols.map((c, i) => (
+          <th key={i} style={{
+            padding: "8px 10px", fontSize: 11, fontWeight: 700,
+            textAlign: i === 0 ? "left" : "right", whiteSpace: "nowrap",
+          }}>{c}</th>
+        ))}
+      </tr>
+    </thead>
+  );
+}
+
 function IconBadge({ Icon, color, size = 34 }: { Icon: IconType; color: string; size?: number }) {
   return (
     <div style={{
@@ -1355,6 +1465,194 @@ function TrackingPage(p: PdfReportPagesProps & { pageNum: number; total: number 
 // Root
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─── BBD-style Overview page (mirrors page 1 of the reference deck) ────────
+function BbdOverviewPage(p: PdfReportPagesProps & { pageNum: number; total: number }) {
+  const cur = p.currency || "INR";
+  const cs = p.campaigns || [];
+
+  // Totals
+  const totals = cs.reduce((a, c) => ({
+    spend: a.spend + (c.spend || 0),
+    impressions: a.impressions + (c.impressions || 0),
+    reach: a.reach + (c.reach || 0),
+    clicks: a.clicks + (c.clicks || 0),
+    videoViews: a.videoViews + (c.videoViews || 0),
+  }), { spend: 0, impressions: 0, reach: 0, clicks: 0, videoViews: 0 });
+  const freq = totals.reach > 0 ? totals.impressions / totals.reach : 0;
+
+  // Planned target row — read from the same localStorage key the Dashboard tab uses.
+  // On server render (headless PDF) this is unavailable, so we fall back to `—`.
+  let plannedTotals = { spend: 0, impressions: 0, reach: 0, freq: 0 } as { spend: number; impressions: number; reach: number; freq: number };
+  try {
+    if (typeof window !== "undefined") {
+      const raw = window.localStorage.getItem("dashboard-planned-overall");
+      const parsed = raw ? JSON.parse(raw) : null;
+      if (parsed) plannedTotals = {
+        spend: Number(parsed.spend || 0),
+        impressions: Number(parsed.impressions || 0),
+        reach: Number(parsed.reach || 0),
+        freq: Number(parsed.frequency || 0),
+      };
+    }
+  } catch { /* ignore */ }
+
+  const pacing = (delivered: number, planned: number): number | null =>
+    planned > 0 ? Math.round((delivered / planned) * 100) : null;
+
+  // Platform-Wise Performance: group campaigns by platform.
+  const platforms: Record<string, { spend: number; impressions: number; reach: number; clicks: number; videoViews: number; }> = {};
+  for (const c of cs) {
+    const key = c.platform === "meta" ? "Meta" : c.platform === "dv360" ? "Google (DV360)" : (c.platform || "Other");
+    if (!platforms[key]) platforms[key] = { spend: 0, impressions: 0, reach: 0, clicks: 0, videoViews: 0 };
+    platforms[key].spend += c.spend || 0;
+    platforms[key].impressions += c.impressions || 0;
+    platforms[key].reach += c.reach || 0;
+    platforms[key].clicks += c.clicks || 0;
+    platforms[key].videoViews += c.videoViews || 0;
+  }
+  const platformRows = Object.entries(platforms).sort((a, b) => b[1].spend - a[1].spend);
+  const maxPlatSpend = Math.max(1, ...platformRows.map(([, v]) => v.spend));
+  const maxPlatImpr = Math.max(1, ...platformRows.map(([, v]) => v.impressions));
+  const maxPlatReach = Math.max(1, ...platformRows.map(([, v]) => v.reach));
+
+  // Objective-wise as "Audience Wise Performance" — group by campaign.objective (best available proxy for audience).
+  const byObj: Record<string, { spend: number; impressions: number; reach: number; clicks: number; videoViews: number; count: number }> = {};
+  for (const c of cs) {
+    const key = (c.objective || "Unspecified");
+    if (!byObj[key]) byObj[key] = { spend: 0, impressions: 0, reach: 0, clicks: 0, videoViews: 0, count: 0 };
+    byObj[key].spend += c.spend || 0;
+    byObj[key].impressions += c.impressions || 0;
+    byObj[key].reach += c.reach || 0;
+    byObj[key].clicks += c.clicks || 0;
+    byObj[key].videoViews += c.videoViews || 0;
+    byObj[key].count++;
+  }
+  const audRows = Object.entries(byObj).sort((a, b) => b[1].spend - a[1].spend).slice(0, 10);
+  const maxAudSpend = Math.max(1, ...audRows.map(([, v]) => v.spend));
+  const maxAudImpr = Math.max(1, ...audRows.map(([, v]) => v.impressions));
+  const maxAudReach = Math.max(1, ...audRows.map(([, v]) => v.reach));
+
+  return (
+    <div style={page}>
+      <div style={{ padding: "24px 32px 32px", height: "100%", display: "flex", flexDirection: "column", gap: 14 }}>
+        {/* Title strip with two rows separated by pacing circles */}
+        <div style={{ position: "relative" }}>
+          <BbdKpiRow
+            label="Overall Deliveries"
+            values={[
+              { label: "Net Spends", value: formatMoney(totals.spend, cur, 0) },
+              { label: "Impression", value: fmtBig(totals.impressions) },
+              { label: "Reach", value: fmtBig(totals.reach) },
+              { label: "Freq", value: freq >= 1 ? freq.toFixed(2) : "—" },
+            ]}
+          />
+          {/* Pacing circles */}
+          <div style={{
+            position: "absolute", left: 160, right: 0, top: "50%", height: 44,
+            transform: "translateY(-50%)", display: "flex", gap: 8, alignItems: "center",
+            pointerEvents: "none", zIndex: 3,
+          }}>
+            <div style={{ flex: 1 }} />
+            {[
+              pacing(totals.spend, plannedTotals.spend),
+              pacing(totals.impressions, plannedTotals.impressions),
+              pacing(totals.reach, plannedTotals.reach),
+              pacing(freq, plannedTotals.freq),
+            ].map((pc, i) => (
+              <React.Fragment key={i}>
+                <div style={{ marginLeft: -22, marginRight: -22 }}><BbdPacingCircle pct={pc} /></div>
+                {i < 3 && <div style={{ flex: 1 }} />}
+              </React.Fragment>
+            ))}
+            <div style={{ width: 8 }} />
+          </div>
+          <div style={{ height: 12 }} />
+          <BbdKpiRow
+            label="Overall Targets"
+            active={false}
+            values={[
+              { label: "Net Spends", value: plannedTotals.spend > 0 ? formatMoney(plannedTotals.spend, cur, 0) : "—" },
+              { label: "Impression", value: plannedTotals.impressions > 0 ? fmtBig(plannedTotals.impressions) : "—" },
+              { label: "Reach", value: plannedTotals.reach > 0 ? fmtBig(plannedTotals.reach) : "—" },
+              { label: "Freq", value: plannedTotals.freq > 0 ? plannedTotals.freq.toFixed(2) : "—" },
+            ]}
+          />
+        </div>
+
+        {/* Platform Wise Performance */}
+        <div style={{ marginTop: 6 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: TEXT, marginBottom: 6 }}>Platform Wise Performance</div>
+          <table style={{ width: "100%", borderCollapse: "collapse", background: "#FFFFFF", border: `1px solid ${CARD_BORDER}` }}>
+            <BbdTableHeader cols={["Platforms", "Net Spends", "Impressions", "Reach", "Frequency", "VTR %", "CTR %", "eCPM"]} />
+            <tbody>
+              {platformRows.map(([name, v]) => {
+                const f = v.reach > 0 ? v.impressions / v.reach : 0;
+                const vtr = v.impressions > 0 ? (v.videoViews / v.impressions) * 100 : 0;
+                const ctr = v.impressions > 0 ? (v.clicks / v.impressions) * 100 : 0;
+                const cpm = v.impressions > 0 ? (v.spend / v.impressions) * 1000 : 0;
+                return (
+                  <tr key={name} style={{ borderBottom: `1px solid ${CARD_BORDER}` }}>
+                    <td style={{ padding: "6px 10px", fontSize: 11, fontWeight: 600 }}>{name}</td>
+                    <InlineBarCell value={v.spend} max={maxPlatSpend} color={BBD_BAR_BLUE} formatted={formatMoney(v.spend, cur, 0)} />
+                    <InlineBarCell value={v.impressions} max={maxPlatImpr} color={BBD_BAR_CYAN} formatted={fmtInt(v.impressions)} />
+                    <InlineBarCell value={v.reach} max={maxPlatReach} color={BBD_BAR_PINK} formatted={fmtInt(v.reach)} />
+                    <td style={{ padding: "6px 10px", fontSize: 11, textAlign: "right" }}>{f > 0 ? f.toFixed(2) : "—"}</td>
+                    <td style={{ padding: "6px 10px", fontSize: 11, textAlign: "right" }}>{vtr > 0 ? `${vtr.toFixed(2)}%` : "—"}</td>
+                    <td style={{ padding: "6px 10px", fontSize: 11, textAlign: "right" }}>{ctr > 0 ? `${ctr.toFixed(2)}%` : "—"}</td>
+                    <td style={{ padding: "6px 10px", fontSize: 11, textAlign: "right" }}>{cpm > 0 ? formatMoney(cpm, cur, 0) : "—"}</td>
+                  </tr>
+                );
+              })}
+              <tr style={{ background: "#F7F9FC", fontWeight: 700 }}>
+                <td style={{ padding: "6px 10px", fontSize: 11 }}>Grand total</td>
+                <td style={{ padding: "6px 10px", fontSize: 11, textAlign: "right" }}>{formatMoney(totals.spend, cur, 0)}</td>
+                <td style={{ padding: "6px 10px", fontSize: 11, textAlign: "right" }}>{fmtInt(totals.impressions)}</td>
+                <td style={{ padding: "6px 10px", fontSize: 11, textAlign: "right" }}>{fmtInt(totals.reach)}</td>
+                <td style={{ padding: "6px 10px", fontSize: 11, textAlign: "right" }}>{freq > 0 ? freq.toFixed(2) : "—"}</td>
+                <td colSpan={2} />
+                <td style={{ padding: "6px 10px", fontSize: 11, textAlign: "right" }}>{totals.impressions > 0 ? formatMoney((totals.spend / totals.impressions) * 1000, cur, 0) : "—"}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        {/* Audience Wise Performance (uses campaign objective as the group key) */}
+        <div style={{ flex: 1, minHeight: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: TEXT, marginBottom: 6 }}>Audience Wise Performance</div>
+          <table style={{ width: "100%", borderCollapse: "collapse", background: "#FFFFFF", border: `1px solid ${CARD_BORDER}` }}>
+            <BbdTableHeader cols={["Audience", "Net Spends", "Impressions", "Reach", "Frequency", "eCPM"]} />
+            <tbody>
+              {audRows.map(([name, v]) => {
+                const f = v.reach > 0 ? v.impressions / v.reach : 0;
+                const cpm = v.impressions > 0 ? (v.spend / v.impressions) * 1000 : 0;
+                return (
+                  <tr key={name} style={{ borderBottom: `1px solid ${CARD_BORDER}` }}>
+                    <td style={{ padding: "6px 10px", fontSize: 11, fontWeight: 600, maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</td>
+                    <InlineBarCell value={v.spend} max={maxAudSpend} color={BBD_BAR_BLUE} formatted={formatMoney(v.spend, cur, 0)} />
+                    <InlineBarCell value={v.impressions} max={maxAudImpr} color={BBD_BAR_CYAN} formatted={fmtInt(v.impressions)} />
+                    <InlineBarCell value={v.reach} max={maxAudReach} color={BBD_BAR_PINK} formatted={fmtInt(v.reach)} />
+                    <td style={{ padding: "6px 10px", fontSize: 11, textAlign: "right" }}>{f > 0 ? f.toFixed(2) : "—"}</td>
+                    <td style={{ padding: "6px 10px", fontSize: 11, textAlign: "right" }}>{cpm > 0 ? formatMoney(cpm, cur, 0) : "—"}</td>
+                  </tr>
+                );
+              })}
+              <tr style={{ background: "#F7F9FC", fontWeight: 700 }}>
+                <td style={{ padding: "6px 10px", fontSize: 11 }}>Grand total</td>
+                <td style={{ padding: "6px 10px", fontSize: 11, textAlign: "right" }}>{formatMoney(totals.spend, cur, 0)}</td>
+                <td style={{ padding: "6px 10px", fontSize: 11, textAlign: "right" }}>{fmtInt(totals.impressions)}</td>
+                <td style={{ padding: "6px 10px", fontSize: 11, textAlign: "right" }}>{fmtInt(totals.reach)}</td>
+                <td style={{ padding: "6px 10px", fontSize: 11, textAlign: "right" }}>{freq > 0 ? freq.toFixed(2) : "—"}</td>
+                <td style={{ padding: "6px 10px", fontSize: 11, textAlign: "right" }}>{totals.impressions > 0 ? formatMoney((totals.spend / totals.impressions) * 1000, cur, 0) : "—"}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <PageFooter dateRange={`${p.startDate} – ${p.endDate}`} pageNum={p.pageNum} total={p.total} />
+    </div>
+  );
+}
+
 export default function PdfReportPages(props: PdfReportPagesProps) {
   const length: ReportLength = props.length ?? "standard";
   const hasNarrative = !!props.narrative && !!props.narrative.execSummary;
@@ -1388,6 +1686,14 @@ export default function PdfReportPages(props: PdfReportPagesProps) {
   // Dynamic page numbering
   let n = 2; // cover is 1
   const pages: React.ReactNode[] = [<CoverPage key="cover" {...props} />];
+
+  // BBD-style Overview page — matches the reference deck's page 1 layout
+  // (deliveries + targets with pacing circles, Platform Wise Performance,
+  // Audience Wise Performance). Always included when campaigns are present.
+  if (props.campaigns.length > 0) {
+    pages.push(<BbdOverviewPage key="bbd-overview" {...props} pageNum={n} total={0} />);
+    n++;
+  }
 
   if (inc.ai)       { pages.push(<AiAnalysisPage key="ai" {...props} pageNum={n} total={0} />); n++; }
   if (inc.budget)   { pages.push(<BudgetPage key="budget" {...props} pageNum={n} total={0} />); n++; }
