@@ -2738,8 +2738,15 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
   // Plain-SVG chart string builders for the print-window PDF (no React here —
   // this whole deck is a template string handed to window.print()). Mirrors
   // the same per-series independent scaling used by the app's other charts.
+  // Compact number formatter for axis labels (svgLine/svgGroupedBar live
+  // outside downloadPdf's scope, so they can't reach its own fBig/f helpers).
+  const axisFmt = (n: number) => n >= 1e9 ? `${(n/1e9).toFixed(1)}B` : n >= 1e6 ? `${(n/1e6).toFixed(1)}M` : n >= 1e3 ? `${(n/1e3).toFixed(1)}K` : Math.round(n).toString();
   const svgLine = (series: { name: string; color: string; points: number[] }[], labels: string[], w = 900, h = 190) => {
-    const padL = 8, padR = 8, padT = 12, padB = 24;
+    // Each series keeps its own independent scale (values can be wildly
+    // different, e.g. Spend vs Impressions) — so each gets its own Y-axis
+    // labels, left axis for the first series and right axis for the second,
+    // colored to match, same convention as the reference deck's dual-axis charts.
+    const padL = 34, padR = series.length > 1 ? 38 : 10, padT = 12, padB = 24;
     const innerW = w - padL - padR, innerH = h - padT - padB;
     const n = Math.max(labels.length, 1);
     const x = (i: number) => padL + (n === 1 ? innerW / 2 : (i / (n - 1)) * innerW);
@@ -2751,10 +2758,22 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
       const dots = s.points.map((v, i) => `<circle cx="${x(i)}" cy="${y(v)}" r="2.4" fill="${s.color}"/>`).join("");
       return `<polyline points="${pts}" fill="none" stroke="${s.color}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>${dots}`;
     }).join("");
+    // Y-axis value labels — series[0] on the left, series[1] on the right.
+    const yAxisLabels = series.slice(0, 2).map((s, si) => {
+      const max = Math.max(...s.points, 1), min = Math.min(...s.points, 0);
+      const isRight = si === 1;
+      const xPos = isRight ? w - padR + 6 : padL - 6;
+      const anchor = isRight ? "start" : "end";
+      return [0, 0.5, 1].map((g) => {
+        const v = max - g * (max - min);
+        const yPos = padT + g * innerH;
+        return `<text x="${xPos}" y="${yPos + 3}" font-size="8.5" fill="${s.color}" text-anchor="${anchor}">${axisFmt(v)}</text>`;
+      }).join("");
+    }).join("");
     const step = Math.max(1, Math.ceil(labels.length / 8));
     const xLabels = labels.map((l, i) => (i % step === 0 || i === labels.length - 1) ? `<text x="${x(i)}" y="${h - 6}" font-size="9" fill="#94A3B8" text-anchor="middle">${l}</text>` : "").join("");
     const legend = series.map((s, i) => `<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-size:10px;color:#5f6368;font-weight:600"><span style="width:8px;height:8px;border-radius:50%;background:${s.color};display:inline-block"></span>${s.name}</span>`).join("");
-    return `<div style="margin-bottom:4px">${legend}</div><svg width="100%" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet">${grid}${lines}${xLabels}</svg>`;
+    return `<div style="margin-bottom:4px">${legend}</div><svg width="100%" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet">${grid}${lines}${yAxisLabels}${xLabels}</svg>`;
   };
   const svgGroupedBar = (data: { label: string; values: [number, number] }[], names: [string, string], colors: [string, string], fmt: (n: number) => string, h = 170) => {
     const max = Math.max(...data.flatMap((d) => d.values), 1);
