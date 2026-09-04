@@ -36,7 +36,7 @@ import { useAuthStore } from "@/store/auth";
 import { toDisplayCredits } from "@/lib/ai-cost";
 import { formatMoney } from "@/lib/currency";
 import type { CampaignData, AdSetData } from "@/types";
-import type { PlanGroup, SavedPlanStoreV2, DrillPathEntry } from "@/types/planning";
+import type { PlanGroup, SavedPlanStoreV2, DrillPathEntry, AggComboSelection, AggPlanGroup, AggPlanGroupStore } from "@/types/planning";
 import SmartNumberInput from "@/components/shared/SmartNumberInput";
 
 interface Props {
@@ -1661,6 +1661,18 @@ function deliveredFromRow(r?: { spend: number; impressions: number; clicks: numb
     vtr: impressions > 0 && videoViews > 0 ? (videoViews / impressions) * 100 : 0,
   };
 }
+// Sum several rows (e.g. multiple selected channels/formats) into one Delivered —
+// used when the user multi-selects values to view them combined.
+function sumRowsDelivered(rows: Array<{ spend: number; impressions: number; clicks: number; reach?: number; videoViews?: number }>): Delivered {
+  const b = rows.reduce<{ spend: number; impressions: number; clicks: number; reach: number; videoViews: number }>(
+    (a, r) => ({
+      spend: a.spend + (r.spend || 0), impressions: a.impressions + (r.impressions || 0),
+      clicks: a.clicks + (r.clicks || 0), reach: a.reach + (r.reach || 0), videoViews: a.videoViews + (r.videoViews || 0),
+    }),
+    { spend: 0, impressions: 0, clicks: 0, reach: 0, videoViews: 0 }
+  );
+  return deriveDelivered(b);
+}
 const META_PUB_LABEL: Record<string, string> = {
   facebook: "Facebook", instagram: "Instagram", audience_network: "Audience Network", messenger: "Messenger",
 };
@@ -1710,7 +1722,9 @@ interface AggSnapshot {
   id: string; at: number; dateLabel: string; scope: string;
   // Captured view so "Edit" can restore the inputs where they were entered.
   groupBy?: AggGroupBy;
-  sel?: { metaChannel: string; dv360Channel: string; metaObjective: string; dv360Objective: string; metaCreative?: string; dv360Creative?: string };
+  // Widened to string | string[] so snapshots saved before multi-select shipped
+  // (plain strings) still load without throwing — see editSnapshot's normalizer.
+  sel?: { metaChannel: string | string[]; dv360Channel: string | string[]; metaObjective: string | string[]; dv360Objective: string | string[]; metaCreative?: string | string[]; dv360Creative?: string | string[] };
   rows: { key?: string; label: string; sub?: string; gcur: string; metrics: { key: string; planned: number; delivered: number }[] }[];
 }
 
@@ -1926,6 +1940,241 @@ export function DailyTrendCharts({ dateRange: parentRange, customStart, customEn
   );
 }
 
+// Shared metric table used by both the main Aggregate rows and the extra combo
+// panels below — one place to keep planned/delivered/pacing rendering in sync.
+function AggMetricsTable({
+  title, sub, gcur, delivered, planned, onPlanChange, headerRight, countLabel,
+}: {
+  title: string; sub?: string; gcur: string; delivered: Delivered;
+  planned: Record<string, number>; onPlanChange: (metric: string, value: number) => void;
+  headerRight?: React.ReactNode; countLabel?: string;
+}) {
+  return (
+    <div className="rounded-lg border border-gray-200 overflow-hidden">
+      <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100 flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-sm font-bold text-gray-900">{title}</span>
+          {sub && <span className="text-[11px] text-gray-400 truncate">· {sub}</span>}
+        </div>
+        <div className="flex items-center gap-3 shrink-0">
+          {headerRight}
+          {countLabel && <span className="text-[11px] text-gray-400">{countLabel}</span>}
+        </div>
+      </div>
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-gray-100 bg-white">
+            <th className="px-4 py-2 text-left text-[10px] uppercase font-semibold text-gray-500">Metric</th>
+            <th className="px-3 py-2 text-right text-[10px] uppercase font-semibold text-gray-500 w-40">Planned</th>
+            <th className="px-3 py-2 text-right text-[10px] uppercase font-semibold text-gray-500">Delivered</th>
+            <th className="px-3 py-2 text-right text-[10px] uppercase font-semibold text-gray-500">Pacing</th>
+          </tr>
+        </thead>
+        <tbody>
+          {AGG_METRICS.map((m) => {
+            const p = planned[m.key] ?? 0;
+            const dv = deliveredMetric(delivered, m.key);
+            const pace = pacingBadge(p, dv);
+            return (
+              <tr key={m.key} className="border-b border-gray-50 last:border-0">
+                <td className="px-4 py-2 text-gray-700">
+                  {m.label}
+                  {m.key === "reach" && <Tip text="Sum of per-campaign reach — may include overlap across campaigns"><span className="ml-1 text-[10px] text-gray-400 cursor-help">ⓘ</span></Tip>}
+                </td>
+                <td className="px-3 py-2">
+                  <SmartNumberInput
+                    value={p}
+                    onChange={(v) => onPlanChange(m.key, v)}
+                    deliveredHint={dv}
+                    kind={m.kind}
+                    currencySymbol={m.kind === "money" ? (gcur === "USD" ? "$" : "₹") : undefined}
+                    className="w-28 shrink-0 text-right text-sm border border-gray-200 rounded-md px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                  />
+                </td>
+                <td className="px-3 py-2 text-right font-semibold text-gray-900 whitespace-nowrap">
+                  {fmtMetric(m.kind, dv, gcur) === "—" && DASH_REASON[m.key]
+                    ? <Tip text={DASH_REASON[m.key]}><span className="text-gray-400 cursor-help">—</span></Tip>
+                    : fmtMetric(m.kind, dv, gcur)}
+                </td>
+                <td className={`px-3 py-2 text-right font-semibold whitespace-nowrap ${pace.cls}`}>{pace.text}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ─── Combo panel for Channel/Objective/Creative — the "+ Add another" extra
+// row. Each panel is fully independent: its own multi-select per platform,
+// its own planned values (local state, never shared — see the deep-dive
+// panel fix this mirrors), its own Save + Explain-the-gap. `onStateChange`
+// mirrors the panel's live selection/planned into the parent via a ref so
+// "Save all" can serialize every currently-open panel without lifting state
+// up (which would reintroduce the shared-state bug fixed for deep-dive panels).
+function AggComboPanel({
+  panelId, dimension, hasMeta, hasDv,
+  metaOptions, dv360Options, metaOptionsLoading, dv360OptionsLoading,
+  metaEntityLabel, dv360EntityLabel, metaAllLabel, dv360AllLabel,
+  initialMetaValues, initialDv360Values, initialPlannedMeta, initialPlannedDv360,
+  computeDelivered, metaCurrency, dv360Currency, dateRange, onRemove, onStateChange, onSavePanel,
+}: {
+  panelId: string;
+  dimension: "channel" | "objective" | "creative";
+  hasMeta: boolean; hasDv: boolean;
+  metaOptions: { id: string; name: string }[];
+  dv360Options: { id: string; name: string }[];
+  metaOptionsLoading: boolean; dv360OptionsLoading: boolean;
+  metaEntityLabel: string; dv360EntityLabel: string;
+  metaAllLabel: string; dv360AllLabel: string;
+  initialMetaValues: string[]; initialDv360Values: string[];
+  initialPlannedMeta: Record<string, number>; initialPlannedDv360: Record<string, number>;
+  computeDelivered: (platform: "meta" | "dv360", values: string[]) => Delivered;
+  metaCurrency: string; dv360Currency: string; dateRange: DateRange;
+  onRemove: () => void;
+  onStateChange: (id: string, state: AggComboSelection) => void;
+  onSavePanel: (name: string, state: AggComboSelection) => void;
+}) {
+  const [metaValues, setMetaValues] = useState<string[]>(initialMetaValues);
+  const [dv360Values, setDv360Values] = useState<string[]>(initialDv360Values);
+  const [plannedMeta, setPlannedMeta] = useState<Record<string, number>>(initialPlannedMeta);
+  const [plannedDv360, setPlannedDv360] = useState<Record<string, number>>(initialPlannedDv360);
+  const [saveNameDraft, setSaveNameDraft] = useState<string | null>(null);
+  const [justSaved, setJustSaved] = useState(false);
+
+  useEffect(() => {
+    onStateChange(panelId, { metaValues, dv360Values, plannedMeta, plannedDv360 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [metaValues, dv360Values, plannedMeta, plannedDv360]);
+
+  const metaDelivered = computeDelivered("meta", metaValues);
+  const dv360Delivered = computeDelivered("dv360", dv360Values);
+  const platform: "meta" | "dv360" | "both" = hasMeta && hasDv ? "both" : hasMeta ? "meta" : "dv360";
+  const combinedPlanned: Record<string, number> = {};
+  const combinedDelivered: Record<string, number> = {};
+  const pacing: Record<string, number | null> = {};
+  for (const m of AGG_METRICS) {
+    const p = (hasMeta ? plannedMeta[m.key] || 0 : 0) + (hasDv ? plannedDv360[m.key] || 0 : 0);
+    const d = (hasMeta ? deliveredMetric(metaDelivered, m.key) : 0) + (hasDv ? deliveredMetric(dv360Delivered, m.key) : 0);
+    combinedPlanned[m.key] = p; combinedDelivered[m.key] = d;
+    pacing[m.key] = p > 0 ? Math.round((d / p) * 100) : null;
+  }
+  const label = dimension === "channel" ? "channel" : dimension === "objective" ? "objective" : "creative format";
+  const panelLabel = [
+    metaValues.length > 0 ? `Meta: ${metaValues.length} ${label}${metaValues.length === 1 ? "" : "s"}` : null,
+    dv360Values.length > 0 ? `DV360: ${dv360Values.length} ${label}${dv360Values.length === 1 ? "" : "s"}` : null,
+  ].filter(Boolean).join(" · ") || "All values";
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
+      <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h4 className="text-sm font-bold text-gray-900">Combo view</h4>
+          <p className="text-[11px] text-gray-400 mt-0.5">{panelLabel}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          {saveNameDraft !== null ? (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const trimmed = saveNameDraft.trim();
+                if (trimmed) {
+                  onSavePanel(trimmed, { metaValues, dv360Values, plannedMeta, plannedDv360 });
+                  setJustSaved(true);
+                  setTimeout(() => setJustSaved(false), 2000);
+                }
+                setSaveNameDraft(null);
+              }}
+              className="inline-flex items-center gap-1.5"
+            >
+              <input
+                autoFocus
+                value={saveNameDraft}
+                onChange={(e) => setSaveNameDraft(e.target.value)}
+                placeholder="Plan name"
+                className="px-2 py-1 text-xs border border-blue-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-200 w-40"
+                onKeyDown={(e) => { if (e.key === "Escape") setSaveNameDraft(null); }}
+              />
+              <button type="submit" className="px-2 py-1 text-xs font-semibold bg-blue-600 text-white rounded-md hover:bg-blue-700">Save</button>
+              <button type="button" onClick={() => setSaveNameDraft(null)} className="px-2 py-1 text-xs font-semibold text-gray-500 hover:text-gray-700">Cancel</button>
+            </form>
+          ) : (
+            <button
+              onClick={() => setSaveNameDraft(`${panelLabel} plan`)}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border shadow-sm transition ${
+                justSaved ? "bg-green-50 border-green-300 text-green-700" : "bg-blue-600 border-blue-600 text-white hover:bg-blue-700"
+              }`}
+            >
+              <Save className="w-3.5 h-3.5" />
+              {justSaved ? "Saved ✓" : "Save plan"}
+            </button>
+          )}
+          <GapInsight
+            campaign={`Combo — ${panelLabel}`}
+            planned={combinedPlanned}
+            delivered={combinedDelivered}
+            pacing={pacing}
+            dateRange={String(dateRange)}
+            platform={platform}
+          />
+          <button
+            onClick={onRemove}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium text-gray-400 hover:text-red-600 hover:bg-red-50 transition"
+            title="Remove this combo view"
+          >
+            <X className="w-3.5 h-3.5" /> Remove
+          </button>
+        </div>
+      </div>
+      <div className="p-5 space-y-4">
+        {hasMeta && (
+          <AggMetricsTable
+            title="Meta"
+            sub={metaValues.length === 0 ? metaAllLabel : `${metaValues.length} selected`}
+            gcur={metaCurrency}
+            delivered={metaDelivered}
+            planned={plannedMeta}
+            onPlanChange={(metric, value) => setPlannedMeta((prev) => ({ ...prev, [metric]: value }))}
+            headerRight={
+              <CampaignMultiPicker
+                options={metaOptions}
+                values={metaValues}
+                onChange={setMetaValues}
+                allLabelText={metaAllLabel}
+                loading={metaOptionsLoading}
+                entityLabel={metaEntityLabel}
+                icon={null}
+              />
+            }
+          />
+        )}
+        {hasDv && (
+          <AggMetricsTable
+            title="DV360"
+            sub={dv360Values.length === 0 ? dv360AllLabel : `${dv360Values.length} selected`}
+            gcur={dv360Currency}
+            delivered={dv360Delivered}
+            planned={plannedDv360}
+            onPlanChange={(metric, value) => setPlannedDv360((prev) => ({ ...prev, [metric]: value }))}
+            headerRight={
+              <CampaignMultiPicker
+                options={dv360Options}
+                values={dv360Values}
+                onChange={setDv360Values}
+                allLabelText={dv360AllLabel}
+                loading={dv360OptionsLoading}
+                entityLabel={dv360EntityLabel}
+                icon={null}
+              />
+            }
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Currency, dateRange, customStart, customEnd, strictWindow = false }: {
   campaigns: CampaignData[]; loading: boolean; metaCurrency: string; dv360Currency: string;
   dateRange: DateRange; customStart?: string; customEnd?: string;
@@ -1934,15 +2183,121 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
 }) {
   const [groupBy, setGroupBy] = useState<AggGroupBy>("overall");
   const [planned, setPlanned] = usePersistentJSON<AggPlanned>("planning-agg", {});
-  const [metaChannel, setMetaChannel] = useState("all");
-  const [dv360Channel, setDv360Channel] = useState("all");
-  const [metaObjective, setMetaObjective] = useState("all");
-  const [dv360Objective, setDv360Objective] = useState("all");
-  const [metaCreative, setMetaCreative] = useState("all");
-  const [dv360Creative, setDv360Creative] = useState("all");
+  // Multi-select per platform per dimension — empty array = "all". Lets you
+  // combine multiple values (e.g. Facebook + Instagram + WhatsApp) into one
+  // aggregated planned-vs-delivered row, same idea as the campaign deep-dive.
+  const [metaChannel, setMetaChannel] = useState<string[]>([]);
+  const [dv360Channel, setDv360Channel] = useState<string[]>([]);
+  const [metaObjective, setMetaObjective] = useState<string[]>([]);
+  const [dv360Objective, setDv360Objective] = useState<string[]>([]);
+  const [metaCreative, setMetaCreative] = useState<string[]>([]);
+  const [dv360Creative, setDv360Creative] = useState<string[]>([]);
   const [snapshots, setSnapshots] = usePersistentJSON<AggSnapshot[]>("planning-agg-snapshots", []);
   const [openSnap, setOpenSnap] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // ── Extra combo panels + Saved Plans, one independent set per dimension ──
+  // (Channel / Objective / Creative). Overall and Audience are unaffected.
+  const [channelExtraPanels, setChannelExtraPanels] = useState<{ id: string; initial?: AggComboSelection }[]>([]);
+  const [objectiveExtraPanels, setObjectiveExtraPanels] = useState<{ id: string; initial?: AggComboSelection }[]>([]);
+  const [creativeExtraPanels, setCreativeExtraPanels] = useState<{ id: string; initial?: AggComboSelection }[]>([]);
+  // Live mirror of each mounted extra panel's current selection/planned values,
+  // written by the panel itself via onStateChange. Read only at save-time —
+  // never written back into the panel except through its `initial*` props on
+  // (re)mount, so this can never stomp a panel's own in-progress edits.
+  const channelPanelStates = useRef<Record<string, AggComboSelection>>({});
+  const objectivePanelStates = useRef<Record<string, AggComboSelection>>({});
+  const creativePanelStates = useRef<Record<string, AggComboSelection>>({});
+
+  const [channelPlanGroups, setChannelPlanGroups] = usePersistentJSON<AggPlanGroupStore>("planning-agg-groups-channel", { version: 1, groups: [] });
+  const [objectivePlanGroups, setObjectivePlanGroups] = usePersistentJSON<AggPlanGroupStore>("planning-agg-groups-objective", { version: 1, groups: [] });
+  const [creativePlanGroups, setCreativePlanGroups] = usePersistentJSON<AggPlanGroupStore>("planning-agg-groups-creative", { version: 1, groups: [] });
+  const [activeComboPlanId, setActiveComboPlanId] = useState<Record<"channel" | "objective" | "creative", string | null>>({ channel: null, objective: null, creative: null });
+  const [showComboSavedPlans, setShowComboSavedPlans] = useState<"channel" | "objective" | "creative" | null>(null);
+  const [renamingComboPlanId, setRenamingComboPlanId] = useState<string | null>(null);
+  const [renameComboValue, setRenameComboValue] = useState("");
+  const [saveAllComboName, setSaveAllComboName] = useState<"channel" | "objective" | "creative" | null>(null);
+  const [saveAllComboDraft, setSaveAllComboDraft] = useState("");
+
+  const comboDimensionState = (dimension: "channel" | "objective" | "creative") => {
+    if (dimension === "channel") return {
+      metaValues: metaChannel, dv360Values: dv360Channel, setMetaValues: setMetaChannel, setDv360Values: setDv360Channel,
+      extraPanels: channelExtraPanels, setExtraPanels: setChannelExtraPanels, panelStates: channelPanelStates,
+      planGroups: channelPlanGroups, setPlanGroups: setChannelPlanGroups,
+    };
+    if (dimension === "objective") return {
+      metaValues: metaObjective, dv360Values: dv360Objective, setMetaValues: setMetaObjective, setDv360Values: setDv360Objective,
+      extraPanels: objectiveExtraPanels, setExtraPanels: setObjectiveExtraPanels, panelStates: objectivePanelStates,
+      planGroups: objectivePlanGroups, setPlanGroups: setObjectivePlanGroups,
+    };
+    return {
+      metaValues: metaCreative, dv360Values: dv360Creative, setMetaValues: setMetaCreative, setDv360Values: setDv360Creative,
+      extraPanels: creativeExtraPanels, setExtraPanels: setCreativeExtraPanels, panelStates: creativePanelStates,
+      planGroups: creativePlanGroups, setPlanGroups: setCreativePlanGroups,
+    };
+  };
+
+  const mainComboKey = (dimension: "channel" | "objective" | "creative", platform: "meta" | "dv360", values: string[]) => {
+    const prefix = dimension === "channel" ? "channel" : dimension === "objective" ? "obj" : "creative";
+    return `${prefix}:${platform}:${values.length === 0 ? "all" : [...values].sort().join(",")}`;
+  };
+
+  const addComboPanel = (dimension: "channel" | "objective" | "creative") => {
+    const { setExtraPanels } = comboDimensionState(dimension);
+    setExtraPanels((prev) => [...prev, { id: `combo-${Date.now()}-${Math.random().toString(36).slice(2, 7)}` }]);
+  };
+  const removeComboPanel = (dimension: "channel" | "objective" | "creative", id: string) => {
+    const { setExtraPanels, panelStates } = comboDimensionState(dimension);
+    setExtraPanels((prev) => prev.filter((p) => p.id !== id));
+    delete panelStates.current[id];
+  };
+  const saveComboPlanGroup = (dimension: "channel" | "objective" | "creative", name: string, panels: AggComboSelection[]) => {
+    const { setPlanGroups } = comboDimensionState(dimension);
+    const group: AggPlanGroup = {
+      id: `agg-${dimension}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      name, dimension, panels, createdAt: Date.now(), updatedAt: Date.now(),
+    };
+    setPlanGroups((prev) => ({ ...prev, groups: [group, ...prev.groups] }));
+    setActiveComboPlanId((prev) => ({ ...prev, [dimension]: group.id }));
+  };
+  const loadComboPlanGroup = (dimension: "channel" | "objective" | "creative", group: AggPlanGroup) => {
+    const { setMetaValues, setDv360Values, setExtraPanels } = comboDimensionState(dimension);
+    const main = group.panels[0];
+    if (main) {
+      setMetaValues(main.metaValues);
+      setDv360Values(main.dv360Values);
+      setPlanned((prev) => ({
+        ...prev,
+        [mainComboKey(dimension, "meta", main.metaValues)]: main.plannedMeta,
+        [mainComboKey(dimension, "dv360", main.dv360Values)]: main.plannedDv360,
+      }));
+    }
+    setExtraPanels(group.panels.slice(1).map((panel, i) => ({
+      id: `combo-loaded-${Date.now()}-${i}`,
+      initial: panel,
+    })));
+    setActiveComboPlanId((prev) => ({ ...prev, [dimension]: group.id }));
+  };
+  const renameComboPlanGroup = (dimension: "channel" | "objective" | "creative", id: string, newName: string) => {
+    const { setPlanGroups } = comboDimensionState(dimension);
+    setPlanGroups((prev) => ({ ...prev, groups: prev.groups.map((g) => g.id === id ? { ...g, name: newName, updatedAt: Date.now() } : g) }));
+    setRenamingComboPlanId(null);
+  };
+  const removeComboPlanGroup = (dimension: "channel" | "objective" | "creative", id: string) => {
+    const { setPlanGroups } = comboDimensionState(dimension);
+    setPlanGroups((prev) => ({ ...prev, groups: prev.groups.filter((g) => g.id !== id) }));
+    setActiveComboPlanId((prev) => (prev[dimension] === id ? { ...prev, [dimension]: null } : prev));
+  };
+  const saveAllComboPlans = (dimension: "channel" | "objective" | "creative", name: string) => {
+    const { metaValues, dv360Values, extraPanels, panelStates } = comboDimensionState(dimension);
+    const mainPanel: AggComboSelection = {
+      metaValues, dv360Values,
+      plannedMeta: planned[mainComboKey(dimension, "meta", metaValues)] || {},
+      plannedDv360: planned[mainComboKey(dimension, "dv360", dv360Values)] || {},
+    };
+    const extras = extraPanels.map((p) => panelStates.current[p.id]).filter((s): s is AggComboSelection => !!s);
+    saveComboPlanGroup(dimension, name, [mainPanel, ...extras]);
+  };
 
   const metaCampaigns = useMemo(() => campaigns.filter((c) => c.platform === "meta"), [campaigns]);
   const dv360Campaigns = useMemo(() => campaigns.filter((c) => c.platform === "dv360"), [campaigns]);
@@ -2124,38 +2479,50 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
     if (groupBy === "channel") {
       const out: AggTable[] = [];
       if (hasMeta) {
-        const d = metaChannel === "all" ? deliveredOfGroup(metaCampaigns, strictWindow) : deliveredFromRow(metaPub.rows.find((r) => r.label === metaChannel));
-        out.push({ key: `channel:meta:${metaChannel}`, label: "Meta", sub: metaChannel === "all" ? "All channels" : metaPubLabel(metaChannel), count: metaCampaigns.length, delivered: d, gcur: metaCurrency, platform: "meta" });
+        const d = metaChannel.length === 0
+          ? deliveredOfGroup(metaCampaigns, strictWindow)
+          : sumRowsDelivered(metaPub.rows.filter((r) => metaChannel.includes(r.label)));
+        const sub = metaChannel.length === 0 ? "All channels" : metaChannel.map(metaPubLabel).join(" + ");
+        out.push({ key: mainComboKey("channel", "meta", metaChannel), label: "Meta", sub, count: metaCampaigns.length, delivered: d, gcur: metaCurrency, platform: "meta" });
       }
       if (hasDv) {
-        const d = dv360Channel === "all" ? deliveredOfGroup(dv360Campaigns, strictWindow) : deliveredFromRow(dvExch.rows.find((r) => r.label === dv360Channel));
-        out.push({ key: `channel:dv360:${dv360Channel}`, label: "DV360", sub: dv360Channel === "all" ? "All exchanges" : dv360Channel, count: dv360Campaigns.length, delivered: d, gcur: dv360Currency, platform: "dv360" });
+        const d = dv360Channel.length === 0
+          ? deliveredOfGroup(dv360Campaigns, strictWindow)
+          : sumRowsDelivered(dvExch.rows.filter((r) => dv360Channel.includes(r.label)));
+        const sub = dv360Channel.length === 0 ? "All exchanges" : dv360Channel.join(" + ");
+        out.push({ key: mainComboKey("channel", "dv360", dv360Channel), label: "DV360", sub, count: dv360Campaigns.length, delivered: d, gcur: dv360Currency, platform: "dv360" });
       }
       return out;
     }
     if (groupBy === "objective") {
       const out: AggTable[] = [];
       if (hasMeta) {
-        const mc = metaObjective === "all" ? metaCampaigns : metaCampaigns.filter((c) => prettyObjective(c.objective) === metaObjective);
-        out.push({ key: `obj:meta:${metaObjective}`, label: "Meta", sub: metaObjective === "all" ? "All objectives" : metaObjective, count: mc.length, delivered: deliveredOfGroup(mc, strictWindow), gcur: metaCurrency, platform: "meta" });
+        const mc = metaObjective.length === 0 ? metaCampaigns : metaCampaigns.filter((c) => metaObjective.includes(prettyObjective(c.objective)));
+        const sub = metaObjective.length === 0 ? "All objectives" : metaObjective.join(" + ");
+        out.push({ key: mainComboKey("objective", "meta", metaObjective), label: "Meta", sub, count: mc.length, delivered: deliveredOfGroup(mc, strictWindow), gcur: metaCurrency, platform: "meta" });
       }
       if (hasDv) {
-        const dc = dv360Objective === "all" ? dv360Campaigns : dv360Campaigns.filter((c) => prettyObjective(c.objective) === dv360Objective);
-        out.push({ key: `obj:dv360:${dv360Objective}`, label: "DV360", sub: dv360Objective === "all" ? "All objectives" : dv360Objective, count: dc.length, delivered: deliveredOfGroup(dc, strictWindow), gcur: dv360Currency, platform: "dv360" });
+        const dc = dv360Objective.length === 0 ? dv360Campaigns : dv360Campaigns.filter((c) => dv360Objective.includes(prettyObjective(c.objective)));
+        const sub = dv360Objective.length === 0 ? "All objectives" : dv360Objective.join(" + ");
+        out.push({ key: mainComboKey("objective", "dv360", dv360Objective), label: "DV360", sub, count: dc.length, delivered: deliveredOfGroup(dc, strictWindow), gcur: dv360Currency, platform: "dv360" });
       }
       return out;
     }
     if (groupBy === "creative") {
       const out: AggTable[] = [];
       if (hasMeta) {
-        const d = metaCreative === "all"
+        const d = metaCreative.length === 0
           ? deliveredOfGroup(metaCampaigns, strictWindow)
-          : deliveredFromRow(metaFormatRows.find((r) => r.label === metaCreative));
-        out.push({ key: `creative:meta:${metaCreative}`, label: "Meta", sub: metaCreative === "all" ? "All formats" : metaCreative, count: metaCreative === "all" ? metaCampaigns.length : 0, delivered: d, gcur: metaCurrency, platform: "meta" });
+          : sumRowsDelivered(metaFormatRows.filter((r) => metaCreative.includes(r.label)));
+        const sub = metaCreative.length === 0 ? "All formats" : metaCreative.join(" + ");
+        out.push({ key: mainComboKey("creative", "meta", metaCreative), label: "Meta", sub, count: metaCreative.length === 0 ? metaCampaigns.length : 0, delivered: d, gcur: metaCurrency, platform: "meta" });
       }
       if (hasDv) {
-        const d = dv360Creative === "all" ? deliveredOfGroup(dv360Campaigns, strictWindow) : deliveredFromRow(dvCreativeType.rows.find((r) => normFormat(r.label) === dv360Creative));
-        out.push({ key: `creative:dv360:${dv360Creative}`, label: "DV360", sub: dv360Creative === "all" ? "All creative types" : dv360Creative, count: dv360Campaigns.length, delivered: d, gcur: dv360Currency, platform: "dv360" });
+        const d = dv360Creative.length === 0
+          ? deliveredOfGroup(dv360Campaigns, strictWindow)
+          : sumRowsDelivered(dvCreativeType.rows.filter((r) => dv360Creative.includes(normFormat(r.label))));
+        const sub = dv360Creative.length === 0 ? "All creative types" : dv360Creative.join(" + ");
+        out.push({ key: mainComboKey("creative", "dv360", dv360Creative), label: "DV360", sub, count: dv360Campaigns.length, delivered: d, gcur: dv360Currency, platform: "dv360" });
       }
       return out;
     }
@@ -2203,11 +2570,12 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
     return out;
   }, [groupBy, campaigns, metaCampaigns, dv360Campaigns, hasMeta, hasDv, metaChannel, dv360Channel, metaObjective, dv360Objective, metaCreative, dv360Creative, metaPub.rows, dvExch.rows, dvCreativeType.rows, metaFormatRows, metaCurrency, dv360Currency, metaAudFilter, dv360AudFilter, metaAdSets.rows, metaAdSets.loading, dv360LineItems.rows, dv360LineItems.loading, audNameToAdSetMatch, strictWindow]);
 
+  const joinSel = (v: string[]) => (v.length === 0 ? "All" : v.join(" + "));
   const scopeLabel = groupBy === "overall" ? "Overall"
-    : groupBy === "channel" ? "By channel"
-    : groupBy === "objective" ? `By objective (Meta: ${metaObjective}, DV360: ${dv360Objective})`
+    : groupBy === "channel" ? `By channel (Meta: ${joinSel(metaChannel)}, DV360: ${joinSel(dv360Channel)})`
+    : groupBy === "objective" ? `By objective (Meta: ${joinSel(metaObjective)}, DV360: ${joinSel(dv360Objective)})`
     : groupBy === "audience" ? `By audience (Meta: ${metaAudFilter}, DV360: ${dv360AudFilter})`
-    : `By creative (Meta: ${metaCreative}, DV360: ${dv360Creative})`;
+    : `By creative (Meta: ${joinSel(metaCreative)}, DV360: ${joinSel(dv360Creative)})`;
 
   // Gap explainer data — the current view's PLANNED (user inputs) vs DELIVERED,
   // combined across the visible groups. Additive metrics are summed; ratio
@@ -2267,10 +2635,13 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
     });
     if (s.groupBy) setGroupBy(s.groupBy);
     if (s.sel) {
-      setMetaChannel(s.sel.metaChannel); setDv360Channel(s.sel.dv360Channel);
-      setMetaObjective(s.sel.metaObjective); setDv360Objective(s.sel.dv360Objective);
-      if (s.sel.metaCreative) setMetaCreative(s.sel.metaCreative);
-      if (s.sel.dv360Creative) setDv360Creative(s.sel.dv360Creative);
+      // Snapshots saved before multi-select shipped stored a plain string
+      // ("all" or one value) — normalize to an array either way.
+      const asArr = (v: string | string[] | undefined): string[] =>
+        Array.isArray(v) ? v : (v && v !== "all" ? [v] : []);
+      setMetaChannel(asArr(s.sel.metaChannel)); setDv360Channel(asArr(s.sel.dv360Channel));
+      setMetaObjective(asArr(s.sel.metaObjective)); setDv360Objective(asArr(s.sel.dv360Objective));
+      setMetaCreative(asArr(s.sel.metaCreative)); setDv360Creative(asArr(s.sel.dv360Creative));
     }
     setOpenSnap(null);
   };
@@ -2683,21 +3054,22 @@ ${savedPlanPages}
   const seg = (active: boolean) =>
     `px-3 py-1.5 text-xs font-semibold transition ${active ? "bg-blue-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`;
 
+  // Main-row selectors are multi-select — pick several values (e.g. Facebook +
+  // Instagram + WhatsApp) to see them combined into one aggregated row.
   const channelDropdown = (platform: "meta" | "dv360") => {
     const isMeta = platform === "meta";
     const sel = isMeta ? metaChannel : dv360Channel;
     const setSel = isMeta ? setMetaChannel : setDv360Channel;
     const opts = isMeta
-      ? metaPub.rows.map((r) => ({ v: r.label, label: metaPubLabel(r.label) }))
-      : dvExch.rows.map((r) => ({ v: r.label, label: r.label }));
+      ? metaPub.rows.map((r) => ({ id: r.label, name: metaPubLabel(r.label) }))
+      : dvExch.rows.map((r) => ({ id: r.label, name: r.label }));
     const busy = isMeta ? metaPub.loading : (dvExch.loading || dvExch.pending);
     return (
-      <select value={sel} onChange={(e) => setSel(e.target.value)}
-        className="text-xs border border-gray-200 rounded-md px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
-        <option value="all">{isMeta ? "All channels" : "All exchanges"}</option>
-        {opts.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
-        {busy && opts.length === 0 && <option disabled>Loading…</option>}
-      </select>
+      <CampaignMultiPicker
+        options={opts} values={sel} onChange={setSel}
+        allLabelText={isMeta ? "All channels" : "All exchanges"}
+        loading={busy} entityLabel={isMeta ? "channels" : "exchanges"} icon={null}
+      />
     );
   };
 
@@ -2705,13 +3077,12 @@ ${savedPlanPages}
     const isMeta = platform === "meta";
     const sel = isMeta ? metaObjective : dv360Objective;
     const setSel = isMeta ? setMetaObjective : setDv360Objective;
-    const opts = isMeta ? metaObjectives : dv360Objectives;
+    const opts = (isMeta ? metaObjectives : dv360Objectives).map((o) => ({ id: o, name: o }));
     return (
-      <select value={sel} onChange={(e) => setSel(e.target.value)}
-        className="text-xs border border-gray-200 rounded-md px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
-        <option value="all">All objectives</option>
-        {opts.map((o) => <option key={o} value={o}>{o}</option>)}
-      </select>
+      <CampaignMultiPicker
+        options={opts} values={sel} onChange={setSel}
+        allLabelText="All objectives" entityLabel="objectives" icon={null}
+      />
     );
   };
 
@@ -2719,16 +3090,15 @@ ${savedPlanPages}
     const isMeta = platform === "meta";
     const sel = isMeta ? metaCreative : dv360Creative;
     const setSel = isMeta ? setMetaCreative : setDv360Creative;
-    const opts = isMeta ? metaFormats : dv360Formats;
+    const opts = (isMeta ? metaFormats : dv360Formats).map((o) => ({ id: o, name: o }));
     const busy = isMeta ? metaFormatLoading : (dvCreativeType.loading || dvCreativeType.pending);
     return (
       <div className="flex items-center gap-1.5">
-        <select value={sel} onChange={(e) => setSel(e.target.value)}
-          className="text-xs border border-gray-200 rounded-md px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
-          <option value="all">{isMeta ? "All formats" : "All creative types"}</option>
-          {opts.map((o) => <option key={o} value={o}>{o}</option>)}
-          {busy && opts.length === 0 && <option disabled>Loading…</option>}
-        </select>
+        <CampaignMultiPicker
+          options={opts} values={sel} onChange={setSel}
+          allLabelText={isMeta ? "All formats" : "All creative types"}
+          loading={busy} entityLabel={isMeta ? "formats" : "creative types"} icon={null}
+        />
         {busy && <span className="text-[10px] text-gray-400 animate-pulse">Loading…</span>}
       </div>
     );
@@ -2754,63 +3124,59 @@ ${savedPlanPages}
   };
 
   const renderTable = (t: AggTable) => (
-    <div key={t.key} className="rounded-lg border border-gray-200 overflow-hidden">
-      <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-sm font-bold text-gray-900">{t.label}</span>
-          {t.sub && <span className="text-[11px] text-gray-400 truncate">· {t.sub}</span>}
-        </div>
-        <div className="flex items-center gap-3 shrink-0">
-          {groupBy === "channel" && t.platform && channelDropdown(t.platform)}
-          {groupBy === "objective" && t.platform && objectiveDropdown(t.platform)}
-          {groupBy === "creative" && t.platform && creativeDropdown(t.platform)}
-          {groupBy === "audience" && t.platform && audienceDropdown(t.platform)}
-          <span className="text-[11px] text-gray-400">{t.count} campaign{t.count === 1 ? "" : "s"}</span>
-        </div>
-      </div>
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-gray-100 bg-white">
-            <th className="px-4 py-2 text-left text-[10px] uppercase font-semibold text-gray-500">Metric</th>
-            <th className="px-3 py-2 text-right text-[10px] uppercase font-semibold text-gray-500 w-40">Planned</th>
-            <th className="px-3 py-2 text-right text-[10px] uppercase font-semibold text-gray-500">Delivered</th>
-            <th className="px-3 py-2 text-right text-[10px] uppercase font-semibold text-gray-500">Pacing</th>
-          </tr>
-        </thead>
-        <tbody>
-          {AGG_METRICS.map((m) => {
-            const p = planned[t.key]?.[m.key] ?? 0;
-            const dv = deliveredMetric(t.delivered, m.key);
-            const pace = pacingBadge(p, dv);
-            return (
-              <tr key={m.key} className="border-b border-gray-50 last:border-0">
-                <td className="px-4 py-2 text-gray-700">
-                  {m.label}
-                  {m.key === "reach" && <Tip text="Sum of per-campaign reach — may include overlap across campaigns"><span className="ml-1 text-[10px] text-gray-400 cursor-help">ⓘ</span></Tip>}
-                </td>
-                <td className="px-3 py-2">
-                  <SmartNumberInput
-                    value={p}
-                    onChange={(v) => setPlan(t.key, m.key, v)}
-                    deliveredHint={dv}
-                    kind={m.kind}
-                    currencySymbol={m.kind === "money" ? (t.gcur === "USD" ? "$" : "₹") : undefined}
-                    className="w-28 shrink-0 text-right text-sm border border-gray-200 rounded-md px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400"
-                  />
-                </td>
-                <td className="px-3 py-2 text-right font-semibold text-gray-900 whitespace-nowrap">
-                  {fmtMetric(m.kind, dv, t.gcur) === "—" && DASH_REASON[m.key]
-                    ? <Tip text={DASH_REASON[m.key]}><span className="text-gray-400 cursor-help">—</span></Tip>
-                    : fmtMetric(m.kind, dv, t.gcur)}
-                </td>
-                <td className={`px-3 py-2 text-right font-semibold whitespace-nowrap ${pace.cls}`}>{pace.text}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
+    <AggMetricsTable
+      key={t.key}
+      title={t.label}
+      sub={t.sub}
+      gcur={t.gcur}
+      delivered={t.delivered}
+      planned={planned[t.key] || {}}
+      onPlanChange={(metric, value) => setPlan(t.key, metric, value)}
+      countLabel={`${t.count} campaign${t.count === 1 ? "" : "s"}`}
+      headerRight={<>
+        {groupBy === "channel" && t.platform && channelDropdown(t.platform)}
+        {groupBy === "objective" && t.platform && objectiveDropdown(t.platform)}
+        {groupBy === "creative" && t.platform && creativeDropdown(t.platform)}
+        {groupBy === "audience" && t.platform && audienceDropdown(t.platform)}
+      </>}
+    />
   );
+
+  // ── Combo-panel plumbing for Channel/Objective/Creative (Overall & Audience excluded) ──
+  const comboDimension: "channel" | "objective" | "creative" | null =
+    groupBy === "channel" || groupBy === "objective" || groupBy === "creative" ? groupBy : null;
+
+  const comboMetaOptions = groupBy === "channel" ? metaPub.rows.map((r) => ({ id: r.label, name: metaPubLabel(r.label) }))
+    : groupBy === "objective" ? metaObjectives.map((o) => ({ id: o, name: o }))
+    : groupBy === "creative" ? metaFormats.map((o) => ({ id: o, name: o }))
+    : [];
+  const comboDv360Options = groupBy === "channel" ? dvExch.rows.map((r) => ({ id: r.label, name: r.label }))
+    : groupBy === "objective" ? dv360Objectives.map((o) => ({ id: o, name: o }))
+    : groupBy === "creative" ? dv360Formats.map((o) => ({ id: o, name: o }))
+    : [];
+  const comboMetaAllLabel = groupBy === "channel" ? "All channels" : groupBy === "objective" ? "All objectives" : "All formats";
+  const comboDv360AllLabel = groupBy === "channel" ? "All exchanges" : groupBy === "objective" ? "All objectives" : "All creative types";
+  const comboMetaEntityLabel = groupBy === "channel" ? "channels" : groupBy === "objective" ? "objectives" : "formats";
+  const comboDv360EntityLabel = groupBy === "channel" ? "exchanges" : groupBy === "objective" ? "objectives" : "creative types";
+  const comboMetaLoading = groupBy === "channel" ? metaPub.loading : groupBy === "creative" ? metaFormatLoading : false;
+  const comboDv360Loading = groupBy === "channel" ? (dvExch.loading || dvExch.pending) : groupBy === "creative" ? (dvCreativeType.loading || dvCreativeType.pending) : false;
+
+  const computeComboDelivered = (platform: "meta" | "dv360", values: string[]): Delivered => {
+    if (groupBy === "channel") {
+      if (platform === "meta") return values.length === 0 ? deliveredOfGroup(metaCampaigns, strictWindow) : sumRowsDelivered(metaPub.rows.filter((r) => values.includes(r.label)));
+      return values.length === 0 ? deliveredOfGroup(dv360Campaigns, strictWindow) : sumRowsDelivered(dvExch.rows.filter((r) => values.includes(r.label)));
+    }
+    if (groupBy === "objective") {
+      const base = platform === "meta" ? metaCampaigns : dv360Campaigns;
+      if (values.length === 0) return deliveredOfGroup(base, strictWindow);
+      return deliveredOfGroup(base.filter((c) => values.includes(prettyObjective(c.objective))), strictWindow);
+    }
+    // creative
+    if (platform === "meta") return values.length === 0 ? deliveredOfGroup(metaCampaigns, strictWindow) : sumRowsDelivered(metaFormatRows.filter((r) => values.includes(r.label)));
+    return values.length === 0 ? deliveredOfGroup(dv360Campaigns, strictWindow) : sumRowsDelivered(dvCreativeType.rows.filter((r) => values.includes(normFormat(r.label))));
+  };
+
+  const comboState = comboDimension ? comboDimensionState(comboDimension) : null;
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
@@ -2849,7 +3215,7 @@ ${savedPlanPages}
         </div>
       </div>
 
-      <div className="px-5 py-3 border-b border-gray-100 flex items-center gap-4 flex-wrap">
+      <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-2">
           <span className="text-[11px] font-semibold text-gray-500 uppercase">Group by</span>
           <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden">
@@ -2858,6 +3224,67 @@ ${savedPlanPages}
             ))}
           </div>
         </div>
+        {comboDimension && comboState && (
+          <div className="relative">
+            <button
+              onClick={() => setShowComboSavedPlans(showComboSavedPlans === comboDimension ? null : comboDimension)}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition ${
+                activeComboPlanId[comboDimension] ? "bg-blue-50 text-blue-700 border-blue-200" : "bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100"
+              }`}
+            >
+              <Save className="w-3.5 h-3.5" />
+              {activeComboPlanId[comboDimension]
+                ? comboState.planGroups.groups.find((g) => g.id === activeComboPlanId[comboDimension])?.name || "Saved Plan"
+                : "Saved Plans"}
+              {comboState.planGroups.groups.length > 0 && <span className="text-[10px] bg-gray-200 text-gray-600 rounded-full px-1.5">{comboState.planGroups.groups.length}</span>}
+            </button>
+            {showComboSavedPlans === comboDimension && (
+              <div className="absolute right-0 top-full mt-1 w-80 bg-white rounded-xl border border-gray-200 shadow-xl z-50 overflow-hidden">
+                <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+                  <span className="text-sm font-bold text-gray-900">Saved {comboDimension} plans</span>
+                  <button onClick={() => setShowComboSavedPlans(null)} className="text-gray-400 hover:text-gray-600"><X className="w-4 h-4" /></button>
+                </div>
+                {comboState.planGroups.groups.length === 0 ? (
+                  <div className="px-4 py-6 text-center text-xs text-gray-400">No saved plans yet. Enter values and click &quot;Save all plans&quot; to save one.</div>
+                ) : (
+                  <div className="max-h-80 overflow-y-auto divide-y divide-gray-50">
+                    {comboState.planGroups.groups.map((g) => (
+                      <div key={g.id} className={`px-4 py-3 hover:bg-gray-50 transition ${activeComboPlanId[comboDimension] === g.id ? "bg-blue-50" : ""}`}>
+                        {renamingComboPlanId === g.id ? (
+                          <form onSubmit={(e) => { e.preventDefault(); const t = renameComboValue.trim(); if (t) renameComboPlanGroup(comboDimension, g.id, t); }} className="flex items-center gap-1.5 mb-1.5">
+                            <input autoFocus value={renameComboValue} onChange={(e) => setRenameComboValue(e.target.value)}
+                              className="flex-1 px-2 py-1 text-xs border border-blue-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-200"
+                              onKeyDown={(e) => { if (e.key === "Escape") setRenamingComboPlanId(null); }} />
+                            <button type="submit" className="px-2 py-1 text-xs font-semibold bg-blue-600 text-white rounded-md hover:bg-blue-700">Save</button>
+                          </form>
+                        ) : (
+                          <div className="text-sm font-semibold text-gray-900 mb-0.5">{g.name}</div>
+                        )}
+                        <div className="text-[11px] text-gray-400 mb-2">
+                          {new Date(g.updatedAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })} · {g.panels.length} panel{g.panels.length === 1 ? "" : "s"}
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <button onClick={() => { loadComboPlanGroup(comboDimension, g); setShowComboSavedPlans(null); }}
+                            className="px-2 py-1 text-[11px] font-semibold text-blue-600 bg-blue-50 rounded-md hover:bg-blue-100 transition">
+                            {activeComboPlanId[comboDimension] === g.id ? "Reload" : "Load"}
+                          </button>
+                          <button onClick={() => { setRenamingComboPlanId(g.id); setRenameComboValue(g.name); }}
+                            className="px-2 py-1 text-[11px] font-semibold text-gray-600 bg-gray-100 rounded-md hover:bg-gray-200 transition">
+                            Rename
+                          </button>
+                          <button onClick={() => removeComboPlanGroup(comboDimension, g.id)}
+                            className="px-2 py-1 text-[11px] font-semibold text-red-600 bg-red-50 rounded-md hover:bg-red-100 transition">
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="p-5 space-y-4">
@@ -2866,6 +3293,75 @@ ${savedPlanPages}
         ) : tables.length === 0 ? (
           <div className="h-24 flex items-center justify-center text-sm text-gray-400">No campaigns in this view.</div>
         ) : tables.map((t) => renderTable(t))}
+
+        {/* Extra combo panels + "Add another" / "Save all plans" — Channel/Objective/Creative only */}
+        {comboDimension && comboState && tables.length > 0 && (
+          <>
+            {comboState.extraPanels.map((panel) => (
+              <AggComboPanel
+                key={panel.id}
+                panelId={panel.id}
+                dimension={comboDimension}
+                hasMeta={hasMeta}
+                hasDv={hasDv}
+                metaOptions={comboMetaOptions}
+                dv360Options={comboDv360Options}
+                metaOptionsLoading={comboMetaLoading}
+                dv360OptionsLoading={comboDv360Loading}
+                metaEntityLabel={comboMetaEntityLabel}
+                dv360EntityLabel={comboDv360EntityLabel}
+                metaAllLabel={comboMetaAllLabel}
+                dv360AllLabel={comboDv360AllLabel}
+                initialMetaValues={panel.initial?.metaValues ?? []}
+                initialDv360Values={panel.initial?.dv360Values ?? []}
+                initialPlannedMeta={panel.initial?.plannedMeta ?? {}}
+                initialPlannedDv360={panel.initial?.plannedDv360 ?? {}}
+                computeDelivered={computeComboDelivered}
+                metaCurrency={metaCurrency}
+                dv360Currency={dv360Currency}
+                dateRange={dateRange}
+                onRemove={() => removeComboPanel(comboDimension, panel.id)}
+                onStateChange={(id, state) => { comboState.panelStates.current[id] = state; }}
+                onSavePanel={(name, state) => saveComboPlanGroup(comboDimension, name, [state])}
+              />
+            ))}
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => addComboPanel(comboDimension)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-blue-600 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition"
+              >
+                <Plus className="w-3.5 h-3.5" /> Add another combo view
+              </button>
+              {saveAllComboName === comboDimension ? (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const trimmed = saveAllComboDraft.trim();
+                    if (trimmed) saveAllComboPlans(comboDimension, trimmed);
+                    setSaveAllComboName(null); setSaveAllComboDraft("");
+                  }}
+                  className="inline-flex items-center gap-1.5"
+                >
+                  <input
+                    autoFocus value={saveAllComboDraft} onChange={(e) => setSaveAllComboDraft(e.target.value)}
+                    placeholder="Plan name"
+                    className="px-2 py-1 text-xs border border-blue-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-200 w-40"
+                    onKeyDown={(e) => { if (e.key === "Escape") setSaveAllComboName(null); }}
+                  />
+                  <button type="submit" className="px-2 py-1 text-xs font-semibold bg-blue-600 text-white rounded-md hover:bg-blue-700">Save</button>
+                  <button type="button" onClick={() => setSaveAllComboName(null)} className="px-2 py-1 text-xs font-semibold text-gray-500 hover:text-gray-700">Cancel</button>
+                </form>
+              ) : (
+                <button
+                  onClick={() => setSaveAllComboName(comboDimension)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition"
+                >
+                  <Save className="w-3.5 h-3.5" /> Save all plans{comboState.extraPanels.length > 0 ? ` (${comboState.extraPanels.length + 1})` : ""}
+                </button>
+              )}
+            </div>
+          </>
+        )}
       </div>
 
       {/* Audience detail table — shows filtered ad sets / line items when Audience view is active */}

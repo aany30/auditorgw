@@ -38,3 +38,31 @@ export interface DrillPathEntry {
   id: string;
   name: string;
 }
+
+/**
+ * A saved combo for the Aggregate section's Channel/Objective/Creative views.
+ * `metaValues`/`dv360Values` are the multi-selected labels for that dimension
+ * (empty array = "all"); `plannedMeta`/`plannedDv360` are the planned targets
+ * entered for that platform's combined row.
+ */
+export interface AggComboSelection {
+  metaValues: string[];
+  dv360Values: string[];
+  plannedMeta: Record<string, number>;
+  plannedDv360: Record<string, number>;
+}
+
+export interface AggPlanGroup {
+  id: string;
+  name: string;
+  dimension: "channel" | "objective" | "creative";
+  /** panels[0] = the main row's combo; panels[1:] = extra ("+ Add another") panels. */
+  panels: AggComboSelection[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface AggPlanGroupStore {
+  version: 1;
+  groups: AggPlanGroup[];
+}
