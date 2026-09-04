@@ -3398,56 +3398,12 @@ ${savedPlanPages}
         )}
       </div>
 
-      {/* Audience detail table — shows filtered ad sets / line items when Audience view is active */}
+      {/* Audience detail table — shows filtered line items when Audience view is active.
+          (Meta ad-set detail table removed — Overall/Channel/etc. cards already cover Meta.) */}
       {groupBy === "audience" && (() => {
-        const detailMatch = audNameToAdSetMatch.get(metaAudFilter);
-        const filteredMeta = metaAudFilter === "all"
-          ? metaAdSets.rows
-          : detailMatch && (detailMatch.ids.size > 0 || detailMatch.names.size > 0)
-            ? metaAdSets.rows.filter((r) => detailMatch.ids.has(r.id) || detailMatch.names.has(r.name))
-            : metaAdSets.rows.filter((r) => (r.targeting + " " + r.name).toLowerCase().includes(metaAudFilter.toLowerCase()));
         const filteredDv = dv360AudFilter === "all" ? dv360LineItems.rows : dv360LineItems.rows.filter((r) => r.audienceType === dv360AudFilter);
         return (
           <div className="border-t border-gray-100 px-5 py-4">
-            {hasMeta && filteredMeta.length > 0 && (
-              <div className="mb-6">
-                <h4 className="text-sm font-bold text-gray-900 mb-2">
-                  Meta Ad Sets ({filteredMeta.length})
-                  {metaAudFilter !== "all" && <span className="text-xs font-normal text-gray-400 ml-2">filtered by: {metaAudFilter}</span>}
-                </h4>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="text-gray-500 border-b border-gray-200">
-                        <th className="text-left py-2 px-2 font-semibold">Ad Set</th>
-                        <th className="text-left py-2 px-2 font-semibold">Audience Type</th>
-                        <th className="text-right py-2 px-2 font-semibold">Spend</th>
-                        <th className="text-right py-2 px-2 font-semibold">Impressions</th>
-                        <th className="text-right py-2 px-2 font-semibold">Reach</th>
-                        <th className="text-right py-2 px-2 font-semibold">Clicks</th>
-                        <th className="text-right py-2 px-2 font-semibold">CTR</th>
-                        <th className="text-right py-2 px-2 font-semibold">CPM</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredMeta.map((r) => (
-                        <tr key={r.id} className="border-b border-gray-50 hover:bg-blue-50/30">
-                          <td className="py-1.5 px-2 font-medium text-gray-800 max-w-[200px] truncate" title={r.name}>{r.name}</td>
-                          <td className="py-1.5 px-2 text-gray-500 max-w-[240px] truncate" title={r.targeting}>{metaAudCategory(r)}</td>
-                          <td className="py-1.5 px-2 text-right tabular-nums">{formatMoney(r.spend, metaCurrency)}</td>
-                          <td className="py-1.5 px-2 text-right tabular-nums">{fmtInt(r.impressions)}</td>
-                          <td className="py-1.5 px-2 text-right tabular-nums">{fmtInt(r.reach)}</td>
-                          <td className="py-1.5 px-2 text-right tabular-nums">{fmtInt(r.clicks)}</td>
-                          <td className="py-1.5 px-2 text-right tabular-nums">{r.ctr > 0 ? `${r.ctr.toFixed(2)}%` : "—"}</td>
-                          <td className="py-1.5 px-2 text-right tabular-nums">{formatMoney(r.cpm, metaCurrency)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-            {hasMeta && metaAdSets.loading && <div className="mb-4 text-sm text-gray-400 animate-pulse">Loading Meta ad sets…</div>}
             {hasDv && filteredDv.length > 0 && (
               <div>
                 <h4 className="text-sm font-bold text-gray-900 mb-2">
