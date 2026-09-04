@@ -26,6 +26,7 @@ import { usePersistentJSON } from "@/hooks/useColumnPrefs";
 import { useMetaBreakdown } from "@/hooks/useMetaBreakdown";
 import { useDV360Breakdown } from "@/hooks/useDV360Breakdown";
 import { useDV360Reach } from "@/hooks/useDV360Reach";
+import { useDV360Creatives } from "@/hooks/useDV360Creatives";
 import { useMetaAdSets, useDV360LineItems } from "@/hooks/useAudienceData";
 import { useAdSetInsights } from "@/hooks/useAdSetInsights";
 import { useMetaCampaignLifetime } from "@/hooks/useMetaCampaignLifetime";
@@ -2343,16 +2344,35 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
     return { start, end };
   }, [campaigns]);
 
-  // Real sub-channel delivery (only fetched when the Channel view is active).
+  // Real sub-channel / creative-type delivery — unconditional (like the audience
+  // breakdowns below) so the "Download PDF" button always has real data ready,
+  // regardless of which Group By tab the user happens to be looking at.
   const metaPub = useMetaBreakdown("publisher_platform", "custom" as DateRange, wideWindow.start, wideWindow.end);
-  const dvExch = useDV360Breakdown("exchange", "custom" as DateRange, wideWindow.start, wideWindow.end, groupBy === "channel" && hasDv);
-  const dvCreativeType = useDV360Breakdown("creative_type", "custom" as DateRange, wideWindow.start, wideWindow.end, groupBy === "creative" && hasDv);
+  const dvExch = useDV360Breakdown("exchange", "custom" as DateRange, wideWindow.start, wideWindow.end, hasDv);
+  const dvCreativeType = useDV360Breakdown("creative_type", "custom" as DateRange, wideWindow.start, wideWindow.end, hasDv);
 
   // Audience breakdowns for the PDF (always fetched — real data from APIs).
   const metaAge = useMetaBreakdown("age", "custom" as DateRange, wideWindow.start, wideWindow.end, hasMeta);
   const metaGender = useMetaBreakdown("gender", "custom" as DateRange, wideWindow.start, wideWindow.end, hasMeta);
   const dvAge = useDV360Breakdown("age", "custom" as DateRange, wideWindow.start, wideWindow.end, hasDv);
   const dvGender = useDV360Breakdown("gender", "custom" as DateRange, wideWindow.start, wideWindow.end, hasDv);
+  // Daily delivery for the PDF's trend charts (Reach Build Up, Day-Wise Reach
+  // & Impressions, Spend vs Impressions, Planned vs Spends) — real, same
+  // per-day source the live Daily Trends section uses. Meta carries reach;
+  // DV360's daily breakdown does not (honest — never summed/estimated here).
+  const metaDailyAgg = useMetaBreakdown("daily", "custom" as DateRange, wideWindow.start, wideWindow.end, hasMeta);
+  const dvDailyAgg = useDV360Breakdown("daily", "custom" as DateRange, wideWindow.start, wideWindow.end, hasDv);
+  // DV360 per-creative rows (real — same source as Creative Analysis) for the
+  // PDF's Creative Performance table.
+  const { creatives: dv360CreativeRows } = useDV360Creatives("custom" as DateRange, wideWindow.start, wideWindow.end, hasDv);
+
+  // ── Everything else saved on the Dashboard tab, read read-only so the PDF
+  // can include ALL saved plans in one place: the hero KPI targets (top of
+  // Dashboard), and each platform's campaign deep-dive saved plans. ──
+  const [heroPlanned] = usePersistentJSON<Record<string, number>>("dashboard-planned-overall", {});
+  const [heroSnapshots] = usePersistentJSON<Array<{ id: string; at: number; dateLabel: string; metrics: { key: string; label: string; planned: number; delivered: number }[] }>>("dashboard-overall-snapshots", []);
+  const [metaDeepDivePlans] = usePersistentJSON<SavedPlanStoreV2>("planning-groups-meta", { version: 2, groups: [] });
+  const [dv360DeepDivePlans] = usePersistentJSON<SavedPlanStoreV2>("planning-groups-dv360", { version: 2, groups: [] });
 
   // Audience data (ad-set / line-item level) — only fetched when "Audience" view is active.
   const metaAdSets = useMetaAdSets("custom" as DateRange, wideWindow.start, wideWindow.end, groupBy === "audience" && hasMeta);
@@ -2418,12 +2438,17 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
   }
 
   // ── Meta creative format breakdown (ad-level, same source as Creative Intelligence) ──
+  // Unconditional (like the audience breakdowns above) — the PDF's Format Wise
+  // and Creative Performance sections need this regardless of which Group By
+  // tab is currently active.
   const { metaAccessToken, metaBusinessId, demoMode } = useAuthStore();
   interface MetaFormatRow { label: string; spend: number; impressions: number; reach: number; clicks: number; conversions: number; conversionValue: number; videoViews: number }
+  interface MetaCreativeRow { id: string; name: string; spend: number; impressions: number; clicks: number; videoViews: number }
   const [metaFormatRows, setMetaFormatRows] = useState<MetaFormatRow[]>([]);
+  const [metaCreativeRows, setMetaCreativeRows] = useState<MetaCreativeRow[]>([]);
   const [metaFormatLoading, setMetaFormatLoading] = useState(false);
   useEffect(() => {
-    if (groupBy !== "creative" || !hasMeta) { setMetaFormatRows([]); return; }
+    if (!hasMeta) { setMetaFormatRows([]); setMetaCreativeRows([]); return; }
     const token = demoMode ? "demo-meta-token" : metaAccessToken;
     const biz = demoMode ? "demo-business-123" : metaBusinessId;
     if (!token || !biz) return;
@@ -2436,8 +2461,9 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
       .then((r) => r.json())
       .then((d) => {
         if (cancelled || !d.ads) return;
+        const ads = d.ads as Array<{ id?: string; name: string; creativeType?: string; spend: number; impressions: number; reach: number; clicks: number; conversions: number; conversionValue: number; videoViews: number }>;
         const byFmt = new Map<string, MetaFormatRow>();
-        for (const ad of d.ads as Array<{ name: string; creativeType?: string; spend: number; impressions: number; reach: number; clicks: number; conversions: number; conversionValue: number; videoViews: number }>) {
+        for (const ad of ads) {
           const t = (ad.creativeType || "").toUpperCase();
           const n = ad.name.toLowerCase();
           let fmt: string;
@@ -2455,10 +2481,14 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
           byFmt.set(fmt, cur);
         }
         setMetaFormatRows([...byFmt.values()].sort((a, b) => b.spend - a.spend));
+        setMetaCreativeRows(
+          ads.map((ad, i) => ({ id: ad.id || String(i), name: ad.name, spend: ad.spend, impressions: ad.impressions, clicks: ad.clicks, videoViews: ad.videoViews || 0 }))
+             .sort((a, b) => b.spend - a.spend)
+        );
       })
       .finally(() => { if (!cancelled) setMetaFormatLoading(false); });
     return () => { cancelled = true; };
-  }, [groupBy, hasMeta, demoMode, metaAccessToken, metaBusinessId, wideWindow.start, wideWindow.end]);
+  }, [hasMeta, demoMode, metaAccessToken, metaBusinessId, wideWindow.start, wideWindow.end]);
 
   const metaFormats = useMemo(() => metaFormatRows.map((r) => r.label), [metaFormatRows]);
   const dv360Formats = useMemo(() => {
@@ -2705,6 +2735,44 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
     });
   };
 
+  // Plain-SVG chart string builders for the print-window PDF (no React here —
+  // this whole deck is a template string handed to window.print()). Mirrors
+  // the same per-series independent scaling used by the app's other charts.
+  const svgLine = (series: { name: string; color: string; points: number[] }[], labels: string[], w = 900, h = 190) => {
+    const padL = 8, padR = 8, padT = 12, padB = 24;
+    const innerW = w - padL - padR, innerH = h - padT - padB;
+    const n = Math.max(labels.length, 1);
+    const x = (i: number) => padL + (n === 1 ? innerW / 2 : (i / (n - 1)) * innerW);
+    const grid = [0, 0.5, 1].map((g) => `<line x1="${padL}" x2="${w - padR}" y1="${padT + g * innerH}" y2="${padT + g * innerH}" stroke="#EDF1F7" stroke-width="1"/>`).join("");
+    const lines = series.map((s) => {
+      const max = Math.max(...s.points, 1), min = Math.min(...s.points, 0), span = max - min || 1;
+      const y = (v: number) => padT + innerH - ((v - min) / span) * innerH;
+      const pts = s.points.map((v, i) => `${x(i)},${y(v)}`).join(" ");
+      const dots = s.points.map((v, i) => `<circle cx="${x(i)}" cy="${y(v)}" r="2.4" fill="${s.color}"/>`).join("");
+      return `<polyline points="${pts}" fill="none" stroke="${s.color}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>${dots}`;
+    }).join("");
+    const step = Math.max(1, Math.ceil(labels.length / 8));
+    const xLabels = labels.map((l, i) => (i % step === 0 || i === labels.length - 1) ? `<text x="${x(i)}" y="${h - 6}" font-size="9" fill="#94A3B8" text-anchor="middle">${l}</text>` : "").join("");
+    const legend = series.map((s, i) => `<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-size:10px;color:#5f6368;font-weight:600"><span style="width:8px;height:8px;border-radius:50%;background:${s.color};display:inline-block"></span>${s.name}</span>`).join("");
+    return `<div style="margin-bottom:4px">${legend}</div><svg width="100%" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet">${grid}${lines}${xLabels}</svg>`;
+  };
+  const svgGroupedBar = (data: { label: string; values: [number, number] }[], names: [string, string], colors: [string, string], fmt: (n: number) => string, h = 170) => {
+    const max = Math.max(...data.flatMap((d) => d.values), 1);
+    const legend = `<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-size:10px;color:#5f6368;font-weight:600"><span style="width:8px;height:8px;border-radius:2px;background:${colors[0]};display:inline-block"></span>${names[0]}</span><span style="display:inline-flex;align-items:center;gap:5px;font-size:10px;color:#5f6368;font-weight:600"><span style="width:8px;height:8px;border-radius:2px;background:${colors[1]};display:inline-block"></span>${names[1]}</span>`;
+    const bars = data.map((d) => `
+      <div style="flex:1;display:flex;flex-direction:column;align-items:center;height:100%;justify-content:flex-end">
+        <div style="display:flex;align-items:flex-end;gap:3px;height:100%;width:100%;justify-content:center">
+          ${d.values.map((v, si) => `
+            <div style="display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;flex:1;max-width:26px">
+              <div style="font-size:8px;font-weight:700;color:#334155;margin-bottom:2px">${fmt(v)}</div>
+              <div style="width:100%;height:${Math.max(2, (v / max) * (h - 34))}px;background:${colors[si]};border-radius:3px 3px 0 0"></div>
+            </div>`).join("")}
+        </div>
+        <div style="font-size:9px;color:#80868b;margin-top:5px;text-align:center">${d.label}</div>
+      </div>`).join("");
+    return `<div style="margin-bottom:6px">${legend}</div><div style="display:flex;align-items:flex-end;gap:10px;height:${h}px;padding-top:18px">${bars}</div>`;
+  };
+
   const downloadPdf = () => {
     const f = (v: number, kind: string, cur: string) => {
       if (kind === "money") return formatMoney(v, cur);
@@ -2795,7 +2863,30 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
       ${rows.length>maxR?`<div style="text-align:center;font-size:9px;color:#9ca3af;margin:4px 0">… and ${rows.length-maxR} more</div>`:""}`;
     };
 
-    const platformDetailPage = (platName: string, rows: typeof cRows, tot: typeof metaTotal, cur: string) => {
+    // Format Wise Performance — real, bucketed by creative type/format.
+    const formatWiseTable = (rows: { label: string; spend: number; impressions: number; clicks: number; videoViews?: number }[], cur: string) => {
+      if (!rows.length) return "";
+      const tot = rows.reduce((a, r) => ({ spend: a.spend + r.spend, imp: a.imp + r.impressions, clicks: a.clicks + r.clicks, views: a.views + (r.videoViews || 0) }), { spend: 0, imp: 0, clicks: 0, views: 0 });
+      return `<div class="sec-title">Format Wise Performance</div>
+      <table><thead><tr><th style="text-align:left">Format</th><th class="r">Net Spends</th><th class="r">Impressions</th><th class="r">Clicks</th><th class="r">CTR%</th><th class="r">eCPM</th></tr></thead>
+      <tbody>${rows.map((r) => `<tr><td style="font-weight:600">${r.label}</td><td class="r">${f(r.spend,"money",cur)}</td><td class="r">${f(r.impressions,"int","")}</td><td class="r">${f(r.clicks,"int","")}</td><td class="r">${r.impressions>0?((r.clicks/r.impressions)*100).toFixed(2)+"%":"—"}</td><td class="r">${r.impressions>0?f((r.spend/r.impressions)*1000,"money",cur):"—"}</td></tr>`).join("")}
+      <tr class="total-row"><td>Grand total</td><td class="r">${f(tot.spend,"money",cur)}</td><td class="r">${f(tot.imp,"int","")}</td><td class="r">${f(tot.clicks,"int","")}</td><td class="r">${tot.imp>0?((tot.clicks/tot.imp)*100).toFixed(2)+"%":"—"}</td><td class="r">${tot.imp>0?f((tot.spend/tot.imp)*1000,"money",cur):"—"}</td></tr>
+      </tbody></table>`;
+    };
+    // Creative Performance — real per-creative rows, green Spend heatmap (matches the reference deck).
+    const creativeHeatmapTable = (rows: { id: string; name: string; type?: string; spend: number; impressions: number; clicks: number }[], cur: string, maxR = 14) => {
+      if (!rows.length) return "";
+      const shown = rows.slice(0, maxR);
+      const maxSpend = Math.max(...shown.map((r) => r.spend), 1);
+      const heat = (v: number) => { const s = v / maxSpend; const bg = s > 0.66 ? "#66C947" : s > 0.33 ? "#A8E28C" : s > 0 ? "#DBF3D3" : "transparent"; return `background:${bg}`; };
+      return `<div class="sec-title">Creative Performance</div>
+      <table><thead><tr><th style="text-align:left">Creative</th>${shown[0]?.type !== undefined ? '<th style="text-align:left">Type</th>' : ""}<th class="r">Net Spends</th><th class="r">Impressions</th><th class="r">Clicks</th><th class="r">CTR%</th><th class="r">eCPM</th></tr></thead>
+      <tbody>${shown.map((r) => `<tr><td class="camp-name">${r.name}</td>${r.type !== undefined ? `<td style="color:#6b7280">${r.type||"—"}</td>` : ""}<td class="r" style="${heat(r.spend)};font-weight:700">${f(r.spend,"money",cur)}</td><td class="r">${f(r.impressions,"int","")}</td><td class="r">${f(r.clicks,"int","")}</td><td class="r">${r.impressions>0?((r.clicks/r.impressions)*100).toFixed(2)+"%":"—"}</td><td class="r">${r.impressions>0?f((r.spend/r.impressions)*1000,"money",cur):"—"}</td></tr>`).join("")}
+      </tbody></table>
+      ${rows.length>maxR?`<div style="text-align:center;font-size:9px;color:#9ca3af;margin:4px 0">… and ${rows.length-maxR} more</div>`:""}`;
+    };
+
+    const platformDetailPage = (platName: string, rows: typeof cRows, tot: typeof metaTotal, cur: string, fmtRows: { label: string; spend: number; impressions: number; clicks: number; videoViews?: number }[], creativeRows: { id: string; name: string; type?: string; spend: number; impressions: number; clicks: number }[]) => {
       if (!rows.length) return "";
       return `<div class="page">
   <div class="page-header">${platName} Detailed Performance</div>
@@ -2811,7 +2902,15 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
     ${campTableBBD(rows, "Campaign Wise Performance", ["Net Spends","Impression","Reach","Freq","eCPM","VTR","CTR"], 20)}
   </div>
   <div class="page-footer"><span>Generated by Auditor</span><span>${now}</span></div>
-</div>`;
+</div>
+${fmtRows.length>0?`<div class="page">
+  <div class="page-header">${platName} Creative &amp; Format Performance</div>
+  <div class="page-body">
+    ${formatWiseTable(fmtRows, cur)}
+    ${creativeHeatmapTable(creativeRows, cur)}
+  </div>
+  <div class="page-footer"><span>Generated by Auditor</span><span>${now}</span></div>
+</div>`:""}`;
     };
 
     const savedPlanPages = snapshots.map((snap) => {
@@ -2841,6 +2940,120 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
     }).join("\n");
 
     const hasPlanned = totalP.spend>0||totalP.impressions>0||totalP.reach>0;
+
+    // DV360 Format Wise — real, bucketed by normalized creative type.
+    const dvFmtAgg: Record<string, { spend: number; impressions: number; clicks: number }> = {};
+    for (const r of dvCreativeType.rows) {
+      const k = normFormat(r.label);
+      if (!dvFmtAgg[k]) dvFmtAgg[k] = { spend: 0, impressions: 0, clicks: 0 };
+      dvFmtAgg[k].spend += r.spend; dvFmtAgg[k].impressions += r.impressions; dvFmtAgg[k].clicks += r.clicks;
+    }
+    const dvFmtRows = Object.entries(dvFmtAgg).map(([label, v]) => ({ label, ...v })).sort((a, b) => b.spend - a.spend);
+    const dvCreativePdfRows = [...dv360CreativeRows].sort((a, b) => b.spend - a.spend);
+
+    // ── Daily trend data (real) for Reach Build Up / Day-Wise Reach & Impressions
+    // / Spend vs Impressions / Overall Planned vs Spends. Reach is Meta-only —
+    // DV360's daily breakdown carries no reach field, so it's never summed in.
+    const dayMap = new Map<string, { date: string; metaReach: number; impr: number; spend: number }>();
+    for (const r of metaDailyAgg.rows) {
+      const d = r.breakdownValues?.date || r.label;
+      const cur = dayMap.get(d) || { date: d, metaReach: 0, impr: 0, spend: 0 };
+      cur.metaReach += r.reach ?? 0; cur.impr += r.impressions ?? 0; cur.spend += r.spend ?? 0;
+      dayMap.set(d, cur);
+    }
+    for (const r of dvDailyAgg.rows) {
+      const d = r.breakdownValues?.daily || r.breakdownValues?.date || r.label;
+      const cur = dayMap.get(d) || { date: d, metaReach: 0, impr: 0, spend: 0 };
+      cur.impr += r.impressions ?? 0; cur.spend += r.spend ?? 0;
+      dayMap.set(d, cur);
+    }
+    const dailySorted = [...dayMap.values()].sort((a, b) => a.date.localeCompare(b.date));
+    const dayLabel = (d: string) => { const p = new Date(d + "T00:00:00"); return Number.isNaN(p.getTime()) ? d : p.toLocaleDateString("en-IN", { month: "short", day: "numeric" }); };
+    let cumReach = 0;
+    const reachBuildUp = dailySorted.map((d) => (cumReach += d.metaReach));
+    const hasDailyReach = dailySorted.some((d) => d.metaReach > 0);
+    const dailyTrendLabels = dailySorted.map((d) => dayLabel(d.date));
+
+    // Weekly buckets (real) for Overall Planned vs Spends.
+    const weeklyBucketsLocal: { label: string; spend: number }[] = [];
+    for (let i = 0; i < dailySorted.length; i += 7) {
+      const chunk = dailySorted.slice(i, i + 7);
+      weeklyBucketsLocal.push({ label: `W${weeklyBucketsLocal.length + 1}`, spend: chunk.reduce((s, d) => s + d.spend, 0) });
+    }
+    const heroPlannedSpend = Number(heroPlanned.spend || 0);
+    const perWeekPlanned = weeklyBucketsLocal.length > 0 ? heroPlannedSpend / weeklyBucketsLocal.length : 0;
+
+    const dailyTrendsPage = dailySorted.length > 0 ? `<div class="page">
+  <div class="page-header"><div class="logo">A</div><div class="title">Daily Trends</div></div>
+  <div class="page-body">
+    ${hasDailyReach ? `
+    <div class="sec-title">Reach Build Up</div>
+    <div style="font-size:9px;color:#80868b;margin:-4px 0 8px">Cumulative unique reach over time (Meta only — DV360 daily reach not exposed by the fetched report)</div>
+    ${svgLine([{ name: "Reach", color: "#0072F0", points: reachBuildUp }], dailyTrendLabels, 900, 170)}` : ""}
+    <div class="sec-title" style="margin-top:16px">Day-Wise Unique Reach &amp; Impressions</div>
+    ${svgLine([{ name: "Daily Unique Reach (Meta)", color: "#0072F0", points: dailySorted.map(d=>d.metaReach) }, { name: "Impressions", color: "#F5A623", points: dailySorted.map(d=>d.impr) }], dailyTrendLabels, 900, 160)}
+    <div class="sec-title" style="margin-top:16px">Spend vs Impressions</div>
+    ${svgLine([{ name: "Spend", color: "#0072F0", points: dailySorted.map(d=>d.spend) }, { name: "Impressions", color: "#F5A623", points: dailySorted.map(d=>d.impr) }], dailyTrendLabels, 900, 150)}
+  </div>
+  <div class="page-footer"><span>Generated by Auditor</span><span>${now}</span></div>
+</div>` : "";
+
+    const plannedVsSpendsPage = weeklyBucketsLocal.length > 0 ? `<div class="page">
+  <div class="page-header"><div class="logo">A</div><div class="title">Overall Planned vs Spends</div></div>
+  <div class="page-body">
+    <div style="font-size:9px;color:#80868b;margin-bottom:10px">${heroPlannedSpend>0?`"Planned" is your total planned spend (${f(heroPlannedSpend,"money",cur0)}) split evenly across ${weeklyBucketsLocal.length} week${weeklyBucketsLocal.length===1?"":"s"} — an even pacing reference, not a per-week target you entered.`:"No planned spend entered yet on the Dashboard tab — showing actual spend only."}</div>
+    ${svgGroupedBar(weeklyBucketsLocal.map(w=>({label:w.label, values:[perWeekPlanned, w.spend] as [number, number]})), ["Planned (even pace)","Actual"], ["#0072F0","#F5A623"], (v)=>f(v,"money",cur0), 260)}
+  </div>
+  <div class="page-footer"><span>Generated by Auditor</span><span>${now}</span></div>
+</div>` : "";
+
+    // ── Saved Plans — EVERYTHING saved anywhere on the Dashboard tab ──
+    const comboGroupPage = (dimLabel: string, store: AggPlanGroupStore) => store.groups.map((g) => `<div class="page">
+  <div class="page-header"><div class="logo">A</div><div class="title">Saved ${dimLabel} Plan — ${g.name}</div></div>
+  <div class="page-body">
+    <div style="font-size:10px;color:#6b7280;margin-bottom:10px">Saved ${new Date(g.updatedAt).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"})} · ${g.panels.length} panel${g.panels.length===1?"":"s"}</div>
+    <table><thead><tr><th style="text-align:left">Panel</th><th style="text-align:left">Meta values</th><th style="text-align:left">DV360 values</th></tr></thead>
+    <tbody>${g.panels.map((p,i)=>`<tr><td style="font-weight:600">${i===0?"Main":`Combo ${i}`}</td><td>${p.metaValues.length?p.metaValues.join(", "):"All"}</td><td>${p.dv360Values.length?p.dv360Values.join(", "):"All"}</td></tr>`).join("")}</tbody></table>
+  </div>
+  <div class="page-footer"><span>Generated by Auditor</span><span>${now}</span></div>
+</div>`).join("\n");
+    const comboPlanPages = [
+      comboGroupPage("Channel", channelPlanGroups),
+      comboGroupPage("Objective", objectivePlanGroups),
+      comboGroupPage("Creative", creativePlanGroups),
+    ].join("\n");
+
+    const heroSnapshotPages = heroSnapshots.map((s) => `<div class="page">
+  <div class="page-header"><div class="logo">A</div><div class="title">Saved Overall Targets — ${s.dateLabel}</div></div>
+  <div class="page-body">
+    <table><thead><tr><th style="text-align:left">Metric</th><th class="r">Planned</th><th class="r">Delivered (then)</th><th class="r">Pacing</th></tr></thead>
+    <tbody>${s.metrics.map((m)=>{const pc=paceVal(m.planned,m.delivered);return `<tr><td style="font-weight:600">${m.label}</td><td class="r" style="color:#6b7280">${m.planned>0?f(m.planned,"int",cur0):"—"}</td><td class="r" style="font-weight:600">${f(m.delivered,"int",cur0)}</td><td class="r">${pacePill(pc)}</td></tr>`;}).join("")}</tbody></table>
+  </div>
+  <div class="page-footer"><span>Generated by Auditor</span><span>${now}</span></div>
+</div>`).join("\n");
+
+    // Meta / DV360 campaign deep-dive saved plans — each PlanGroup's items with
+    // real current delivered (looked up from `campaigns`), so a saved deep-dive
+    // plan shows up here too, not just the Aggregate section's own saves.
+    const deepDivePlanPages = (platLabel: string, store: SavedPlanStoreV2, cur: string) => store.groups.map((g) => {
+      const rows = g.items.map((it) => {
+        const c = campaigns.find((cc) => cc.id === it.campaignId || cc.id === it.entityId);
+        const d = c ? deriveDelivered(baseDelivery(c)) : null;
+        return `<tr><td class="camp-name">${it.entityName}</td><td class="r" style="color:#6b7280">${it.plan.spend>0?f(it.plan.spend,"money",cur):"—"}</td><td class="r" style="font-weight:600">${d?f(d.spend,"money",cur):"—"}</td></tr>`;
+      }).join("");
+      return `<div class="page">
+  <div class="page-header"><div class="logo">A</div><div class="title">${platLabel} Saved Plan — ${g.name}</div></div>
+  <div class="page-body">
+    <div style="font-size:10px;color:#6b7280;margin-bottom:10px">Saved ${new Date(g.updatedAt).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"})} · ${g.items.length} item${g.items.length===1?"":"s"}</div>
+    <table><thead><tr><th style="text-align:left">Campaign / Entity</th><th class="r">Planned Spend</th><th class="r">Delivered Spend (now)</th></tr></thead><tbody>${rows}</tbody></table>
+  </div>
+  <div class="page-footer"><span>Generated by Auditor</span><span>${now}</span></div>
+</div>`;
+    }).join("\n");
+    const deepDivePlanPagesAll = [
+      deepDivePlanPages("Meta", metaDeepDivePlans, metaCurrency),
+      deepDivePlanPages("DV360", dv360DeepDivePlans, dv360Currency),
+    ].join("\n");
 
     const html = `<html><head><title>Performance Report — ${now}</title>
 <style>
@@ -3059,14 +3272,23 @@ ${hasPlanned||tables.length>1?`<div class="page">
   <div class="page-footer"><span>Generated by Auditor</span><span>${now}</span></div>
 </div>`:""}
 
-<!-- ═══ META DETAILED PERFORMANCE (BBD's "Facebook Detailed Performance") ═══ -->
-${platformDetailPage("Meta", metaRows, metaTotal, metaCurrency)}
+<!-- ═══ DAILY TRENDS (Reach Build Up, Day-Wise Reach & Impressions, Spend vs Impressions) ═══ -->
+${dailyTrendsPage}
 
-<!-- ═══ DV360 DETAILED PERFORMANCE (BBD's "Google Detailed Performance") ═══ -->
-${platformDetailPage("DV360", dvRows, dvTotal, dv360Currency)}
+<!-- ═══ OVERALL PLANNED VS SPENDS (weekly) ═══ -->
+${plannedVsSpendsPage}
 
-<!-- ═══ SAVED PLANS ═══ -->
+<!-- ═══ META DETAILED PERFORMANCE (BBD's "Facebook Detailed Performance") + Creative/Format ═══ -->
+${platformDetailPage("Meta", metaRows, metaTotal, metaCurrency, metaFormatRows, metaCreativeRows)}
+
+<!-- ═══ DV360 DETAILED PERFORMANCE (BBD's "Google Detailed Performance") + Creative/Format ═══ -->
+${platformDetailPage("DV360", dvRows, dvTotal, dv360Currency, dvFmtRows, dvCreativePdfRows)}
+
+<!-- ═══ SAVED PLANS — every saved plan anywhere on the Dashboard tab ═══ -->
 ${savedPlanPages}
+${comboPlanPages}
+${heroSnapshotPages}
+${deepDivePlanPagesAll}
 
 </body></html>`;
     const w = window.open("", "_blank");
