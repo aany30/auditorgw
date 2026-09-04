@@ -464,6 +464,12 @@ export default function GenerateReport({ platform, dateRange, customStart, custo
     dailyRows:   mergedRows.daily,
     regionRows:  mergedRows.region,
     adRows:      mergedRows.ads,
+    // Raw (pre-merge, real) per-platform rows — the BBD-style Google/Facebook
+    // detail + creative pages need to split by platform, and Meta's daily rows
+    // carry `reach` (dropped by mergeRows) for the Reach Build Up chart.
+    metaDailyRows: dailyBreak.rows,
+    metaAdRowsRaw: adRows,
+    dv360AdRowsRaw: dvAdRows,
   });
 
   const showFlash = (msg: string) => { setFlash(msg); setTimeout(() => setFlash(null), 6000); };

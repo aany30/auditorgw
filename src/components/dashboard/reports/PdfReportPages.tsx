@@ -410,6 +410,35 @@ function LineChartSVG({ series, labels, width = 540, height = 170, area = false 
   );
 }
 
+// ── Grouped bar chart — two series (e.g. Planned vs Actual) side by side per category ──
+function GroupedBarChart({ data, seriesNames, colors, height = 150, fmt }: {
+  data: { label: string; values: [number, number] }[];
+  seriesNames: [string, string]; colors: [string, string]; height?: number; fmt?: (v: number) => string;
+}) {
+  const max = Math.max(...data.flatMap(d => d.values), 1);
+  const f = fmt ?? fmtBig;
+  return (
+    <div>
+      <Legend items={[{ name: seriesNames[0], color: colors[0] }, { name: seriesNames[1], color: colors[1] }]} />
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 14, height, paddingTop: 22, marginTop: 8 }}>
+        {data.map((d, i) => (
+          <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", height: "100%", justifyContent: "flex-end" }}>
+            <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: "100%", width: "100%", justifyContent: "center" }}>
+              {d.values.map((v, si) => (
+                <div key={si} style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: "100%", flex: 1, maxWidth: 26 }}>
+                  <div style={{ fontSize: 8.5, fontWeight: 700, color: "#334155", marginBottom: 3 }}>{f(v)}</div>
+                  <div style={{ width: "100%", height: Math.max(2, (v / max) * (height - 40)), background: colors[si], borderRadius: "4px 4px 0 0" }} />
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize: 9.5, color: MUTED, marginTop: 6, textAlign: "center", lineHeight: 1.2 }}>{d.label}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function Legend({ items }: { items: { name: string; color: string }[] }) {
   return (
     <div style={{ display: "flex", gap: 14, justifyContent: "flex-end", flexWrap: "wrap" }}>
@@ -570,6 +599,12 @@ export interface PdfReportPagesProps {
   startDate: string;
   endDate: string;
   platform: string;
+  // Raw (pre-merge) per-platform rows for the BBD-style detail/creative pages.
+  // Optional — pages that need them degrade gracefully (real data or omitted,
+  // never fabricated) when absent.
+  metaDailyRows?: Array<{ label: string; breakdownValues?: Record<string, string>; spend: number; impressions: number; clicks: number; reach?: number }>;
+  metaAdRowsRaw?: AdInsightRow[];
+  dv360AdRowsRaw?: AdInsightRow[];
   // Customization (optional — defaults to a full "sales"-style standard deck).
   objective?: ReportObjective;
   length?: ReportLength;
@@ -1618,7 +1653,10 @@ function BbdOverviewPage(p: PdfReportPagesProps & { pageNum: number; total: numb
 
         {/* Audience Wise Performance (uses campaign objective as the group key) */}
         <div style={{ flex: 1, minHeight: 0 }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: TEXT, marginBottom: 6 }}>Audience Wise Performance</div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: TEXT, marginBottom: 2 }}>Audience Wise Performance</div>
+          <div style={{ fontSize: 9, color: FAINT, marginBottom: 6 }}>
+            Frequency-distribution reach (1+/2+/4+…/10+) omitted — neither Meta nor DV360 exposes a reach-by-frequency-threshold report via the fetched APIs; showing it would require estimating, not real delivery data.
+          </div>
           <table style={{ width: "100%", borderCollapse: "collapse", background: "#FFFFFF", border: `1px solid ${CARD_BORDER}` }}>
             <BbdTableHeader cols={["Audience", "Net Spends", "Impressions", "Reach", "Frequency", "eCPM"]} />
             <tbody>
@@ -1647,6 +1685,447 @@ function BbdOverviewPage(p: PdfReportPagesProps & { pageNum: number; total: numb
             </tbody>
           </table>
         </div>
+      </div>
+      <PageFooter dateRange={`${p.startDate} – ${p.endDate}`} pageNum={p.pageNum} total={p.total} />
+    </div>
+  );
+}
+
+// ─── Reach Build Up + Day-Wise Reach/Impressions + Spend vs Impressions ────
+// Mirrors the reference deck's page 2. Reach is Meta-only (honest — DV360's
+// fetched daily breakdown carries no reach field); Spend/Impressions are real
+// merged Meta+DV360 daily totals from `dailyRows`.
+function ReachTrendsPage(p: PdfReportPagesProps & { pageNum: number; total: number }) {
+  const metaDaily = p.metaDailyRows ?? [];
+  const dateOf = (r: { label: string; breakdownValues?: Record<string, string> }) => r.breakdownValues?.date || r.label;
+  const sortedMeta = [...metaDaily].sort((a, b) => dateOf(a).localeCompare(dateOf(b)));
+  let cum = 0;
+  const reachSeries = sortedMeta.map((r) => { cum += r.reach ?? 0; return cum; });
+  const reachLabels = sortedMeta.map((r) => {
+    const d = dateOf(r);
+    const parsed = new Date(d + "T00:00:00");
+    return Number.isNaN(parsed.getTime()) ? d : parsed.toLocaleDateString("en-IN", { month: "short", day: "numeric" });
+  });
+  const hasReach = sortedMeta.some((r) => (r.reach ?? 0) > 0);
+
+  const sortedDaily = [...p.dailyRows].sort((a, b) => a.label.localeCompare(b.label));
+  const dailyLabels = sortedDaily.map((r) => {
+    const parsed = new Date(r.label + "T00:00:00");
+    return Number.isNaN(parsed.getTime()) ? r.label : parsed.toLocaleDateString("en-IN", { month: "short", day: "numeric" });
+  });
+  const dailyImpr = sortedDaily.map((r) => r.impressions || 0);
+  const dailySpend = sortedDaily.map((r) => r.spend || 0);
+  const dailyReach = sortedMeta.map((r) => r.reach ?? 0);
+
+  return (
+    <div style={page}>
+      <div style={{ padding: "24px 32px 32px", height: "100%", display: "flex", flexDirection: "column", gap: 16 }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: TEXT }}>Daily Trends</div>
+
+        {hasReach ? (
+          <div style={{ background: CARD, border: `1px solid ${CARD_BORDER}`, borderRadius: 10, padding: "14px 16px", flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+            <div style={{ fontSize: 12.5, fontWeight: 700, color: TEXT, marginBottom: 2 }}>Reach Build Up</div>
+            <div style={{ fontSize: 9.5, color: FAINT, marginBottom: 8 }}>Cumulative unique reach over time (Meta only — DV360 daily reach not exposed by the fetched report)</div>
+            <div style={{ flex: 1, minHeight: 0 }}>
+              <LineChartSVG series={[{ name: "Reach", color: BBD_BLUE, points: reachSeries }]} labels={reachLabels} height={170} area />
+            </div>
+          </div>
+        ) : (
+          <div style={{ background: CARD, border: `1px solid ${CARD_BORDER}`, borderRadius: 10, padding: "14px 16px", fontSize: 11, color: FAINT }}>
+            Reach Build Up — no Meta reach data in this window.
+          </div>
+        )}
+
+        <div style={{ background: CARD, border: `1px solid ${CARD_BORDER}`, borderRadius: 10, padding: "14px 16px", flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+          <div style={{ fontSize: 12.5, fontWeight: 700, color: TEXT, marginBottom: 2 }}>Day-Wise Unique Reach &amp; Impressions</div>
+          <div style={{ fontSize: 9.5, color: FAINT, marginBottom: 8 }}>Daily reach (Meta only) vs total impressions (Meta + DV360)</div>
+          <div style={{ flex: 1, minHeight: 0 }}>
+            <LineChartSVG
+              series={[
+                { name: "Daily Unique Reach (Meta)", color: BBD_BLUE, points: dailyReach.length ? dailyReach : [0] },
+                { name: "Impressions", color: ORANGE, points: dailyImpr.length ? dailyImpr : [0] },
+              ]}
+              labels={dailyLabels.length ? dailyLabels : [""]}
+              height={160}
+            />
+          </div>
+          <Legend items={[{ name: "Daily Unique Reach", color: BBD_BLUE }, { name: "Impressions", color: ORANGE }]} />
+        </div>
+
+        <div style={{ background: CARD, border: `1px solid ${CARD_BORDER}`, borderRadius: 10, padding: "14px 16px", flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+          <div style={{ fontSize: 12.5, fontWeight: 700, color: TEXT, marginBottom: 8 }}>Spend vs Impressions</div>
+          <div style={{ flex: 1, minHeight: 0 }}>
+            <LineChartSVG
+              series={[
+                { name: "Spend", color: BBD_BLUE, points: dailySpend.length ? dailySpend : [0] },
+                { name: "Impressions", color: ORANGE, points: dailyImpr.length ? dailyImpr : [0] },
+              ]}
+              labels={dailyLabels.length ? dailyLabels : [""]}
+              height={150}
+            />
+          </div>
+          <Legend items={[{ name: "Spend", color: BBD_BLUE }, { name: "Impressions", color: ORANGE }]} />
+        </div>
+      </div>
+      <PageFooter dateRange={`${p.startDate} – ${p.endDate}`} pageNum={p.pageNum} total={p.total} />
+    </div>
+  );
+}
+
+// ─── Overall Planned vs Spends (weekly) ────────────────────────────────────
+// Real weekly actual spend from dailyRows. "Planned" is the user's own total
+// planned spend (entered in the Dashboard tab's Overall Targets), split evenly
+// across the weeks shown — an explicit pacing reference, not fabricated
+// delivery data. Falls back to a note when no planned figure was entered.
+function PlannedVsActualPage(p: PdfReportPagesProps & { pageNum: number; total: number }) {
+  const cur0 = (n: number) => formatMoney(n, p.currency, 0);
+  const weeks = weeklyBuckets(p.dailyRows);
+
+  let plannedSpendTotal = 0;
+  try {
+    if (typeof window !== "undefined") {
+      const raw = window.localStorage.getItem("dashboard-planned-overall");
+      const parsed = raw ? JSON.parse(raw) : null;
+      if (parsed) plannedSpendTotal = Number(parsed.spend || 0);
+    }
+  } catch { /* ignore */ }
+
+  const perWeekPlanned = weeks.length > 0 ? plannedSpendTotal / weeks.length : 0;
+  const chartData = weeks.map((w) => ({ label: w.label, values: [perWeekPlanned, w.spend] as [number, number] }));
+
+  return (
+    <div style={page}>
+      <div style={{ padding: "24px 32px 32px", height: "100%", display: "flex", flexDirection: "column", gap: 14 }}>
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: TEXT }}>Overall Planned vs Spends</div>
+          {plannedSpendTotal > 0 ? (
+            <div style={{ fontSize: 9.5, color: FAINT, marginTop: 2 }}>
+              &quot;Planned&quot; is your total planned spend ({cur0(plannedSpendTotal)}) split evenly across {weeks.length} week{weeks.length === 1 ? "" : "s"} — an even pacing reference, not a per-week target you entered.
+            </div>
+          ) : (
+            <div style={{ fontSize: 9.5, color: FAINT, marginTop: 2 }}>
+              No planned spend entered yet on the Dashboard tab — showing actual spend only.
+            </div>
+          )}
+        </div>
+        <div style={{ background: CARD, border: `1px solid ${CARD_BORDER}`, borderRadius: 10, padding: "16px 18px", flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+          {chartData.length > 0 ? (
+            <GroupedBarChart
+              data={chartData}
+              seriesNames={["Planned (even pace)", "Actual"]}
+              colors={[BBD_BLUE, ORANGE]}
+              height={260}
+              fmt={(v) => cur0(v)}
+            />
+          ) : (
+            <div style={{ fontSize: 11, color: FAINT }}>No daily delivery data in this window.</div>
+          )}
+        </div>
+      </div>
+      <PageFooter dateRange={`${p.startDate} – ${p.endDate}`} pageNum={p.pageNum} total={p.total} />
+    </div>
+  );
+}
+
+// ─── Google (DV360) Detailed Performance — hero + Audience Wise + Format Wise ──
+function GoogleDetailPage(p: PdfReportPagesProps & { pageNum: number; total: number }) {
+  const cur = p.currency || "INR";
+  const dv = p.campaigns.filter((c) => c.platform === "dv360");
+  const totals = dv.reduce((a, c) => ({
+    spend: a.spend + (c.spend || 0), impressions: a.impressions + (c.impressions || 0),
+    reach: a.reach + (c.reach || 0), clicks: a.clicks + (c.clicks || 0),
+  }), { spend: 0, impressions: 0, reach: 0, clicks: 0 });
+  const freq = totals.reach > 0 ? totals.impressions / totals.reach : 0;
+
+  const byObj: Record<string, { spend: number; impressions: number; reach: number; count: number }> = {};
+  for (const c of dv) {
+    const key = (c.objective || "Unspecified").replace(/^OUTCOME_/, "").replace(/_/g, " ");
+    if (!byObj[key]) byObj[key] = { spend: 0, impressions: 0, reach: 0, count: 0 };
+    byObj[key].spend += c.spend || 0; byObj[key].impressions += c.impressions || 0;
+    byObj[key].reach += c.reach || 0; byObj[key].count++;
+  }
+  const audRows = Object.entries(byObj).sort((a, b) => b[1].spend - a[1].spend).slice(0, 8);
+  const maxAudSpend = Math.max(1, ...audRows.map(([, v]) => v.spend));
+
+  const dvAds = p.dv360AdRowsRaw ?? [];
+  const byFmt: Record<string, { spend: number; impressions: number; clicks: number }> = {};
+  for (const a of dvAds) {
+    const key = a.creativeType || "Unspecified";
+    if (!byFmt[key]) byFmt[key] = { spend: 0, impressions: 0, clicks: 0 };
+    byFmt[key].spend += a.spend || 0; byFmt[key].impressions += a.impressions || 0; byFmt[key].clicks += a.clicks || 0;
+  }
+  const fmtRows = Object.entries(byFmt).sort((a, b) => b[1].spend - a[1].spend);
+
+  return (
+    <div style={page}>
+      <div style={{ padding: "24px 32px 32px", height: "100%", display: "flex", flexDirection: "column", gap: 16 }}>
+        <div style={{ fontSize: 16, fontWeight: 700, color: TEXT }}>Google (DV360) Detailed Performance</div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <BbdKpiBox label="Net Spends" value={formatMoney(totals.spend, cur, 0)} />
+          <BbdKpiBox label="Impressions" value={fmtBig(totals.impressions)} />
+          <BbdKpiBox label="Reach" value={fmtBig(totals.reach)} />
+          <BbdKpiBox label="Frequency" value={freq > 0 ? freq.toFixed(2) : "—"} />
+        </div>
+
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: TEXT, marginBottom: 6 }}>Audience Wise Performance</div>
+          {audRows.length === 0 ? (
+            <div style={{ fontSize: 11, color: FAINT }}>No DV360 campaigns in this window.</div>
+          ) : (
+            <table style={{ width: "100%", borderCollapse: "collapse", background: "#FFFFFF", border: `1px solid ${CARD_BORDER}` }}>
+              <BbdTableHeader cols={["Objective", "Net Spends", "Impressions", "Reach", "Campaigns"]} />
+              <tbody>
+                {audRows.map(([name, v]) => (
+                  <tr key={name} style={{ borderBottom: `1px solid ${CARD_BORDER}` }}>
+                    <td style={{ padding: "6px 10px", fontSize: 11, fontWeight: 600 }}>{name}</td>
+                    <InlineBarCell value={v.spend} max={maxAudSpend} color={BBD_BAR_BLUE} formatted={formatMoney(v.spend, cur, 0)} />
+                    <td style={{ padding: "6px 10px", fontSize: 11, textAlign: "right" }}>{fmtInt(v.impressions)}</td>
+                    <td style={{ padding: "6px 10px", fontSize: 11, textAlign: "right" }}>{v.reach > 0 ? fmtInt(v.reach) : "—"}</td>
+                    <td style={{ padding: "6px 10px", fontSize: 11, textAlign: "right" }}>{v.count}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        <div style={{ flex: 1, minHeight: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: TEXT, marginBottom: 2 }}>Format Wise Performance</div>
+          <div style={{ fontSize: 9, color: FAINT, marginBottom: 6 }}>VTR/views omitted — DV360 creative rows fetched here carry no TrueView view metric.</div>
+          {fmtRows.length === 0 ? (
+            <div style={{ fontSize: 11, color: FAINT }}>No DV360 creative data available for this window.</div>
+          ) : (
+            <table style={{ width: "100%", borderCollapse: "collapse", background: "#FFFFFF", border: `1px solid ${CARD_BORDER}` }}>
+              <BbdTableHeader cols={["Format", "Net Spends", "Impressions", "Clicks", "CTR", "eCPM"]} />
+              <tbody>
+                {fmtRows.map(([name, v]) => {
+                  const ctr = v.impressions > 0 ? (v.clicks / v.impressions) * 100 : 0;
+                  const cpm = v.impressions > 0 ? (v.spend / v.impressions) * 1000 : 0;
+                  return (
+                    <tr key={name} style={{ borderBottom: `1px solid ${CARD_BORDER}` }}>
+                      <td style={{ padding: "6px 10px", fontSize: 11, fontWeight: 600 }}>{name}</td>
+                      <td style={{ padding: "6px 10px", fontSize: 11, textAlign: "right" }}>{formatMoney(v.spend, cur, 0)}</td>
+                      <td style={{ padding: "6px 10px", fontSize: 11, textAlign: "right" }}>{fmtInt(v.impressions)}</td>
+                      <td style={{ padding: "6px 10px", fontSize: 11, textAlign: "right" }}>{fmtInt(v.clicks)}</td>
+                      <td style={{ padding: "6px 10px", fontSize: 11, textAlign: "right" }}>{ctr > 0 ? `${ctr.toFixed(2)}%` : "—"}</td>
+                      <td style={{ padding: "6px 10px", fontSize: 11, textAlign: "right" }}>{cpm > 0 ? formatMoney(cpm, cur, 0) : "—"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+      <PageFooter dateRange={`${p.startDate} – ${p.endDate}`} pageNum={p.pageNum} total={p.total} />
+    </div>
+  );
+}
+
+// ─── Google (DV360) Creative Performance — consolidated per-creative heatmap table ──
+// The reference deck splits this into YT Films / YT VRC / Non-Skip / Display —
+// that sub-classification isn't derivable from what DV360's creative report
+// returns here (no line-item-type / skip-behavior field), so this is one real,
+// honestly-labeled table rather than fabricated sub-buckets.
+function GoogleCreativePage(p: PdfReportPagesProps & { pageNum: number; total: number }) {
+  const cur = p.currency || "INR";
+  const rows = [...(p.dv360AdRowsRaw ?? [])].sort((a, b) => b.spend - a.spend).slice(0, 16);
+  const maxSpend = Math.max(1, ...rows.map((r) => r.spend));
+  const totalSpend = rows.reduce((s, r) => s + r.spend, 0);
+  const totalImpr = rows.reduce((s, r) => s + r.impressions, 0);
+  const totalClicks = rows.reduce((s, r) => s + r.clicks, 0);
+
+  return (
+    <div style={page}>
+      <div style={{ padding: "24px 32px 32px", height: "100%", display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ fontSize: 16, fontWeight: 700, color: TEXT }}>Google (DV360) Creative Performance</div>
+        {rows.length === 0 ? (
+          <div style={{ fontSize: 11, color: FAINT }}>No DV360 creative-level data available for this window.</div>
+        ) : (
+          <table style={{ width: "100%", borderCollapse: "collapse", background: "#FFFFFF", border: `1px solid ${CARD_BORDER}` }}>
+            <BbdTableHeader cols={["Creative", "Type", "Net Spends", "Impressions", "Clicks", "CTR", "eCPM"]} />
+            <tbody>
+              {rows.map((r) => {
+                const ctr = r.impressions > 0 ? (r.clicks / r.impressions) * 100 : 0;
+                const cpm = r.impressions > 0 ? (r.spend / r.impressions) * 1000 : 0;
+                return (
+                  <tr key={r.id} style={{ borderBottom: `1px solid ${CARD_BORDER}` }}>
+                    <td style={{ padding: "6px 10px", fontSize: 10.5, fontWeight: 600, maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.name}>{r.name}</td>
+                    <td style={{ padding: "6px 10px", fontSize: 10.5, color: MUTED }}>{r.creativeType || "—"}</td>
+                    <HeatmapCell value={r.spend} max={maxSpend} formatted={formatMoney(r.spend, cur, 0)} />
+                    <td style={{ padding: "6px 10px", fontSize: 10.5, textAlign: "right" }}>{fmtInt(r.impressions)}</td>
+                    <td style={{ padding: "6px 10px", fontSize: 10.5, textAlign: "right" }}>{fmtInt(r.clicks)}</td>
+                    <td style={{ padding: "6px 10px", fontSize: 10.5, textAlign: "right" }}>{ctr > 0 ? `${ctr.toFixed(2)}%` : "—"}</td>
+                    <td style={{ padding: "6px 10px", fontSize: 10.5, textAlign: "right" }}>{cpm > 0 ? formatMoney(cpm, cur, 0) : "—"}</td>
+                  </tr>
+                );
+              })}
+              <tr style={{ background: "#F7F9FC", fontWeight: 700 }}>
+                <td style={{ padding: "6px 10px", fontSize: 10.5 }} colSpan={2}>Grand total</td>
+                <td style={{ padding: "6px 10px", fontSize: 10.5, textAlign: "right" }}>{formatMoney(totalSpend, cur, 0)}</td>
+                <td style={{ padding: "6px 10px", fontSize: 10.5, textAlign: "right" }}>{fmtInt(totalImpr)}</td>
+                <td style={{ padding: "6px 10px", fontSize: 10.5, textAlign: "right" }}>{fmtInt(totalClicks)}</td>
+                <td colSpan={2} />
+              </tr>
+            </tbody>
+          </table>
+        )}
+      </div>
+      <PageFooter dateRange={`${p.startDate} – ${p.endDate}`} pageNum={p.pageNum} total={p.total} />
+    </div>
+  );
+}
+
+// ─── Facebook (Meta) Detailed Performance — hero + Audience Wise + Format Wise ──
+function FacebookDetailPage(p: PdfReportPagesProps & { pageNum: number; total: number }) {
+  const cur = p.currency || "INR";
+  const meta = p.campaigns.filter((c) => c.platform === "meta");
+  const totals = meta.reduce((a, c) => ({
+    spend: a.spend + (c.spend || 0), impressions: a.impressions + (c.impressions || 0),
+    reach: a.reach + (c.reach || 0), clicks: a.clicks + (c.clicks || 0),
+  }), { spend: 0, impressions: 0, reach: 0, clicks: 0 });
+  const freq = totals.reach > 0 ? totals.impressions / totals.reach : 0;
+  const cpm = totals.impressions > 0 ? (totals.spend / totals.impressions) * 1000 : 0;
+
+  const byObj: Record<string, { spend: number; impressions: number; reach: number; count: number }> = {};
+  for (const c of meta) {
+    const key = (c.objective || "Unspecified").replace(/^OUTCOME_/, "").replace(/_/g, " ");
+    if (!byObj[key]) byObj[key] = { spend: 0, impressions: 0, reach: 0, count: 0 };
+    byObj[key].spend += c.spend || 0; byObj[key].impressions += c.impressions || 0;
+    byObj[key].reach += c.reach || 0; byObj[key].count++;
+  }
+  const audRows = Object.entries(byObj).sort((a, b) => b[1].spend - a[1].spend).slice(0, 8);
+  const maxAudSpend = Math.max(1, ...audRows.map(([, v]) => v.spend));
+
+  const metaAds = p.metaAdRowsRaw ?? [];
+  const byFmt: Record<string, { spend: number; impressions: number; clicks: number; videoViews: number }> = {};
+  for (const a of metaAds) {
+    const key = classifyCreative(a);
+    if (!byFmt[key]) byFmt[key] = { spend: 0, impressions: 0, clicks: 0, videoViews: 0 };
+    byFmt[key].spend += a.spend || 0; byFmt[key].impressions += a.impressions || 0;
+    byFmt[key].clicks += a.clicks || 0; byFmt[key].videoViews += a.videoViews || 0;
+  }
+  const fmtRows = Object.entries(byFmt).sort((a, b) => b[1].spend - a[1].spend);
+
+  return (
+    <div style={page}>
+      <div style={{ padding: "24px 32px 32px", height: "100%", display: "flex", flexDirection: "column", gap: 16 }}>
+        <div style={{ fontSize: 16, fontWeight: 700, color: TEXT }}>Facebook (Meta) Detailed Performance</div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <BbdKpiBox label="Net Spends" value={formatMoney(totals.spend, cur, 0)} />
+          <BbdKpiBox label="Impressions" value={fmtBig(totals.impressions)} />
+          <BbdKpiBox label="Reach" value={fmtBig(totals.reach)} />
+          <BbdKpiBox label="Delivered CPM" value={cpm > 0 ? formatMoney(cpm, cur, 0) : "—"} />
+          <BbdKpiBox label="Frequency" value={freq > 0 ? freq.toFixed(2) : "—"} />
+        </div>
+
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: TEXT, marginBottom: 6 }}>Audience Wise Performance</div>
+          {audRows.length === 0 ? (
+            <div style={{ fontSize: 11, color: FAINT }}>No Meta campaigns in this window.</div>
+          ) : (
+            <table style={{ width: "100%", borderCollapse: "collapse", background: "#FFFFFF", border: `1px solid ${CARD_BORDER}` }}>
+              <BbdTableHeader cols={["Objective", "Net Spends", "Impressions", "Reach", "Campaigns"]} />
+              <tbody>
+                {audRows.map(([name, v]) => (
+                  <tr key={name} style={{ borderBottom: `1px solid ${CARD_BORDER}` }}>
+                    <td style={{ padding: "6px 10px", fontSize: 11, fontWeight: 600 }}>{name}</td>
+                    <InlineBarCell value={v.spend} max={maxAudSpend} color={BBD_BAR_BLUE} formatted={formatMoney(v.spend, cur, 0)} />
+                    <td style={{ padding: "6px 10px", fontSize: 11, textAlign: "right" }}>{fmtInt(v.impressions)}</td>
+                    <td style={{ padding: "6px 10px", fontSize: 11, textAlign: "right" }}>{fmtInt(v.reach)}</td>
+                    <td style={{ padding: "6px 10px", fontSize: 11, textAlign: "right" }}>{v.count}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        <div style={{ flex: 1, minHeight: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: TEXT, marginBottom: 6 }}>Format Wise Performance</div>
+          {fmtRows.length === 0 ? (
+            <div style={{ fontSize: 11, color: FAINT }}>No Meta creative-level data available for this window.</div>
+          ) : (
+            <table style={{ width: "100%", borderCollapse: "collapse", background: "#FFFFFF", border: `1px solid ${CARD_BORDER}` }}>
+              <BbdTableHeader cols={["Format", "Net Spends", "Impressions", "Clicks", "CTR", "Views", "eCPM"]} />
+              <tbody>
+                {fmtRows.map(([name, v]) => {
+                  const ctr = v.impressions > 0 ? (v.clicks / v.impressions) * 100 : 0;
+                  const rcpm = v.impressions > 0 ? (v.spend / v.impressions) * 1000 : 0;
+                  return (
+                    <tr key={name} style={{ borderBottom: `1px solid ${CARD_BORDER}` }}>
+                      <td style={{ padding: "6px 10px", fontSize: 11, fontWeight: 600 }}>{name}</td>
+                      <td style={{ padding: "6px 10px", fontSize: 11, textAlign: "right" }}>{formatMoney(v.spend, cur, 0)}</td>
+                      <td style={{ padding: "6px 10px", fontSize: 11, textAlign: "right" }}>{fmtInt(v.impressions)}</td>
+                      <td style={{ padding: "6px 10px", fontSize: 11, textAlign: "right" }}>{fmtInt(v.clicks)}</td>
+                      <td style={{ padding: "6px 10px", fontSize: 11, textAlign: "right" }}>{ctr > 0 ? `${ctr.toFixed(2)}%` : "—"}</td>
+                      <td style={{ padding: "6px 10px", fontSize: 11, textAlign: "right" }}>{v.videoViews > 0 ? fmtInt(v.videoViews) : "—"}</td>
+                      <td style={{ padding: "6px 10px", fontSize: 11, textAlign: "right" }}>{rcpm > 0 ? formatMoney(rcpm, cur, 0) : "—"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+      <PageFooter dateRange={`${p.startDate} – ${p.endDate}`} pageNum={p.pageNum} total={p.total} />
+    </div>
+  );
+}
+
+// ─── Facebook (Meta) Creative Performance — consolidated per-creative heatmap table ──
+// The reference splits Creative Name (TVCs) vs Creative Name (IG Reels) by
+// placement — this app's ad-insights fetch doesn't carry placement per ad, so
+// (as with the DV360 creative page) this is one honestly-labeled table.
+function FacebookCreativePage(p: PdfReportPagesProps & { pageNum: number; total: number }) {
+  const cur = p.currency || "INR";
+  const rows = [...(p.metaAdRowsRaw ?? [])].sort((a, b) => b.spend - a.spend).slice(0, 14);
+  const maxSpend = Math.max(1, ...rows.map((r) => r.spend));
+  const totalSpend = rows.reduce((s, r) => s + r.spend, 0);
+  const totalImpr = rows.reduce((s, r) => s + r.impressions, 0);
+  const totalClicks = rows.reduce((s, r) => s + r.clicks, 0);
+  const totalViews = rows.reduce((s, r) => s + (r.videoViews || 0), 0);
+
+  return (
+    <div style={page}>
+      <div style={{ padding: "24px 32px 32px", height: "100%", display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ fontSize: 16, fontWeight: 700, color: TEXT }}>Facebook (Meta) Creative Performance</div>
+        {rows.length === 0 ? (
+          <div style={{ fontSize: 11, color: FAINT }}>No Meta creative-level data available for this window.</div>
+        ) : (
+          <table style={{ width: "100%", borderCollapse: "collapse", background: "#FFFFFF", border: `1px solid ${CARD_BORDER}` }}>
+            <BbdTableHeader cols={["Creative", "Net Spends", "Impressions", "Clicks", "CTR", "Views", "VTR", "eCPM"]} />
+            <tbody>
+              {rows.map((r) => {
+                const ctr = r.impressions > 0 ? (r.clicks / r.impressions) * 100 : 0;
+                const vtr = r.impressions > 0 && r.videoViews > 0 ? (r.videoViews / r.impressions) * 100 : 0;
+                const cpm = r.impressions > 0 ? (r.spend / r.impressions) * 1000 : 0;
+                return (
+                  <tr key={r.id} style={{ borderBottom: `1px solid ${CARD_BORDER}` }}>
+                    <td style={{ padding: "6px 10px", fontSize: 10.5, fontWeight: 600, maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.name}>{r.name}</td>
+                    <HeatmapCell value={r.spend} max={maxSpend} formatted={formatMoney(r.spend, cur, 0)} />
+                    <td style={{ padding: "6px 10px", fontSize: 10.5, textAlign: "right" }}>{fmtInt(r.impressions)}</td>
+                    <td style={{ padding: "6px 10px", fontSize: 10.5, textAlign: "right" }}>{fmtInt(r.clicks)}</td>
+                    <td style={{ padding: "6px 10px", fontSize: 10.5, textAlign: "right" }}>{ctr > 0 ? `${ctr.toFixed(2)}%` : "—"}</td>
+                    <td style={{ padding: "6px 10px", fontSize: 10.5, textAlign: "right" }}>{r.videoViews > 0 ? fmtInt(r.videoViews) : "—"}</td>
+                    <td style={{ padding: "6px 10px", fontSize: 10.5, textAlign: "right" }}>{vtr > 0 ? `${vtr.toFixed(2)}%` : "—"}</td>
+                    <td style={{ padding: "6px 10px", fontSize: 10.5, textAlign: "right" }}>{cpm > 0 ? formatMoney(cpm, cur, 0) : "—"}</td>
+                  </tr>
+                );
+              })}
+              <tr style={{ background: "#F7F9FC", fontWeight: 700 }}>
+                <td style={{ padding: "6px 10px", fontSize: 10.5 }}>Grand total</td>
+                <td style={{ padding: "6px 10px", fontSize: 10.5, textAlign: "right" }}>{formatMoney(totalSpend, cur, 0)}</td>
+                <td style={{ padding: "6px 10px", fontSize: 10.5, textAlign: "right" }}>{fmtInt(totalImpr)}</td>
+                <td style={{ padding: "6px 10px", fontSize: 10.5, textAlign: "right" }}>{fmtInt(totalClicks)}</td>
+                <td />
+                <td style={{ padding: "6px 10px", fontSize: 10.5, textAlign: "right" }}>{totalViews > 0 ? fmtInt(totalViews) : "—"}</td>
+                <td colSpan={2} />
+              </tr>
+            </tbody>
+          </table>
+        )}
       </div>
       <PageFooter dateRange={`${p.startDate} – ${p.endDate}`} pageNum={p.pageNum} total={p.total} />
     </div>
@@ -1693,6 +2172,29 @@ export default function PdfReportPages(props: PdfReportPagesProps) {
   if (props.campaigns.length > 0) {
     pages.push(<BbdOverviewPage key="bbd-overview" {...props} pageNum={n} total={0} />);
     n++;
+  }
+
+  // BBD-style trend + per-platform detail/creative pages — real data only,
+  // skipped at "concise" length (same convention as BudgetPage below).
+  if (length !== "concise") {
+    if (props.dailyRows.length > 0) {
+      pages.push(<ReachTrendsPage key="reach-trends" {...props} pageNum={n} total={0} />); n++;
+      pages.push(<PlannedVsActualPage key="planned-vs-actual" {...props} pageNum={n} total={0} />); n++;
+    }
+    const hasDvCampaigns = props.campaigns.some((c) => c.platform === "dv360");
+    const hasMetaCampaigns = props.campaigns.some((c) => c.platform === "meta");
+    if (hasDvCampaigns) {
+      pages.push(<GoogleDetailPage key="google-detail" {...props} pageNum={n} total={0} />); n++;
+      if ((props.dv360AdRowsRaw ?? []).length > 0) {
+        pages.push(<GoogleCreativePage key="google-creative" {...props} pageNum={n} total={0} />); n++;
+      }
+    }
+    if (hasMetaCampaigns) {
+      pages.push(<FacebookDetailPage key="fb-detail" {...props} pageNum={n} total={0} />); n++;
+      if ((props.metaAdRowsRaw ?? []).length > 0) {
+        pages.push(<FacebookCreativePage key="fb-creative" {...props} pageNum={n} total={0} />); n++;
+      }
+    }
   }
 
   if (inc.ai)       { pages.push(<AiAnalysisPage key="ai" {...props} pageNum={n} total={0} />); n++; }
