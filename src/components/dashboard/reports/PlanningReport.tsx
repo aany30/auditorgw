@@ -195,13 +195,13 @@ function AdSetBreakdownTable({ adSets, currency }: { adSets: AdSetData[]; curren
   const totClicks = sorted.reduce((s, a) => s + (a.clicks ?? 0), 0);
   const totReach = sorted.reduce((s, a) => s + (a.reach ?? 0), 0);
   return (
-    <div className="mt-4 border border-gray-200 rounded-lg overflow-hidden">
+    <div className="mt-4 border border-gray-200 rounded-lg">
       <button onClick={() => setOpen(!open)} className="w-full px-4 py-2.5 flex items-center justify-between bg-gray-50 hover:bg-gray-100 transition text-xs font-semibold text-gray-700">
         <span>Ad Sets — Delivered Breakdown ({sorted.length})</span>
         <span className="text-gray-400">{open ? "▲" : "▼"}</span>
       </button>
       {open && (
-        <div className="overflow-x-auto">
+        <div>
           <table className="w-full text-xs">
             <thead className="bg-gray-50 border-b border-gray-100 sticky top-0 z-20 shadow-sm">
               <tr>
@@ -254,13 +254,13 @@ function AdSetBreakdownTable({ adSets, currency }: { adSets: AdSetData[]; curren
 function LineItemReachTable({ lineItems, currency }: { lineItems: [string, { reach: number; frequency: number; name: string }][]; currency: string }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="mt-4 border border-gray-200 rounded-lg overflow-hidden">
+    <div className="mt-4 border border-gray-200 rounded-lg">
       <button onClick={() => setOpen(!open)} className="w-full px-4 py-2.5 flex items-center justify-between bg-gray-50 hover:bg-gray-100 transition text-xs font-semibold text-gray-700">
         <span>Line Items — Reach &amp; Frequency ({lineItems.length})</span>
         <span className="text-gray-400">{open ? "▲" : "▼"}</span>
       </button>
       {open && (
-        <div className="overflow-x-auto">
+        <div>
           <table className="w-full text-xs">
             <thead className="bg-gray-50 border-b border-gray-100 sticky top-0 z-20 shadow-sm">
               <tr>
@@ -569,7 +569,7 @@ function ExtraDeepDivePanel({
             Showing aggregated results for {focusEntries.length} campaigns: {focusEntries.map((r) => r.name).join(", ")}
           </div>
         )}
-        <div className="overflow-x-auto">
+        <div>
           <table className="w-full text-xs">
             <thead className="bg-gray-50 border-b border-gray-100 sticky top-0 z-20 shadow-sm">
               <tr>
@@ -1301,7 +1301,7 @@ export function PlanningSection({ campaigns, loading, currency, storageSuffix, d
                   Showing aggregated results for {focusEntries.length} campaigns: {focusEntries.map((r) => r.name).join(", ")}
                 </div>
               )}
-              <div className="overflow-x-auto">
+              <div>
                 <table className="w-full text-xs">
                   <thead className="bg-gray-50 border-b border-gray-100 sticky top-0 z-20 shadow-sm">
                     <tr>
@@ -1367,11 +1367,11 @@ export function PlanningSection({ campaigns, loading, currency, storageSuffix, d
                       if (adSets.length === 0) return null;
                       const sorted = [...adSets].sort((a, b) => b.spend - a.spend);
                       return (
-                        <div className="border border-gray-200 rounded-lg overflow-hidden">
+                        <div className="border border-gray-200 rounded-lg">
                           <div className="px-4 py-2.5 bg-gray-50 text-xs font-semibold text-gray-700">
                             Ad Sets ({sorted.length}) — click to drill down
                           </div>
-                          <div className="overflow-x-auto">
+                          <div>
                             <table className="w-full text-xs">
                               <thead className="bg-gray-50 border-b border-gray-100 sticky top-0 z-20 shadow-sm">
                                 <tr>
@@ -1411,11 +1411,11 @@ export function PlanningSection({ campaigns, loading, currency, storageSuffix, d
                       return (
                         <>
                           {ios.length > 0 && (
-                            <div className="border border-gray-200 rounded-lg overflow-hidden">
+                            <div className="border border-gray-200 rounded-lg">
                               <div className="px-4 py-2.5 bg-gray-50 text-xs font-semibold text-gray-700">
                                 Insertion Orders ({ios.length}) — click to drill down
                               </div>
-                              <div className="overflow-x-auto">
+                              <div>
                                 <table className="w-full text-xs">
                                   <thead className="bg-gray-50 border-b border-gray-100 sticky top-0 z-20 shadow-sm">
                                     <tr>
@@ -1504,11 +1504,11 @@ export function PlanningSection({ campaigns, loading, currency, storageSuffix, d
                         ))}
                       </div>
                       {lineItems.length > 0 && (
-                        <div className="border border-gray-200 rounded-lg overflow-hidden bg-white">
+                        <div className="border border-gray-200 rounded-lg bg-white">
                           <div className="px-4 py-2 bg-gray-50 text-xs font-semibold text-gray-700">
                             Line Items ({lineItems.length})
                           </div>
-                          <div className="overflow-x-auto">
+                          <div>
                             <table className="w-full text-xs">
                               <thead className="bg-gray-50 border-b border-gray-100 sticky top-0 z-20 shadow-sm">
                                 <tr>
@@ -1951,7 +1951,7 @@ function AggMetricsTable({
   headerRight?: React.ReactNode; countLabel?: string;
 }) {
   return (
-    <div className="rounded-lg border border-gray-200 overflow-hidden">
+    <div className="rounded-lg border border-gray-200">
       <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100 flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-sm font-bold text-gray-900">{title}</span>
@@ -3632,7 +3632,7 @@ ${deepDivePlanPagesAll}
                   DV360 Line Items ({filteredDv.length})
                   {dv360AudFilter !== "all" && <span className="text-xs font-normal text-gray-400 ml-2">filtered by: {dv360AudFilter}</span>}
                 </h4>
-                <div className="overflow-x-auto">
+                <div>
                   <table className="w-full text-xs">
                     <thead className="bg-white sticky top-0 z-20 shadow-sm">
                       <tr className="text-gray-500 border-b border-gray-200">
