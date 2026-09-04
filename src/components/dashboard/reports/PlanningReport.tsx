@@ -2040,7 +2040,9 @@ function AggComboPanel({
   const [dv360Values, setDv360Values] = useState<string[]>(initialDv360Values);
   const [plannedMeta, setPlannedMeta] = useState<Record<string, number>>(initialPlannedMeta);
   const [plannedDv360, setPlannedDv360] = useState<Record<string, number>>(initialPlannedDv360);
-  const [saveNameDraft, setSaveNameDraft] = useState<string | null>(null);
+  // Always-visible name box — same convention as the campaign deep-dive's
+  // "Plan name" field. No extra click needed to reveal it before saving.
+  const [nameDraft, setNameDraft] = useState("");
   const [justSaved, setJustSaved] = useState(false);
 
   useEffect(() => {
@@ -2074,42 +2076,28 @@ function AggComboPanel({
           <p className="text-[11px] text-gray-400 mt-0.5">{panelLabel}</p>
         </div>
         <div className="flex items-center gap-2">
-          {saveNameDraft !== null ? (
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                const trimmed = saveNameDraft.trim();
-                if (trimmed) {
-                  onSavePanel(trimmed, { metaValues, dv360Values, plannedMeta, plannedDv360 });
-                  setJustSaved(true);
-                  setTimeout(() => setJustSaved(false), 2000);
-                }
-                setSaveNameDraft(null);
-              }}
-              className="inline-flex items-center gap-1.5"
-            >
-              <input
-                autoFocus
-                value={saveNameDraft}
-                onChange={(e) => setSaveNameDraft(e.target.value)}
-                placeholder="Plan name"
-                className="px-2 py-1 text-xs border border-blue-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-200 w-40"
-                onKeyDown={(e) => { if (e.key === "Escape") setSaveNameDraft(null); }}
-              />
-              <button type="submit" className="px-2 py-1 text-xs font-semibold bg-blue-600 text-white rounded-md hover:bg-blue-700">Save</button>
-              <button type="button" onClick={() => setSaveNameDraft(null)} className="px-2 py-1 text-xs font-semibold text-gray-500 hover:text-gray-700">Cancel</button>
-            </form>
-          ) : (
-            <button
-              onClick={() => setSaveNameDraft(`${panelLabel} plan`)}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border shadow-sm transition ${
-                justSaved ? "bg-green-50 border-green-300 text-green-700" : "bg-blue-600 border-blue-600 text-white hover:bg-blue-700"
-              }`}
-            >
-              <Save className="w-3.5 h-3.5" />
-              {justSaved ? "Saved ✓" : "Save plan"}
-            </button>
-          )}
+          <input
+            value={nameDraft}
+            onChange={(e) => setNameDraft(e.target.value)}
+            placeholder={`${panelLabel} plan`}
+            className="px-2 py-1.5 text-xs font-medium border border-blue-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-200 w-44"
+          />
+          <button
+            onClick={() => {
+              const trimmed = (nameDraft || `${panelLabel} plan`).trim();
+              if (!trimmed) return;
+              onSavePanel(trimmed, { metaValues, dv360Values, plannedMeta, plannedDv360 });
+              if (!nameDraft) setNameDraft(trimmed);
+              setJustSaved(true);
+              setTimeout(() => setJustSaved(false), 2000);
+            }}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border shadow-sm transition ${
+              justSaved ? "bg-green-50 border-green-300 text-green-700" : "bg-blue-600 border-blue-600 text-white hover:bg-blue-700"
+            }`}
+          >
+            <Save className="w-3.5 h-3.5" />
+            {justSaved ? "Saved ✓" : "Save plan"}
+          </button>
           <GapInsight
             campaign={`Combo — ${panelLabel}`}
             planned={combinedPlanned}
@@ -2216,8 +2204,11 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
   const [showComboSavedPlans, setShowComboSavedPlans] = useState<"channel" | "objective" | "creative" | null>(null);
   const [renamingComboPlanId, setRenamingComboPlanId] = useState<string | null>(null);
   const [renameComboValue, setRenameComboValue] = useState("");
-  const [saveAllComboName, setSaveAllComboName] = useState<"channel" | "objective" | "creative" | null>(null);
-  const [saveAllComboDraft, setSaveAllComboDraft] = useState("");
+  // Persistent (always-visible) plan-name box per dimension — same convention as
+  // the campaign deep-dive's "Plan name" field. Typing here IS the name used by
+  // "Save all plans"; loading a plan fills it in and flips the label to
+  // "Currently viewing plan" so you always see which one you're in.
+  const [comboPlanNameDraft, setComboPlanNameDraft] = useState<Record<"channel" | "objective" | "creative", string>>({ channel: "", objective: "", creative: "" });
 
   const comboDimensionState = (dimension: "channel" | "objective" | "creative") => {
     if (dimension === "channel") return {
@@ -2251,6 +2242,17 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
     setExtraPanels((prev) => prev.filter((p) => p.id !== id));
     delete panelStates.current[id];
   };
+  // "+ New" — clears the currently-viewed combo plan for this dimension so the
+  // user can start a fresh selection, mirroring the campaign deep-dive's + New.
+  const newComboPlan = (dimension: "channel" | "objective" | "creative") => {
+    const { setMetaValues, setDv360Values, setExtraPanels, panelStates } = comboDimensionState(dimension);
+    setMetaValues([]);
+    setDv360Values([]);
+    setExtraPanels([]);
+    panelStates.current = {};
+    setActiveComboPlanId((prev) => ({ ...prev, [dimension]: null }));
+    setComboPlanNameDraft((prev) => ({ ...prev, [dimension]: "" }));
+  };
   const saveComboPlanGroup = (dimension: "channel" | "objective" | "creative", name: string, panels: AggComboSelection[]) => {
     const { setPlanGroups } = comboDimensionState(dimension);
     const group: AggPlanGroup = {
@@ -2277,11 +2279,13 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
       initial: panel,
     })));
     setActiveComboPlanId((prev) => ({ ...prev, [dimension]: group.id }));
+    setComboPlanNameDraft((prev) => ({ ...prev, [dimension]: group.name }));
   };
   const renameComboPlanGroup = (dimension: "channel" | "objective" | "creative", id: string, newName: string) => {
     const { setPlanGroups } = comboDimensionState(dimension);
     setPlanGroups((prev) => ({ ...prev, groups: prev.groups.map((g) => g.id === id ? { ...g, name: newName, updatedAt: Date.now() } : g) }));
     setRenamingComboPlanId(null);
+    if (activeComboPlanId[dimension] === id) setComboPlanNameDraft((prev) => ({ ...prev, [dimension]: newName }));
   };
   const removeComboPlanGroup = (dimension: "channel" | "objective" | "creative", id: string) => {
     const { setPlanGroups } = comboDimensionState(dimension);
@@ -2298,6 +2302,27 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
     const extras = extraPanels.map((p) => panelStates.current[p.id]).filter((s): s is AggComboSelection => !!s);
     saveComboPlanGroup(dimension, name, [mainPanel, ...extras]);
   };
+
+  // Auto-load the most recently saved combo plan for each dimension on first
+  // mount, so opening Channel/Objective/Creative shows the last saved view
+  // instead of a blank "All values" state — mirrors the campaign deep-dive's
+  // auto-load-last-plan behavior.
+  const comboAutoLoadedRef = useRef(false);
+  useEffect(() => {
+    if (comboAutoLoadedRef.current) return;
+    const dims: Array<"channel" | "objective" | "creative"> = ["channel", "objective", "creative"];
+    const stores = { channel: channelPlanGroups, objective: objectivePlanGroups, creative: creativePlanGroups };
+    const anyGroups = dims.some((d) => stores[d].groups.length > 0);
+    if (!anyGroups) return;
+    comboAutoLoadedRef.current = true;
+    for (const d of dims) {
+      const groups = stores[d].groups;
+      if (groups.length === 0) continue;
+      const mostRecent = [...groups].sort((a, b) => b.updatedAt - a.updatedAt)[0];
+      loadComboPlanGroup(d, mostRecent);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [channelPlanGroups.groups.length, objectivePlanGroups.groups.length, creativePlanGroups.groups.length]);
 
   const metaCampaigns = useMemo(() => campaigns.filter((c) => c.platform === "meta"), [campaigns]);
   const dv360Campaigns = useMemo(() => campaigns.filter((c) => c.platform === "dv360"), [campaigns]);
@@ -3225,7 +3250,15 @@ ${savedPlanPages}
           </div>
         </div>
         {comboDimension && comboState && (
-          <div className="relative">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => newComboPlan(comboDimension)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-green-200 bg-green-50 text-green-700 hover:bg-green-100 transition"
+              title="Start a fresh combo (clears current selections)"
+            >
+              <Plus className="w-3.5 h-3.5" /> New
+            </button>
+            <div className="relative">
             <button
               onClick={() => setShowComboSavedPlans(showComboSavedPlans === comboDimension ? null : comboDimension)}
               className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition ${
@@ -3283,9 +3316,26 @@ ${savedPlanPages}
                 )}
               </div>
             )}
+            </div>
           </div>
         )}
       </div>
+
+      {/* Persistent plan-name box — typing here IS the name "Save all plans" uses.
+          Loading a saved plan fills it in and flips the label. */}
+      {comboDimension && comboState && (
+        <div className="px-5 py-3 border-b border-gray-100 bg-gradient-to-r from-blue-50/40 to-white">
+          <label className="block text-[11px] uppercase font-bold tracking-wider text-blue-700 mb-1">
+            {activeComboPlanId[comboDimension] ? "Currently viewing plan" : "Plan name"}
+          </label>
+          <input
+            value={comboPlanNameDraft[comboDimension]}
+            onChange={(e) => setComboPlanNameDraft((prev) => ({ ...prev, [comboDimension]: e.target.value }))}
+            placeholder={`${scopeLabel} plan`}
+            className="w-full px-3 py-2.5 text-base font-semibold text-gray-900 border border-blue-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-300 focus:border-blue-400 bg-white shadow-sm"
+          />
+        </div>
+      )}
 
       <div className="p-5 space-y-4">
         {loading ? (
@@ -3332,33 +3382,17 @@ ${savedPlanPages}
               >
                 <Plus className="w-3.5 h-3.5" /> Add another combo view
               </button>
-              {saveAllComboName === comboDimension ? (
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    const trimmed = saveAllComboDraft.trim();
-                    if (trimmed) saveAllComboPlans(comboDimension, trimmed);
-                    setSaveAllComboName(null); setSaveAllComboDraft("");
-                  }}
-                  className="inline-flex items-center gap-1.5"
-                >
-                  <input
-                    autoFocus value={saveAllComboDraft} onChange={(e) => setSaveAllComboDraft(e.target.value)}
-                    placeholder="Plan name"
-                    className="px-2 py-1 text-xs border border-blue-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-200 w-40"
-                    onKeyDown={(e) => { if (e.key === "Escape") setSaveAllComboName(null); }}
-                  />
-                  <button type="submit" className="px-2 py-1 text-xs font-semibold bg-blue-600 text-white rounded-md hover:bg-blue-700">Save</button>
-                  <button type="button" onClick={() => setSaveAllComboName(null)} className="px-2 py-1 text-xs font-semibold text-gray-500 hover:text-gray-700">Cancel</button>
-                </form>
-              ) : (
-                <button
-                  onClick={() => setSaveAllComboName(comboDimension)}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition"
-                >
-                  <Save className="w-3.5 h-3.5" /> Save all plans{comboState.extraPanels.length > 0 ? ` (${comboState.extraPanels.length + 1})` : ""}
-                </button>
-              )}
+              <button
+                onClick={() => {
+                  const trimmed = (comboPlanNameDraft[comboDimension] || `${scopeLabel} plan`).trim();
+                  if (!trimmed) return;
+                  saveAllComboPlans(comboDimension, trimmed);
+                  if (!comboPlanNameDraft[comboDimension]) setComboPlanNameDraft((prev) => ({ ...prev, [comboDimension]: trimmed }));
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition"
+              >
+                <Save className="w-3.5 h-3.5" /> Save all plans{comboState.extraPanels.length > 0 ? ` (${comboState.extraPanels.length + 1})` : ""}
+              </button>
             </div>
           </>
         )}
