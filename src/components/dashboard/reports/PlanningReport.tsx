@@ -202,7 +202,7 @@ function AdSetBreakdownTable({ adSets, currency }: { adSets: AdSetData[]; curren
       {open && (
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
-            <thead className="bg-gray-50 border-b border-gray-100">
+            <thead className="bg-gray-50 border-b border-gray-100 sticky top-0 z-20 shadow-sm">
               <tr>
                 <th className="px-4 py-2 text-left text-[10px] uppercase font-semibold text-gray-500">Ad Set</th>
                 <th className="px-3 py-2 text-right text-[10px] uppercase font-semibold text-gray-500">Spend</th>
@@ -261,7 +261,7 @@ function LineItemReachTable({ lineItems, currency }: { lineItems: [string, { rea
       {open && (
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
-            <thead className="bg-gray-50 border-b border-gray-100">
+            <thead className="bg-gray-50 border-b border-gray-100 sticky top-0 z-20 shadow-sm">
               <tr>
                 <th className="px-4 py-2 text-left text-[10px] uppercase font-semibold text-gray-500">Line Item</th>
                 <th className="px-3 py-2 text-right text-[10px] uppercase font-semibold text-gray-500">Reach</th>
@@ -570,7 +570,7 @@ function ExtraDeepDivePanel({
         )}
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
-            <thead className="bg-gray-50 border-b border-gray-100">
+            <thead className="bg-gray-50 border-b border-gray-100 sticky top-0 z-20 shadow-sm">
               <tr>
                 <th className="px-3 py-2 text-left text-[10px] uppercase font-semibold text-gray-500">Metric</th>
                 <th className="px-3 py-2 text-right text-[10px] uppercase font-semibold text-gray-500">Planned</th>
@@ -1302,7 +1302,7 @@ export function PlanningSection({ campaigns, loading, currency, storageSuffix, d
               )}
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
-                  <thead className="bg-gray-50 border-b border-gray-100">
+                  <thead className="bg-gray-50 border-b border-gray-100 sticky top-0 z-20 shadow-sm">
                     <tr>
                       <th className="px-3 py-2 text-left text-[10px] uppercase font-semibold text-gray-500">Metric</th>
                       <th className="px-3 py-2 text-right text-[10px] uppercase font-semibold text-gray-500">Planned</th>
@@ -1372,7 +1372,7 @@ export function PlanningSection({ campaigns, loading, currency, storageSuffix, d
                           </div>
                           <div className="overflow-x-auto">
                             <table className="w-full text-xs">
-                              <thead className="bg-gray-50 border-b border-gray-100">
+                              <thead className="bg-gray-50 border-b border-gray-100 sticky top-0 z-20 shadow-sm">
                                 <tr>
                                   <th className="px-4 py-2 text-left text-[10px] uppercase font-semibold text-gray-500">Ad Set</th>
                                   <th className="px-3 py-2 text-right text-[10px] uppercase font-semibold text-gray-500">Spend</th>
@@ -1416,7 +1416,7 @@ export function PlanningSection({ campaigns, loading, currency, storageSuffix, d
                               </div>
                               <div className="overflow-x-auto">
                                 <table className="w-full text-xs">
-                                  <thead className="bg-gray-50 border-b border-gray-100">
+                                  <thead className="bg-gray-50 border-b border-gray-100 sticky top-0 z-20 shadow-sm">
                                     <tr>
                                       <th className="px-4 py-2 text-left text-[10px] uppercase font-semibold text-gray-500">IO</th>
                                       <th className="px-3 py-2 text-right text-[10px] uppercase font-semibold text-gray-500">Spend</th>
@@ -1509,7 +1509,7 @@ export function PlanningSection({ campaigns, loading, currency, storageSuffix, d
                           </div>
                           <div className="overflow-x-auto">
                             <table className="w-full text-xs">
-                              <thead className="bg-gray-50 border-b border-gray-100">
+                              <thead className="bg-gray-50 border-b border-gray-100 sticky top-0 z-20 shadow-sm">
                                 <tr>
                                   <th className="px-4 py-2 text-left text-[10px] uppercase font-semibold text-gray-500">Line Item</th>
                                   <th className="px-3 py-2 text-right text-[10px] uppercase font-semibold text-gray-500">Spend</th>
@@ -1962,7 +1962,7 @@ function AggMetricsTable({
         </div>
       </div>
       <table className="w-full text-sm">
-        <thead>
+        <thead className="bg-white sticky top-0 z-20 shadow-sm">
           <tr className="border-b border-gray-100 bg-white">
             <th className="px-4 py-2 text-left text-[10px] uppercase font-semibold text-gray-500">Metric</th>
             <th className="px-3 py-2 text-right text-[10px] uppercase font-semibold text-gray-500 w-40">Planned</th>
@@ -3412,7 +3412,7 @@ ${savedPlanPages}
                 </h4>
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
-                    <thead>
+                    <thead className="bg-white sticky top-0 z-20 shadow-sm">
                       <tr className="text-gray-500 border-b border-gray-200">
                         <th className="text-left py-2 px-2 font-semibold">Line Item</th>
                         <th className="text-left py-2 px-2 font-semibold">Insertion Order</th>
