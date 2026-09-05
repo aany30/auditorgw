@@ -2242,12 +2242,30 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
   // Multi-select per platform per dimension — empty array = "all". Lets you
   // combine multiple values (e.g. Facebook + Instagram + WhatsApp) into one
   // aggregated planned-vs-delivered row, same idea as the campaign deep-dive.
-  const [metaChannel, setMetaChannel] = useState<string[]>([]);
-  const [dv360Channel, setDv360Channel] = useState<string[]>([]);
-  const [metaObjective, setMetaObjective] = useState<string[]>([]);
-  const [dv360Objective, setDv360Objective] = useState<string[]>([]);
-  const [metaCreative, setMetaCreative] = useState<string[]>([]);
-  const [dv360Creative, setDv360Creative] = useState<string[]>([]);
+  // Hier selection state for the main-row pickers (per dimension per platform).
+  // The flat metaChannel/etc. arrays are DERIVED from hier via useMemo below —
+  // that keeps existing dependencies (tables, snapshots, plan-key derivation)
+  // working, while giving the picker drill capability.
+  const [metaChannelHier, setMetaChannelHier] = useState<HierNodeSelection[]>([]);
+  const [dv360ChannelHier, setDv360ChannelHier] = useState<HierNodeSelection[]>([]);
+  const [metaObjectiveHier, setMetaObjectiveHier] = useState<HierNodeSelection[]>([]);
+  const [dv360ObjectiveHier, setDv360ObjectiveHier] = useState<HierNodeSelection[]>([]);
+  const [metaCreativeHier, setMetaCreativeHier] = useState<HierNodeSelection[]>([]);
+  const [dv360CreativeHier, setDv360CreativeHier] = useState<HierNodeSelection[]>([]);
+  const metaChannel = useMemo(() => [...new Set(metaChannelHier.map((n) => n.dimensionValue))], [metaChannelHier]);
+  const dv360Channel = useMemo(() => [...new Set(dv360ChannelHier.map((n) => n.dimensionValue))], [dv360ChannelHier]);
+  const metaObjective = useMemo(() => [...new Set(metaObjectiveHier.map((n) => n.dimensionValue))], [metaObjectiveHier]);
+  const dv360Objective = useMemo(() => [...new Set(dv360ObjectiveHier.map((n) => n.dimensionValue))], [dv360ObjectiveHier]);
+  const metaCreative = useMemo(() => [...new Set(metaCreativeHier.map((n) => n.dimensionValue))], [metaCreativeHier]);
+  const dv360Creative = useMemo(() => [...new Set(dv360CreativeHier.map((n) => n.dimensionValue))], [dv360CreativeHier]);
+  // Setters that snap flat updates (from load/restore paths that only carry
+  // the dimensionValue array) into hier form (each value with no narrowing).
+  const setMetaChannel = useCallback((v: string[]) => setMetaChannelHier(v.map((dv) => ({ dimensionValue: dv }))), []);
+  const setDv360Channel = useCallback((v: string[]) => setDv360ChannelHier(v.map((dv) => ({ dimensionValue: dv }))), []);
+  const setMetaObjective = useCallback((v: string[]) => setMetaObjectiveHier(v.map((dv) => ({ dimensionValue: dv }))), []);
+  const setDv360Objective = useCallback((v: string[]) => setDv360ObjectiveHier(v.map((dv) => ({ dimensionValue: dv }))), []);
+  const setMetaCreative = useCallback((v: string[]) => setMetaCreativeHier(v.map((dv) => ({ dimensionValue: dv }))), []);
+  const setDv360Creative = useCallback((v: string[]) => setDv360CreativeHier(v.map((dv) => ({ dimensionValue: dv }))), []);
   const [snapshots, setSnapshots] = usePersistentJSON<AggSnapshot[]>("planning-agg-snapshots", []);
   const [openSnap, setOpenSnap] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -2628,26 +2646,138 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
   // REACH reports). deliveredOfGroup already sums it, so no special override
   // needed — every group (full or sub) gets real summed LI reach.
 
+  // Union of every ad-set we know about: from the ad-sets fetch AND from each
+  // campaign's own .adSets list (the campaigns API returns them nested). The
+  // campaigns-nested source is the one that always has the parent campaignId,
+  // so we prefer it — it prevents "unknown" campaign nodes when the flat
+  // ad-sets endpoint is slow, paginated, or hasn't returned yet.
+  const adSetById = useMemo(() => {
+    const m = new Map<string, { id: string; name: string; campaignId: string }>();
+    for (const c of metaCampaigns) {
+      for (const as of c.adSets ?? []) m.set(as.id, { id: as.id, name: as.name, campaignId: c.id });
+    }
+    for (const as of metaAdSets.rows) {
+      if (!m.has(as.id)) m.set(as.id, { id: as.id, name: as.name, campaignId: as.campaignId });
+    }
+    return m;
+  }, [metaCampaigns, metaAdSets.rows]);
+
+  // Delivered sum for a hierarchical selection on Meta (walks metaAdRowsFull
+  // filtered by the roll-up rule declared on HierNodeSelection). Channel-mode
+  // caveat: ad-level rows don't carry per-publisher splits, so at leaf level
+  // we sum ad total delivery (across all publishers). Whole-dim (no narrow)
+  // uses the exact metaPub aggregate.
+  const metaHierDelivered = useCallback((selection: HierNodeSelection[]): Delivered => {
+    if (selection.length === 0) return deliveredOfGroup(metaCampaigns, strictWindow);
+    const acc = { spend: 0, impressions: 0, clicks: 0, reach: 0, videoViews: 0 };
+    for (const node of selection) {
+      const narrowed = !!(node.campaignIds || node.adSetIds || node.adIds);
+      // Channel + whole publisher (no narrowing): honest per-publisher sum.
+      if (groupBy === "channel" && !narrowed) {
+        const row = metaPub.rows.find((r) => metaPubLabel(r.label) === node.dimensionValue);
+        if (row) {
+          acc.spend += row.spend; acc.impressions += row.impressions;
+          acc.clicks += row.clicks; acc.reach += row.reach || 0; acc.videoViews += row.videoViews || 0;
+        }
+        continue;
+      }
+      const dimField = groupBy === "objective" ? "objective" : groupBy === "creative" ? "format" : "channel";
+      for (const ad of metaAdRowsFull) {
+        if (dimField === "format" && ad.format !== node.dimensionValue) continue;
+        if (dimField === "objective") {
+          const as = ad.adSetId ? adSetById.get(ad.adSetId) : undefined;
+          const c = as ? metaCampaigns.find((mc) => mc.id === as.campaignId) : undefined;
+          if (!c || prettyObjective(c.objective) !== node.dimensionValue) continue;
+        }
+        if (narrowed) {
+          const as = ad.adSetId ? adSetById.get(ad.adSetId) : undefined;
+          const cid = as?.campaignId;
+          if (node.campaignIds && (!cid || !node.campaignIds.includes(cid))) continue;
+          if (node.adSetIds && (!ad.adSetId || !node.adSetIds.includes(ad.adSetId))) continue;
+          if (node.adIds && !node.adIds.includes(ad.id)) continue;
+        }
+        acc.spend += ad.spend; acc.impressions += ad.impressions; acc.clicks += ad.clicks;
+        acc.reach += ad.reach; acc.videoViews += ad.videoViews;
+      }
+    }
+    return deriveDelivered(acc);
+  }, [groupBy, metaCampaigns, metaAdRowsFull, adSetById, metaPub.rows, strictWindow]);
+
+  const dv360HierDelivered = useCallback((selection: HierNodeSelection[]): Delivered => {
+    if (selection.length === 0) return deliveredOfGroup(dv360Campaigns, strictWindow);
+    const acc = { spend: 0, impressions: 0, clicks: 0, reach: 0, videoViews: 0 };
+    for (const node of selection) {
+      const narrowed = !!(node.campaignIds || node.adSetIds || node.adIds);
+      if (groupBy === "channel" && !narrowed) {
+        const row = dvExch.rows.find((r) => r.label === node.dimensionValue);
+        if (row) {
+          acc.spend += row.spend; acc.impressions += row.impressions;
+          acc.clicks += row.clicks; acc.videoViews += row.videoViews || 0;
+        }
+        continue;
+      }
+      for (const c of dv360Campaigns) {
+        if (groupBy === "objective" && prettyObjective(c.objective) !== node.dimensionValue) continue;
+        if (node.campaignIds && !node.campaignIds.includes(c.id)) continue;
+        for (const io of c.adSets ?? []) {
+          if (node.adSetIds && !node.adSetIds.includes(io.id)) continue;
+          for (const li of io.ads ?? []) {
+            if (node.adIds && !node.adIds.includes(li.id)) continue;
+            if (groupBy === "creative") {
+              const type = li.creatives?.[0]?.type || li.lineItemType || "Other";
+              if (normFormat(type) !== node.dimensionValue) continue;
+            }
+            acc.spend += li.spend ?? 0;
+            acc.impressions += li.impressions ?? 0;
+            acc.clicks += li.clicks ?? 0;
+            acc.reach += li.reach ?? 0;
+          }
+        }
+      }
+    }
+    return deriveDelivered(acc);
+  }, [groupBy, dv360Campaigns, dvExch.rows, strictWindow]);
+
   // The tables currently on screen — drives both the render and CSV export.
   const tables = useMemo<AggTable[]>(() => {
     if (groupBy === "overall") {
       const delivered = deliveredOfGroup(campaigns, strictWindow);
       return [{ key: "overall", label: "Overall — all campaigns", count: campaigns.length, delivered, gcur: metaCurrency }];
     }
+    // For channel/objective/creative, when hier is engaged, delegate to
+    // metaHierDelivered/dv360HierDelivered so any drill-narrowing shows up
+    // in the main row (not just in "+ Add another combo view" panels).
+    const hierNarrowed = (h: HierNodeSelection[]) => h.some((n) => n.campaignIds || n.adSetIds || n.adIds);
+    const subLabelForHier = (h: HierNodeSelection[], fallback: string, labelFn?: (v: string) => string) => {
+      if (h.length === 0) return fallback;
+      const parts = h.map((n) => {
+        const base = labelFn ? labelFn(n.dimensionValue) : n.dimensionValue;
+        const narrows: string[] = [];
+        if (n.adIds?.length) narrows.push(`${n.adIds.length} ad${n.adIds.length === 1 ? "" : "s"}`);
+        else if (n.adSetIds?.length) narrows.push(`${n.adSetIds.length} ad set${n.adSetIds.length === 1 ? "" : "s"}`);
+        else if (n.campaignIds?.length) narrows.push(`${n.campaignIds.length} campaign${n.campaignIds.length === 1 ? "" : "s"}`);
+        return narrows.length > 0 ? `${base} (${narrows.join(", ")})` : base;
+      });
+      return parts.join(" + ");
+    };
     if (groupBy === "channel") {
       const out: AggTable[] = [];
       if (hasMeta) {
-        const d = metaChannel.length === 0
-          ? deliveredOfGroup(metaCampaigns, strictWindow)
-          : sumRowsDelivered(metaPub.rows.filter((r) => metaChannel.includes(r.label)));
-        const sub = metaChannel.length === 0 ? "All channels" : metaChannel.map(metaPubLabel).join(" + ");
+        const d = hierNarrowed(metaChannelHier)
+          ? metaHierDelivered(metaChannelHier)
+          : metaChannel.length === 0
+            ? deliveredOfGroup(metaCampaigns, strictWindow)
+            : sumRowsDelivered(metaPub.rows.filter((r) => metaChannel.includes(r.label)));
+        const sub = subLabelForHier(metaChannelHier, "All channels", metaPubLabel);
         out.push({ key: mainComboKey("channel", "meta", metaChannel), label: "Meta", sub, count: metaCampaigns.length, delivered: d, gcur: metaCurrency, platform: "meta" });
       }
       if (hasDv) {
-        const d = dv360Channel.length === 0
-          ? deliveredOfGroup(dv360Campaigns, strictWindow)
-          : sumRowsDelivered(dvExch.rows.filter((r) => dv360Channel.includes(r.label)));
-        const sub = dv360Channel.length === 0 ? "All exchanges" : dv360Channel.join(" + ");
+        const d = hierNarrowed(dv360ChannelHier)
+          ? dv360HierDelivered(dv360ChannelHier)
+          : dv360Channel.length === 0
+            ? deliveredOfGroup(dv360Campaigns, strictWindow)
+            : sumRowsDelivered(dvExch.rows.filter((r) => dv360Channel.includes(r.label)));
+        const sub = subLabelForHier(dv360ChannelHier, "All exchanges");
         out.push({ key: mainComboKey("channel", "dv360", dv360Channel), label: "DV360", sub, count: dv360Campaigns.length, delivered: d, gcur: dv360Currency, platform: "dv360" });
       }
       return out;
@@ -2656,30 +2786,40 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
       const out: AggTable[] = [];
       if (hasMeta) {
         const mc = metaObjective.length === 0 ? metaCampaigns : metaCampaigns.filter((c) => metaObjective.includes(prettyObjective(c.objective)));
-        const sub = metaObjective.length === 0 ? "All objectives" : metaObjective.join(" + ");
-        out.push({ key: mainComboKey("objective", "meta", metaObjective), label: "Meta", sub, count: mc.length, delivered: deliveredOfGroup(mc, strictWindow), gcur: metaCurrency, platform: "meta" });
+        const d = hierNarrowed(metaObjectiveHier)
+          ? metaHierDelivered(metaObjectiveHier)
+          : deliveredOfGroup(mc, strictWindow);
+        const sub = subLabelForHier(metaObjectiveHier, "All objectives");
+        out.push({ key: mainComboKey("objective", "meta", metaObjective), label: "Meta", sub, count: mc.length, delivered: d, gcur: metaCurrency, platform: "meta" });
       }
       if (hasDv) {
         const dc = dv360Objective.length === 0 ? dv360Campaigns : dv360Campaigns.filter((c) => dv360Objective.includes(prettyObjective(c.objective)));
-        const sub = dv360Objective.length === 0 ? "All objectives" : dv360Objective.join(" + ");
-        out.push({ key: mainComboKey("objective", "dv360", dv360Objective), label: "DV360", sub, count: dc.length, delivered: deliveredOfGroup(dc, strictWindow), gcur: dv360Currency, platform: "dv360" });
+        const d = hierNarrowed(dv360ObjectiveHier)
+          ? dv360HierDelivered(dv360ObjectiveHier)
+          : deliveredOfGroup(dc, strictWindow);
+        const sub = subLabelForHier(dv360ObjectiveHier, "All objectives");
+        out.push({ key: mainComboKey("objective", "dv360", dv360Objective), label: "DV360", sub, count: dc.length, delivered: d, gcur: dv360Currency, platform: "dv360" });
       }
       return out;
     }
     if (groupBy === "creative") {
       const out: AggTable[] = [];
       if (hasMeta) {
-        const d = metaCreative.length === 0
-          ? deliveredOfGroup(metaCampaigns, strictWindow)
-          : sumRowsDelivered(metaFormatRows.filter((r) => metaCreative.includes(r.label)));
-        const sub = metaCreative.length === 0 ? "All formats" : metaCreative.join(" + ");
+        const d = hierNarrowed(metaCreativeHier)
+          ? metaHierDelivered(metaCreativeHier)
+          : metaCreative.length === 0
+            ? deliveredOfGroup(metaCampaigns, strictWindow)
+            : sumRowsDelivered(metaFormatRows.filter((r) => metaCreative.includes(r.label)));
+        const sub = subLabelForHier(metaCreativeHier, "All formats");
         out.push({ key: mainComboKey("creative", "meta", metaCreative), label: "Meta", sub, count: metaCreative.length === 0 ? metaCampaigns.length : 0, delivered: d, gcur: metaCurrency, platform: "meta" });
       }
       if (hasDv) {
-        const d = dv360Creative.length === 0
-          ? deliveredOfGroup(dv360Campaigns, strictWindow)
-          : sumRowsDelivered(dvCreativeType.rows.filter((r) => dv360Creative.includes(normFormat(r.label))));
-        const sub = dv360Creative.length === 0 ? "All creative types" : dv360Creative.join(" + ");
+        const d = hierNarrowed(dv360CreativeHier)
+          ? dv360HierDelivered(dv360CreativeHier)
+          : dv360Creative.length === 0
+            ? deliveredOfGroup(dv360Campaigns, strictWindow)
+            : sumRowsDelivered(dvCreativeType.rows.filter((r) => dv360Creative.includes(normFormat(r.label))));
+        const sub = subLabelForHier(dv360CreativeHier, "All creative types");
         out.push({ key: mainComboKey("creative", "dv360", dv360Creative), label: "DV360", sub, count: dv360Campaigns.length, delivered: d, gcur: dv360Currency, platform: "dv360" });
       }
       return out;
@@ -2726,7 +2866,8 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
       out.push({ key: "aud:dv360", label: "DV360", sub: subLabel, count: filtered.length, delivered: d, gcur: dv360Currency, platform: "dv360" });
     }
     return out;
-  }, [groupBy, campaigns, metaCampaigns, dv360Campaigns, hasMeta, hasDv, metaChannel, dv360Channel, metaObjective, dv360Objective, metaCreative, dv360Creative, metaPub.rows, dvExch.rows, dvCreativeType.rows, metaFormatRows, metaCurrency, dv360Currency, metaAudFilter, dv360AudFilter, metaAdSets.rows, metaAdSets.loading, dv360LineItems.rows, dv360LineItems.loading, audNameToAdSetMatch, strictWindow]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groupBy, campaigns, metaCampaigns, dv360Campaigns, hasMeta, hasDv, metaChannel, dv360Channel, metaObjective, dv360Objective, metaCreative, dv360Creative, metaChannelHier, dv360ChannelHier, metaObjectiveHier, dv360ObjectiveHier, metaCreativeHier, dv360CreativeHier, metaPub.rows, dvExch.rows, dvCreativeType.rows, metaFormatRows, metaAdRowsFull, metaAdSets.rows, metaCurrency, dv360Currency, metaAudFilter, dv360AudFilter, metaAdSets.loading, dv360LineItems.rows, dv360LineItems.loading, audNameToAdSetMatch, strictWindow]);
 
   const joinSel = (v: string[]) => (v.length === 0 ? "All" : v.join(" + "));
   const scopeLabel = groupBy === "overall" ? "Overall"
@@ -3428,46 +3569,50 @@ ${deepDivePlanPagesAll}
   // Instagram + WhatsApp) to see them combined into one aggregated row.
   const channelDropdown = (platform: "meta" | "dv360") => {
     const isMeta = platform === "meta";
-    const sel = isMeta ? metaChannel : dv360Channel;
-    const setSel = isMeta ? setMetaChannel : setDv360Channel;
-    const opts = isMeta
-      ? metaPub.rows.map((r) => ({ id: r.label, name: metaPubLabel(r.label) }))
-      : dvExch.rows.map((r) => ({ id: r.label, name: r.label }));
-    const busy = isMeta ? metaPub.loading : (dvExch.loading || dvExch.pending);
+    const sel = isMeta ? metaChannelHier : dv360ChannelHier;
+    const setSel = isMeta ? setMetaChannelHier : setDv360ChannelHier;
+    const tree = isMeta ? metaChannelTree : dv360ChannelTree;
     return (
-      <CampaignMultiPicker
-        options={opts} values={sel} onChange={setSel}
+      <HierarchicalDimensionPicker
+        tree={tree}
+        selection={sel}
+        onChange={setSel}
         allLabelText={isMeta ? "All channels" : "All exchanges"}
-        loading={busy} entityLabel={isMeta ? "channels" : "exchanges"} icon={null}
+        entityLabel={isMeta ? "channels" : "exchanges"}
       />
     );
   };
 
   const objectiveDropdown = (platform: "meta" | "dv360") => {
     const isMeta = platform === "meta";
-    const sel = isMeta ? metaObjective : dv360Objective;
-    const setSel = isMeta ? setMetaObjective : setDv360Objective;
-    const opts = (isMeta ? metaObjectives : dv360Objectives).map((o) => ({ id: o, name: o }));
+    const sel = isMeta ? metaObjectiveHier : dv360ObjectiveHier;
+    const setSel = isMeta ? setMetaObjectiveHier : setDv360ObjectiveHier;
+    const tree = isMeta ? metaObjectiveTree : dv360ObjectiveTree;
     return (
-      <CampaignMultiPicker
-        options={opts} values={sel} onChange={setSel}
-        allLabelText="All objectives" entityLabel="objectives" icon={null}
+      <HierarchicalDimensionPicker
+        tree={tree}
+        selection={sel}
+        onChange={setSel}
+        allLabelText="All objectives"
+        entityLabel="objectives"
       />
     );
   };
 
   const creativeDropdown = (platform: "meta" | "dv360") => {
     const isMeta = platform === "meta";
-    const sel = isMeta ? metaCreative : dv360Creative;
-    const setSel = isMeta ? setMetaCreative : setDv360Creative;
-    const opts = (isMeta ? metaFormats : dv360Formats).map((o) => ({ id: o, name: o }));
+    const sel = isMeta ? metaCreativeHier : dv360CreativeHier;
+    const setSel = isMeta ? setMetaCreativeHier : setDv360CreativeHier;
+    const tree = isMeta ? metaCreativeTree : dv360CreativeTree;
     const busy = isMeta ? metaFormatLoading : (dvCreativeType.loading || dvCreativeType.pending);
     return (
       <div className="flex items-center gap-1.5">
-        <CampaignMultiPicker
-          options={opts} values={sel} onChange={setSel}
+        <HierarchicalDimensionPicker
+          tree={tree}
+          selection={sel}
+          onChange={setSel}
           allLabelText={isMeta ? "All formats" : "All creative types"}
-          loading={busy} entityLabel={isMeta ? "formats" : "creative types"} icon={null}
+          entityLabel={isMeta ? "formats" : "creative types"}
         />
         {busy && <span className="text-[10px] text-gray-400 animate-pulse">Loading…</span>}
       </div>
@@ -3535,21 +3680,6 @@ ${deepDivePlanPagesAll}
   // Built once per campaigns/adSets/ads change. Each node models
   // `{ dimensionValue → campaigns → adSets → ads }` and is consumed by
   // HierarchicalDimensionPicker in AggComboPanel.
-  // Union of every ad-set we know about: from the ad-sets fetch AND from each
-  // campaign's own .adSets list (the campaigns API returns them nested). The
-  // campaigns-nested source is the one that always has the parent campaignId,
-  // so we prefer it — it prevents "unknown" campaign nodes when the flat
-  // ad-sets endpoint is slow, paginated, or hasn't returned yet.
-  const adSetById = useMemo(() => {
-    const m = new Map<string, { id: string; name: string; campaignId: string }>();
-    for (const c of metaCampaigns) {
-      for (const as of c.adSets ?? []) m.set(as.id, { id: as.id, name: as.name, campaignId: c.id });
-    }
-    for (const as of metaAdSets.rows) {
-      if (!m.has(as.id)) m.set(as.id, { id: as.id, name: as.name, campaignId: as.campaignId });
-    }
-    return m;
-  }, [metaCampaigns, metaAdSets.rows]);
   const metaObjectiveTree = useMemo<HierTreeNode[]>(() => {
     const byObj = new Map<string, Map<string, { name: string; adSets: Map<string, { name: string; ads: { id: string; name: string }[] }> }>>();
     for (const c of metaCampaigns) {
@@ -3686,88 +3816,6 @@ ${deepDivePlanPagesAll}
       })),
     })).sort((a, b) => a.dimensionValue.localeCompare(b.dimensionValue));
   }, [dv360Campaigns]);
-
-  // Delivered sum for a hierarchical selection on Meta (walks metaAdRowsFull
-  // filtered by the roll-up rule declared on HierNodeSelection). Channel-mode
-  // caveat: ad-level rows don't carry per-publisher splits, so at leaf level
-  // we sum ad total delivery (across all publishers). Whole-dim (no narrow)
-  // uses the exact metaPub aggregate.
-  const metaHierDelivered = (selection: HierNodeSelection[]): Delivered => {
-    if (selection.length === 0) return deliveredOfGroup(metaCampaigns, strictWindow);
-    const acc = { spend: 0, impressions: 0, clicks: 0, reach: 0, videoViews: 0 };
-    for (const node of selection) {
-      const narrowed = !!(node.campaignIds || node.adSetIds || node.adIds);
-      // Channel + whole publisher (no narrowing): honest per-publisher sum.
-      if (groupBy === "channel" && !narrowed) {
-        const row = metaPub.rows.find((r) => metaPubLabel(r.label) === node.dimensionValue);
-        if (row) {
-          acc.spend += row.spend; acc.impressions += row.impressions;
-          acc.clicks += row.clicks; acc.reach += row.reach || 0; acc.videoViews += row.videoViews || 0;
-        }
-        continue;
-      }
-      const dimField = groupBy === "objective" ? "objective" : groupBy === "creative" ? "format" : "channel";
-      for (const ad of metaAdRowsFull) {
-        // Match dimension value (skipped for channel — no per-ad publisher data).
-        if (dimField === "format" && ad.format !== node.dimensionValue) continue;
-        if (dimField === "objective") {
-          const as = ad.adSetId ? adSetById.get(ad.adSetId) : undefined;
-          const c = as ? metaCampaigns.find((mc) => mc.id === as.campaignId) : undefined;
-          if (!c || prettyObjective(c.objective) !== node.dimensionValue) continue;
-        }
-        // Narrow by campaign/adSet/ad ids if present.
-        if (narrowed) {
-          const as = ad.adSetId ? adSetById.get(ad.adSetId) : undefined;
-          const cid = as?.campaignId;
-          if (node.campaignIds && (!cid || !node.campaignIds.includes(cid))) continue;
-          if (node.adSetIds && (!ad.adSetId || !node.adSetIds.includes(ad.adSetId))) continue;
-          if (node.adIds && !node.adIds.includes(ad.id)) continue;
-        }
-        acc.spend += ad.spend; acc.impressions += ad.impressions; acc.clicks += ad.clicks;
-        acc.reach += ad.reach; acc.videoViews += ad.videoViews;
-      }
-    }
-    return deriveDelivered(acc);
-  };
-
-  // Delivered sum for a hierarchical selection on DV360 (walks campaigns → IOs
-  // → LIs, filtered per node). Same channel caveat: whole-exchange = exchange
-  // breakdown; narrowed to LIs sums LI total (across exchanges).
-  const dv360HierDelivered = (selection: HierNodeSelection[]): Delivered => {
-    if (selection.length === 0) return deliveredOfGroup(dv360Campaigns, strictWindow);
-    const acc = { spend: 0, impressions: 0, clicks: 0, reach: 0, videoViews: 0 };
-    for (const node of selection) {
-      const narrowed = !!(node.campaignIds || node.adSetIds || node.adIds);
-      if (groupBy === "channel" && !narrowed) {
-        const row = dvExch.rows.find((r) => r.label === node.dimensionValue);
-        if (row) {
-          acc.spend += row.spend; acc.impressions += row.impressions;
-          acc.clicks += row.clicks; acc.videoViews += row.videoViews || 0;
-          // DV360 breakdown rows don't carry per-exchange reach.
-        }
-        continue;
-      }
-      for (const c of dv360Campaigns) {
-        if (groupBy === "objective" && prettyObjective(c.objective) !== node.dimensionValue) continue;
-        if (node.campaignIds && !node.campaignIds.includes(c.id)) continue;
-        for (const io of c.adSets ?? []) {
-          if (node.adSetIds && !node.adSetIds.includes(io.id)) continue;
-          for (const li of io.ads ?? []) {
-            if (node.adIds && !node.adIds.includes(li.id)) continue;
-            if (groupBy === "creative") {
-              const type = li.creatives?.[0]?.type || li.lineItemType || "Other";
-              if (normFormat(type) !== node.dimensionValue) continue;
-            }
-            acc.spend += li.spend ?? 0;
-            acc.impressions += li.impressions ?? 0;
-            acc.clicks += li.clicks ?? 0;
-            acc.reach += li.reach ?? 0;
-          }
-        }
-      }
-    }
-    return deriveDelivered(acc);
-  };
 
   const computeComboDelivered = (platform: "meta" | "dv360", values: string[], hier?: HierNodeSelection[]): Delivered => {
     // Hierarchical path takes precedence when caller supplies a hier selection.
