@@ -2061,10 +2061,11 @@ function AggComboPanel({
   onStateChange: (id: string, state: AggComboSelection) => void;
   onSavePanel: (name: string, state: AggComboSelection) => void;
 }) {
-  // Hier picker is only used for Objective/Creative dimensions; Channel keeps
-  // the flat CampaignMultiPicker (no per-ad-set breakdown available for
-  // publisher/exchange today).
-  const useHier = dimension === "objective" || dimension === "creative";
+  // Hier picker is used for Channel, Objective, and Creative dimensions.
+  // Caveat for Channel: Meta ad-level data doesn't carry per-publisher splits
+  // (placements deliver across multiple publishers), so at the leaf we sum
+  // the ad's TOTAL delivery — noted in the panel's Channel-mode caption.
+  const useHier = dimension === "channel" || dimension === "objective" || dimension === "creative";
   const [metaValues, setMetaValues] = useState<string[]>(initialMetaValues);
   const [dv360Values, setDv360Values] = useState<string[]>(initialDv360Values);
   const [metaHier, setMetaHier] = useState<HierNodeSelection[]>(initialMetaHier ?? []);
@@ -3614,6 +3615,39 @@ ${deepDivePlanPagesAll}
     })).sort((a, b) => a.dimensionValue.localeCompare(b.dimensionValue));
   }, [dv360Campaigns]);
 
+  // Channel tree — Meta publisher × campaigns/ad sets/ads. Per-ad publisher
+  // isn't in the ad-insights payload, so every publisher shows the same
+  // campaign tree. Delivered at the leaf sums the ad's total across
+  // publishers (documented in the caption).
+  const metaChannelTree = useMemo<HierTreeNode[]>(() => {
+    return metaPub.rows.map((r) => ({
+      dimensionValue: metaPubLabel(r.label),
+      campaigns: metaCampaigns.map((c) => ({
+        id: c.id, name: c.name,
+        adSets: metaAdSets.rows.filter((as) => as.campaignId === c.id).map((as) => ({
+          id: as.id, name: as.name,
+          ads: metaAdRowsFull.filter((ad) => ad.adSetId === as.id).map((ad) => ({ id: ad.id, name: ad.name })),
+        })),
+      })),
+    })).sort((a, b) => a.dimensionValue.localeCompare(b.dimensionValue));
+  }, [metaPub.rows, metaCampaigns, metaAdSets.rows, metaAdRowsFull]);
+
+  // DV360 exchange tree — same shape. Per-LI exchange isn't decomposed, so
+  // every exchange shows all campaigns; delivered at whole-dim uses the
+  // exchange breakdown row.
+  const dv360ChannelTree = useMemo<HierTreeNode[]>(() => {
+    return dvExch.rows.map((r) => ({
+      dimensionValue: r.label,
+      campaigns: dv360Campaigns.map((c) => ({
+        id: c.id, name: c.name,
+        adSets: (c.adSets ?? []).map((io) => ({
+          id: io.id, name: io.name,
+          ads: (io.ads ?? []).map((li) => ({ id: li.id, name: li.name })),
+        })),
+      })),
+    })).sort((a, b) => a.dimensionValue.localeCompare(b.dimensionValue));
+  }, [dvExch.rows, dv360Campaigns]);
+
   const dv360CreativeTree = useMemo<HierTreeNode[]>(() => {
     const byFmt = new Map<string, Map<string, { name: string; adSets: Map<string, { name: string; ads: { id: string; name: string }[] }> }>>();
     for (const c of dv360Campaigns) {
@@ -3640,14 +3674,27 @@ ${deepDivePlanPagesAll}
   }, [dv360Campaigns]);
 
   // Delivered sum for a hierarchical selection on Meta (walks metaAdRowsFull
-  // filtered by the roll-up rule declared on HierNodeSelection).
+  // filtered by the roll-up rule declared on HierNodeSelection). Channel-mode
+  // caveat: ad-level rows don't carry per-publisher splits, so at leaf level
+  // we sum ad total delivery (across all publishers). Whole-dim (no narrow)
+  // uses the exact metaPub aggregate.
   const metaHierDelivered = (selection: HierNodeSelection[]): Delivered => {
     if (selection.length === 0) return deliveredOfGroup(metaCampaigns, strictWindow);
     const acc = { spend: 0, impressions: 0, clicks: 0, reach: 0, videoViews: 0 };
     for (const node of selection) {
-      const dimField = groupBy === "objective" ? "objective" : "format";
+      const narrowed = !!(node.campaignIds || node.adSetIds || node.adIds);
+      // Channel + whole publisher (no narrowing): honest per-publisher sum.
+      if (groupBy === "channel" && !narrowed) {
+        const row = metaPub.rows.find((r) => metaPubLabel(r.label) === node.dimensionValue);
+        if (row) {
+          acc.spend += row.spend; acc.impressions += row.impressions;
+          acc.clicks += row.clicks; acc.reach += row.reach || 0; acc.videoViews += row.videoViews || 0;
+        }
+        continue;
+      }
+      const dimField = groupBy === "objective" ? "objective" : groupBy === "creative" ? "format" : "channel";
       for (const ad of metaAdRowsFull) {
-        // Match dimension value.
+        // Match dimension value (skipped for channel — no per-ad publisher data).
         if (dimField === "format" && ad.format !== node.dimensionValue) continue;
         if (dimField === "objective") {
           const as = ad.adSetId ? adSetById.get(ad.adSetId) : undefined;
@@ -3655,7 +3702,7 @@ ${deepDivePlanPagesAll}
           if (!c || prettyObjective(c.objective) !== node.dimensionValue) continue;
         }
         // Narrow by campaign/adSet/ad ids if present.
-        if (node.campaignIds || node.adSetIds || node.adIds) {
+        if (narrowed) {
           const as = ad.adSetId ? adSetById.get(ad.adSetId) : undefined;
           const cid = as?.campaignId;
           if (node.campaignIds && (!cid || !node.campaignIds.includes(cid))) continue;
@@ -3670,11 +3717,22 @@ ${deepDivePlanPagesAll}
   };
 
   // Delivered sum for a hierarchical selection on DV360 (walks campaigns → IOs
-  // → LIs, filtered per node).
+  // → LIs, filtered per node). Same channel caveat: whole-exchange = exchange
+  // breakdown; narrowed to LIs sums LI total (across exchanges).
   const dv360HierDelivered = (selection: HierNodeSelection[]): Delivered => {
     if (selection.length === 0) return deliveredOfGroup(dv360Campaigns, strictWindow);
     const acc = { spend: 0, impressions: 0, clicks: 0, reach: 0, videoViews: 0 };
     for (const node of selection) {
+      const narrowed = !!(node.campaignIds || node.adSetIds || node.adIds);
+      if (groupBy === "channel" && !narrowed) {
+        const row = dvExch.rows.find((r) => r.label === node.dimensionValue);
+        if (row) {
+          acc.spend += row.spend; acc.impressions += row.impressions;
+          acc.clicks += row.clicks; acc.videoViews += row.videoViews || 0;
+          // DV360 breakdown rows don't carry per-exchange reach.
+        }
+        continue;
+      }
       for (const c of dv360Campaigns) {
         if (groupBy === "objective" && prettyObjective(c.objective) !== node.dimensionValue) continue;
         if (node.campaignIds && !node.campaignIds.includes(c.id)) continue;
@@ -3699,7 +3757,7 @@ ${deepDivePlanPagesAll}
 
   const computeComboDelivered = (platform: "meta" | "dv360", values: string[], hier?: HierNodeSelection[]): Delivered => {
     // Hierarchical path takes precedence when caller supplies a hier selection.
-    if (hier && (groupBy === "objective" || groupBy === "creative")) {
+    if (hier && (groupBy === "channel" || groupBy === "objective" || groupBy === "creative")) {
       return platform === "meta" ? metaHierDelivered(hier) : dv360HierDelivered(hier);
     }
     if (groupBy === "channel") {
@@ -3883,8 +3941,8 @@ ${deepDivePlanPagesAll}
                 initialDv360Hier={panel.initial?.dv360Hier}
                 initialPlannedMeta={panel.initial?.plannedMeta ?? {}}
                 initialPlannedDv360={panel.initial?.plannedDv360 ?? {}}
-                metaTree={comboDimension === "objective" ? metaObjectiveTree : comboDimension === "creative" ? metaCreativeTree : undefined}
-                dv360Tree={comboDimension === "objective" ? dv360ObjectiveTree : comboDimension === "creative" ? dv360CreativeTree : undefined}
+                metaTree={comboDimension === "channel" ? metaChannelTree : comboDimension === "objective" ? metaObjectiveTree : comboDimension === "creative" ? metaCreativeTree : undefined}
+                dv360Tree={comboDimension === "channel" ? dv360ChannelTree : comboDimension === "objective" ? dv360ObjectiveTree : comboDimension === "creative" ? dv360CreativeTree : undefined}
                 computeDelivered={computeComboDelivered}
                 metaCurrency={metaCurrency}
                 dv360Currency={dv360Currency}
