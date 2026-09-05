@@ -2580,16 +2580,19 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
         const byFmt = new Map<string, MetaFormatRow>();
         const adRowsFull: MetaAdRowFull[] = [];
         for (const ad of ads) {
+          // Real Meta creative.object_type only — no name-string inference,
+          // per no-synthetic-data policy. Ads with no object_type (deleted
+          // creative, unsupported type, or fetch-fail) fall into "Unknown".
           const t = (ad.creativeType || "").toUpperCase();
-          const n = ad.name.toLowerCase();
           let fmt: string;
-          if (t.includes("CAROUSEL") || n.includes("carousel")) fmt = "Carousel";
+          if (t.includes("CAROUSEL")) fmt = "Carousel";
           else if (t.includes("AUDIO")) fmt = "Audio";
           else if (t.includes("NATIVE")) fmt = "Native";
-          else if (t.includes("VIDEO") || t === "REEL" || n.includes("reel") || n.includes("video")) fmt = "Video";
+          else if (t.includes("VIDEO") || t === "REEL") fmt = "Video";
           else if (t.includes("DISPLAY") || t.includes("STANDARD") || t.includes("IMAGE") || t.includes("PHOTO")
-              || t.includes("STATIC") || n.includes("static") || n.includes("banner")) fmt = "Static / Banner";
-          else fmt = "Other";
+              || t.includes("STATIC")) fmt = "Static / Banner";
+          else if (t) fmt = "Other";
+          else fmt = "Unknown";
           const cur = byFmt.get(fmt) ?? { label: fmt, spend: 0, impressions: 0, reach: 0, clicks: 0, conversions: 0, conversionValue: 0, videoViews: 0 };
           cur.spend += ad.spend; cur.impressions += ad.impressions; cur.reach += ad.reach || 0; cur.clicks += ad.clicks;
           cur.conversions += ad.conversions; cur.conversionValue += ad.conversionValue;

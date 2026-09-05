@@ -1610,19 +1610,27 @@ export class MetaApiClient {
       videoViews: sumActionValues(row.video_play_actions) || 0,
     }));
 
-    // Hydrate top 30 with creative details — keep it bounded so we don't burn quota.
-    const topForCreative = baseRows.slice(0, 30);
-    await Promise.all(
-      topForCreative.map(async (r) => {
-        try {
-          const c = await this.fetch<{ creative?: { object_type?: string; thumbnail_url?: string } }>(`/${r.id}`, {
-            fields: "creative{object_type,thumbnail_url}",
-          });
-          (r as any).creativeType = c.creative?.object_type;
-          (r as any).thumbnailUrl = c.creative?.thumbnail_url;
-        } catch { /* ignore — leave undefined */ }
-      })
-    );
+    // Hydrate creative type + thumbnail for EVERY ad (not just the top 30 by
+    // spend) so the Aggregate Creative view reflects real Meta object_type on
+    // every row — no name-string fallback. Graph API's `?ids=id1,id2,...`
+    // batch endpoint returns all requested objects in one request; chunk at
+    // 50 (Graph's practical limit) to keep quota use minimal.
+    const ids = baseRows.map((r) => r.id).filter(Boolean);
+    const CHUNK = 50;
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const chunk = ids.slice(i, i + CHUNK);
+      try {
+        const res = await this.fetch<Record<string, { creative?: { object_type?: string; thumbnail_url?: string } }>>(
+          "/",
+          { ids: chunk.join(","), fields: "creative{object_type,thumbnail_url}" }
+        );
+        for (const r of baseRows) {
+          const rec = res?.[r.id];
+          if (rec?.creative?.object_type) (r as any).creativeType = rec.creative.object_type;
+          if (rec?.creative?.thumbnail_url) (r as any).thumbnailUrl = rec.creative.thumbnail_url;
+        }
+      } catch { /* ignore chunk failure — leave creativeType undefined for those ids */ }
+    }
 
     return baseRows;
   }
