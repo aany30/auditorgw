@@ -3535,7 +3535,21 @@ ${deepDivePlanPagesAll}
   // Built once per campaigns/adSets/ads change. Each node models
   // `{ dimensionValue → campaigns → adSets → ads }` and is consumed by
   // HierarchicalDimensionPicker in AggComboPanel.
-  const adSetById = useMemo(() => new Map(metaAdSets.rows.map((as) => [as.id, as])), [metaAdSets.rows]);
+  // Union of every ad-set we know about: from the ad-sets fetch AND from each
+  // campaign's own .adSets list (the campaigns API returns them nested). The
+  // campaigns-nested source is the one that always has the parent campaignId,
+  // so we prefer it — it prevents "unknown" campaign nodes when the flat
+  // ad-sets endpoint is slow, paginated, or hasn't returned yet.
+  const adSetById = useMemo(() => {
+    const m = new Map<string, { id: string; name: string; campaignId: string }>();
+    for (const c of metaCampaigns) {
+      for (const as of c.adSets ?? []) m.set(as.id, { id: as.id, name: as.name, campaignId: c.id });
+    }
+    for (const as of metaAdSets.rows) {
+      if (!m.has(as.id)) m.set(as.id, { id: as.id, name: as.name, campaignId: as.campaignId });
+    }
+    return m;
+  }, [metaCampaigns, metaAdSets.rows]);
   const metaObjectiveTree = useMemo<HierTreeNode[]>(() => {
     const byObj = new Map<string, Map<string, { name: string; adSets: Map<string, { name: string; ads: { id: string; name: string }[] }> }>>();
     for (const c of metaCampaigns) {
@@ -3543,7 +3557,7 @@ ${deepDivePlanPagesAll}
       if (!byObj.has(obj)) byObj.set(obj, new Map());
       byObj.get(obj)!.set(c.id, { name: c.name, adSets: new Map() });
     }
-    for (const as of metaAdSets.rows) {
+    for (const as of adSetById.values()) {
       const c = metaCampaigns.find((mc) => mc.id === as.campaignId);
       if (!c) continue;
       const obj = prettyObjective(c.objective);
