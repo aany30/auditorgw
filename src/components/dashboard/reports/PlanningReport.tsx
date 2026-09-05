@@ -37,7 +37,8 @@ import { useAuthStore } from "@/store/auth";
 import { toDisplayCredits } from "@/lib/ai-cost";
 import { formatMoney } from "@/lib/currency";
 import type { CampaignData, AdSetData } from "@/types";
-import type { PlanGroup, SavedPlanStoreV2, DrillPathEntry, AggComboSelection, AggPlanGroup, AggPlanGroupStore } from "@/types/planning";
+import type { PlanGroup, SavedPlanStoreV2, DrillPathEntry, AggComboSelection, AggPlanGroup, AggPlanGroupStore, HierNodeSelection } from "@/types/planning";
+import HierarchicalDimensionPicker, { type HierTreeNode } from "@/components/shared/HierarchicalDimensionPicker";
 import SmartNumberInput from "@/components/shared/SmartNumberInput";
 
 interface Props {
@@ -822,7 +823,12 @@ export function PlanningSection({ campaigns, loading, currency, storageSuffix, d
       return { ...prev, [id]: { ...cur0, ...patch } };
     });
 
+  // Upsert semantics: re-saving the currently-viewed plan (activePlanId set), or
+  // saving under a name that already exists, UPDATES that plan in place instead
+  // of appending a duplicate. Fixes the "same plan name multiplies in the Saved
+  // Plans list every time I click Save" behaviour.
   const savePlanAsGroup = (name: string, selectedEntityIds: Set<string>, panelFocusIds?: string[]) => {
+    const trimmed = name.trim();
     const items = [...selectedEntityIds].map((key) => {
       const [entityType, entityId] = key.includes(":") ? key.split(":", 2) : ["campaign", key];
       const campaignId = entityType === "campaign" ? entityId : "";
@@ -837,15 +843,29 @@ export function PlanningSection({ campaigns, loading, currency, storageSuffix, d
         plan: planned[entityType === "campaign" ? entityId : `${entityType}:${entityId}`] ?? { spend: 0, reach: 0, impressions: 0 },
       };
     });
+    const matchById = activePlanId ? planGroups.groups.find((g) => g.id === activePlanId) : undefined;
+    const matchByName = !matchById ? planGroups.groups.find((g) => g.name.trim() === trimmed) : undefined;
+    const target = matchById || matchByName;
+    if (target) {
+      setPlanGroups((prev) => ({
+        ...prev,
+        groups: prev.groups.map((g) => g.id === target.id ? { ...g, name: trimmed, items, panelFocusIds, updatedAt: Date.now() } : g),
+      }));
+      setActivePlanId(target.id);
+      setJustSavedId(target.id);
+      setTimeout(() => setJustSavedId(""), 2000);
+      return;
+    }
     const group: PlanGroup = {
       id: `pg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      name,
+      name: trimmed,
       items,
       panelFocusIds,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
     setPlanGroups((prev) => ({ ...prev, groups: [...prev.groups, group] }));
+    setActivePlanId(group.id);
     setJustSavedId(group.id);
     setTimeout(() => setJustSavedId(""), 2000);
   };
@@ -2018,7 +2038,9 @@ function AggComboPanel({
   panelId, dimension, hasMeta, hasDv,
   metaOptions, dv360Options, metaOptionsLoading, dv360OptionsLoading,
   metaEntityLabel, dv360EntityLabel, metaAllLabel, dv360AllLabel,
-  initialMetaValues, initialDv360Values, initialPlannedMeta, initialPlannedDv360,
+  initialMetaValues, initialDv360Values, initialMetaHier, initialDv360Hier,
+  initialPlannedMeta, initialPlannedDv360,
+  metaTree, dv360Tree,
   computeDelivered, metaCurrency, dv360Currency, dateRange, onRemove, onStateChange, onSavePanel,
 }: {
   panelId: string;
@@ -2030,15 +2052,23 @@ function AggComboPanel({
   metaEntityLabel: string; dv360EntityLabel: string;
   metaAllLabel: string; dv360AllLabel: string;
   initialMetaValues: string[]; initialDv360Values: string[];
+  initialMetaHier?: HierNodeSelection[]; initialDv360Hier?: HierNodeSelection[];
   initialPlannedMeta: Record<string, number>; initialPlannedDv360: Record<string, number>;
-  computeDelivered: (platform: "meta" | "dv360", values: string[]) => Delivered;
+  metaTree?: HierTreeNode[]; dv360Tree?: HierTreeNode[];
+  computeDelivered: (platform: "meta" | "dv360", values: string[], hier?: HierNodeSelection[]) => Delivered;
   metaCurrency: string; dv360Currency: string; dateRange: DateRange;
   onRemove: () => void;
   onStateChange: (id: string, state: AggComboSelection) => void;
   onSavePanel: (name: string, state: AggComboSelection) => void;
 }) {
+  // Hier picker is only used for Objective/Creative dimensions; Channel keeps
+  // the flat CampaignMultiPicker (no per-ad-set breakdown available for
+  // publisher/exchange today).
+  const useHier = dimension === "objective" || dimension === "creative";
   const [metaValues, setMetaValues] = useState<string[]>(initialMetaValues);
   const [dv360Values, setDv360Values] = useState<string[]>(initialDv360Values);
+  const [metaHier, setMetaHier] = useState<HierNodeSelection[]>(initialMetaHier ?? []);
+  const [dv360Hier, setDv360Hier] = useState<HierNodeSelection[]>(initialDv360Hier ?? []);
   const [plannedMeta, setPlannedMeta] = useState<Record<string, number>>(initialPlannedMeta);
   const [plannedDv360, setPlannedDv360] = useState<Record<string, number>>(initialPlannedDv360);
   // Always-visible name box — same convention as the campaign deep-dive's
@@ -2047,12 +2077,21 @@ function AggComboPanel({
   const [justSaved, setJustSaved] = useState(false);
 
   useEffect(() => {
-    onStateChange(panelId, { metaValues, dv360Values, plannedMeta, plannedDv360 });
+    onStateChange(panelId, {
+      metaValues, dv360Values,
+      metaHier: useHier ? metaHier : undefined,
+      dv360Hier: useHier ? dv360Hier : undefined,
+      plannedMeta, plannedDv360,
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [metaValues, dv360Values, plannedMeta, plannedDv360]);
+  }, [metaValues, dv360Values, metaHier, dv360Hier, plannedMeta, plannedDv360]);
 
-  const metaDelivered = computeDelivered("meta", metaValues);
-  const dv360Delivered = computeDelivered("dv360", dv360Values);
+  // Derive a flat values list from the hier selection (dimensionValues only) so
+  // the existing labels/counts in the table headers keep working.
+  const derivedMetaValues = useHier ? metaHier.map((n) => n.dimensionValue) : metaValues;
+  const derivedDv360Values = useHier ? dv360Hier.map((n) => n.dimensionValue) : dv360Values;
+  const metaDelivered = computeDelivered("meta", derivedMetaValues, useHier ? metaHier : undefined);
+  const dv360Delivered = computeDelivered("dv360", derivedDv360Values, useHier ? dv360Hier : undefined);
   const platform: "meta" | "dv360" | "both" = hasMeta && hasDv ? "both" : hasMeta ? "meta" : "dv360";
   const combinedPlanned: Record<string, number> = {};
   const combinedDelivered: Record<string, number> = {};
@@ -2065,8 +2104,8 @@ function AggComboPanel({
   }
   const label = dimension === "channel" ? "channel" : dimension === "objective" ? "objective" : "creative format";
   const panelLabel = [
-    metaValues.length > 0 ? `Meta: ${metaValues.length} ${label}${metaValues.length === 1 ? "" : "s"}` : null,
-    dv360Values.length > 0 ? `DV360: ${dv360Values.length} ${label}${dv360Values.length === 1 ? "" : "s"}` : null,
+    derivedMetaValues.length > 0 ? `Meta: ${derivedMetaValues.length} ${label}${derivedMetaValues.length === 1 ? "" : "s"}` : null,
+    derivedDv360Values.length > 0 ? `DV360: ${derivedDv360Values.length} ${label}${derivedDv360Values.length === 1 ? "" : "s"}` : null,
   ].filter(Boolean).join(" · ") || "All values";
 
   return (
@@ -2087,7 +2126,12 @@ function AggComboPanel({
             onClick={() => {
               const trimmed = (nameDraft || `${panelLabel} plan`).trim();
               if (!trimmed) return;
-              onSavePanel(trimmed, { metaValues, dv360Values, plannedMeta, plannedDv360 });
+              onSavePanel(trimmed, {
+                metaValues, dv360Values,
+                metaHier: useHier ? metaHier : undefined,
+                dv360Hier: useHier ? dv360Hier : undefined,
+                plannedMeta, plannedDv360,
+              });
               if (!nameDraft) setNameDraft(trimmed);
               setJustSaved(true);
               setTimeout(() => setJustSaved(false), 2000);
@@ -2120,42 +2164,64 @@ function AggComboPanel({
         {hasMeta && (
           <AggMetricsTable
             title="Meta"
-            sub={metaValues.length === 0 ? metaAllLabel : `${metaValues.length} selected`}
+            sub={derivedMetaValues.length === 0 ? metaAllLabel : `${derivedMetaValues.length} selected`}
             gcur={metaCurrency}
             delivered={metaDelivered}
             planned={plannedMeta}
             onPlanChange={(metric, value) => setPlannedMeta((prev) => ({ ...prev, [metric]: value }))}
             headerRight={
-              <CampaignMultiPicker
-                options={metaOptions}
-                values={metaValues}
-                onChange={setMetaValues}
-                allLabelText={metaAllLabel}
-                loading={metaOptionsLoading}
-                entityLabel={metaEntityLabel}
-                icon={null}
-              />
+              useHier && metaTree ? (
+                <HierarchicalDimensionPicker
+                  tree={metaTree}
+                  selection={metaHier}
+                  onChange={setMetaHier}
+                  allLabelText={metaAllLabel}
+                  entityLabel={metaEntityLabel}
+                  loading={metaOptionsLoading}
+                />
+              ) : (
+                <CampaignMultiPicker
+                  options={metaOptions}
+                  values={metaValues}
+                  onChange={setMetaValues}
+                  allLabelText={metaAllLabel}
+                  loading={metaOptionsLoading}
+                  entityLabel={metaEntityLabel}
+                  icon={null}
+                />
+              )
             }
           />
         )}
         {hasDv && (
           <AggMetricsTable
             title="DV360"
-            sub={dv360Values.length === 0 ? dv360AllLabel : `${dv360Values.length} selected`}
+            sub={derivedDv360Values.length === 0 ? dv360AllLabel : `${derivedDv360Values.length} selected`}
             gcur={dv360Currency}
             delivered={dv360Delivered}
             planned={plannedDv360}
             onPlanChange={(metric, value) => setPlannedDv360((prev) => ({ ...prev, [metric]: value }))}
             headerRight={
-              <CampaignMultiPicker
-                options={dv360Options}
-                values={dv360Values}
-                onChange={setDv360Values}
-                allLabelText={dv360AllLabel}
-                loading={dv360OptionsLoading}
-                entityLabel={dv360EntityLabel}
-                icon={null}
-              />
+              useHier && dv360Tree ? (
+                <HierarchicalDimensionPicker
+                  tree={dv360Tree}
+                  selection={dv360Hier}
+                  onChange={setDv360Hier}
+                  allLabelText={dv360AllLabel}
+                  entityLabel={dv360EntityLabel}
+                  loading={dv360OptionsLoading}
+                />
+              ) : (
+                <CampaignMultiPicker
+                  options={dv360Options}
+                  values={dv360Values}
+                  onChange={setDv360Values}
+                  allLabelText={dv360AllLabel}
+                  loading={dv360OptionsLoading}
+                  entityLabel={dv360EntityLabel}
+                  icon={null}
+                />
+              )
             }
           />
         )}
@@ -2254,11 +2320,33 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
     setActiveComboPlanId((prev) => ({ ...prev, [dimension]: null }));
     setComboPlanNameDraft((prev) => ({ ...prev, [dimension]: "" }));
   };
-  const saveComboPlanGroup = (dimension: "channel" | "objective" | "creative", name: string, panels: AggComboSelection[]) => {
-    const { setPlanGroups } = comboDimensionState(dimension);
+  // Upsert semantics: if `existingId` is passed (or a group with the same
+  // trimmed name is already in this dimension's store), REPLACE that group's
+  // panels in place and bump updatedAt — do not append a duplicate. Only when
+  // neither matches do we create a brand-new plan entry. Fixes the "every
+  // click on Save creates a new entry with the same name" behaviour.
+  const saveComboPlanGroup = (
+    dimension: "channel" | "objective" | "creative",
+    name: string,
+    panels: AggComboSelection[],
+    existingId?: string | null,
+  ) => {
+    const { setPlanGroups, planGroups } = comboDimensionState(dimension);
+    const trimmed = name.trim();
+    const matchById = existingId ? planGroups.groups.find((g) => g.id === existingId) : undefined;
+    const matchByName = !matchById ? planGroups.groups.find((g) => g.name.trim() === trimmed) : undefined;
+    const target = matchById || matchByName;
+    if (target) {
+      setPlanGroups((prev) => ({
+        ...prev,
+        groups: prev.groups.map((g) => g.id === target.id ? { ...g, name: trimmed, panels, updatedAt: Date.now() } : g),
+      }));
+      setActiveComboPlanId((prev) => ({ ...prev, [dimension]: target.id }));
+      return;
+    }
     const group: AggPlanGroup = {
       id: `agg-${dimension}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      name, dimension, panels, createdAt: Date.now(), updatedAt: Date.now(),
+      name: trimmed, dimension, panels, createdAt: Date.now(), updatedAt: Date.now(),
     };
     setPlanGroups((prev) => ({ ...prev, groups: [group, ...prev.groups] }));
     setActiveComboPlanId((prev) => ({ ...prev, [dimension]: group.id }));
@@ -2301,7 +2389,9 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
       plannedDv360: planned[mainComboKey(dimension, "dv360", dv360Values)] || {},
     };
     const extras = extraPanels.map((p) => panelStates.current[p.id]).filter((s): s is AggComboSelection => !!s);
-    saveComboPlanGroup(dimension, name, [mainPanel, ...extras]);
+    // Pass the currently-active plan id so a re-save updates in place instead of
+    // creating a duplicate under the same name.
+    saveComboPlanGroup(dimension, name, [mainPanel, ...extras], activeComboPlanId[dimension]);
   };
 
   // Auto-load the most recently saved combo plan for each dimension on first
@@ -2374,8 +2464,10 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
   const [metaDeepDivePlans] = usePersistentJSON<SavedPlanStoreV2>("planning-groups-meta", { version: 2, groups: [] });
   const [dv360DeepDivePlans] = usePersistentJSON<SavedPlanStoreV2>("planning-groups-dv360", { version: 2, groups: [] });
 
-  // Audience data (ad-set / line-item level) — only fetched when "Audience" view is active.
-  const metaAdSets = useMetaAdSets("custom" as DateRange, wideWindow.start, wideWindow.end, groupBy === "audience" && hasMeta);
+  // Audience data (ad-set / line-item level). Meta ad sets are also needed
+  // for the hierarchical Objective/Creative drill-down picker (to join ads → campaigns
+  // via adSetId), so fetch them unconditionally.
+  const metaAdSets = useMetaAdSets("custom" as DateRange, wideWindow.start, wideWindow.end, hasMeta);
   const dv360LineItems = useDV360LineItems("custom" as DateRange, wideWindow.start, wideWindow.end, groupBy === "audience" && hasDv);
   const [metaAudFilter, setMetaAudFilter] = useState("all");
   const [dv360AudFilter, setDv360AudFilter] = useState("all");
@@ -2444,11 +2536,15 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
   const { metaAccessToken, metaBusinessId, demoMode } = useAuthStore();
   interface MetaFormatRow { label: string; spend: number; impressions: number; reach: number; clicks: number; conversions: number; conversionValue: number; videoViews: number }
   interface MetaCreativeRow { id: string; name: string; spend: number; impressions: number; clicks: number; videoViews: number }
+  // Full per-ad rows preserved from the same fetch — needed by the hierarchical
+  // Objective/Creative picker to drill format → campaign → ad set → ad.
+  interface MetaAdRowFull { id: string; name: string; adSetId?: string; format: string; spend: number; impressions: number; clicks: number; reach: number; videoViews: number }
   const [metaFormatRows, setMetaFormatRows] = useState<MetaFormatRow[]>([]);
   const [metaCreativeRows, setMetaCreativeRows] = useState<MetaCreativeRow[]>([]);
+  const [metaAdRowsFull, setMetaAdRowsFull] = useState<MetaAdRowFull[]>([]);
   const [metaFormatLoading, setMetaFormatLoading] = useState(false);
   useEffect(() => {
-    if (!hasMeta) { setMetaFormatRows([]); setMetaCreativeRows([]); return; }
+    if (!hasMeta) { setMetaFormatRows([]); setMetaCreativeRows([]); setMetaAdRowsFull([]); return; }
     const token = demoMode ? "demo-meta-token" : metaAccessToken;
     const biz = demoMode ? "demo-business-123" : metaBusinessId;
     if (!token || !biz) return;
@@ -2461,8 +2557,9 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
       .then((r) => r.json())
       .then((d) => {
         if (cancelled || !d.ads) return;
-        const ads = d.ads as Array<{ id?: string; name: string; creativeType?: string; spend: number; impressions: number; reach: number; clicks: number; conversions: number; conversionValue: number; videoViews: number }>;
+        const ads = d.ads as Array<{ id?: string; name: string; adSetId?: string; creativeType?: string; spend: number; impressions: number; reach: number; clicks: number; conversions: number; conversionValue: number; videoViews: number }>;
         const byFmt = new Map<string, MetaFormatRow>();
+        const adRowsFull: MetaAdRowFull[] = [];
         for (const ad of ads) {
           const t = (ad.creativeType || "").toUpperCase();
           const n = ad.name.toLowerCase();
@@ -2479,12 +2576,17 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
           cur.conversions += ad.conversions; cur.conversionValue += ad.conversionValue;
           cur.videoViews += ad.videoViews || 0;
           byFmt.set(fmt, cur);
+          adRowsFull.push({
+            id: ad.id || `${adRowsFull.length}`, name: ad.name, adSetId: ad.adSetId, format: fmt,
+            spend: ad.spend, impressions: ad.impressions, clicks: ad.clicks, reach: ad.reach || 0, videoViews: ad.videoViews || 0,
+          });
         }
         setMetaFormatRows([...byFmt.values()].sort((a, b) => b.spend - a.spend));
         setMetaCreativeRows(
           ads.map((ad, i) => ({ id: ad.id || String(i), name: ad.name, spend: ad.spend, impressions: ad.impressions, clicks: ad.clicks, videoViews: ad.videoViews || 0 }))
              .sort((a, b) => b.spend - a.spend)
         );
+        setMetaAdRowsFull(adRowsFull);
       })
       .finally(() => { if (!cancelled) setMetaFormatLoading(false); });
     return () => { cancelled = true; };
@@ -2700,6 +2802,21 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
     }
     setOpenSnap(null);
   };
+
+  // Auto-restore the most recent Aggregate snapshot on mount — so opening the
+  // Dashboard tab again shows the user's last-entered planned vs delivered
+  // values (Overall/Audience view too, not just Channel/Objective/Creative
+  // which have their own combo-plan auto-load above).
+  const snapAutoLoadedRef = useRef(false);
+  useEffect(() => {
+    if (snapAutoLoadedRef.current) return;
+    if (snapshots.length === 0) return;
+    snapAutoLoadedRef.current = true;
+    const mostRecent = [...snapshots].sort((a, b) => b.at - a.at)[0];
+    editSnapshot(mostRecent);
+    // Snapshot's editSnapshot also calls setOpenSnap(null) which is fine.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snapshots.length]);
 
   const exportCsv = () => {
     const lines = [["Key", "Group", "Metric", "Planned", "Delivered", "Pacing%"].join(",")];
@@ -3413,7 +3530,178 @@ ${deepDivePlanPagesAll}
   const comboMetaLoading = groupBy === "channel" ? metaPub.loading : groupBy === "creative" ? metaFormatLoading : false;
   const comboDv360Loading = groupBy === "channel" ? (dvExch.loading || dvExch.pending) : groupBy === "creative" ? (dvCreativeType.loading || dvCreativeType.pending) : false;
 
-  const computeComboDelivered = (platform: "meta" | "dv360", values: string[]): Delivered => {
+  // ── Hierarchical drill-down trees (Objective / Creative for both platforms) ──
+  // Built once per campaigns/adSets/ads change. Each node models
+  // `{ dimensionValue → campaigns → adSets → ads }` and is consumed by
+  // HierarchicalDimensionPicker in AggComboPanel.
+  const adSetById = useMemo(() => new Map(metaAdSets.rows.map((as) => [as.id, as])), [metaAdSets.rows]);
+  const metaObjectiveTree = useMemo<HierTreeNode[]>(() => {
+    const byObj = new Map<string, Map<string, { name: string; adSets: Map<string, { name: string; ads: { id: string; name: string }[] }> }>>();
+    for (const c of metaCampaigns) {
+      const obj = prettyObjective(c.objective);
+      if (!byObj.has(obj)) byObj.set(obj, new Map());
+      byObj.get(obj)!.set(c.id, { name: c.name, adSets: new Map() });
+    }
+    for (const as of metaAdSets.rows) {
+      const c = metaCampaigns.find((mc) => mc.id === as.campaignId);
+      if (!c) continue;
+      const obj = prettyObjective(c.objective);
+      const camp = byObj.get(obj)?.get(c.id);
+      if (!camp) continue;
+      if (!camp.adSets.has(as.id)) camp.adSets.set(as.id, { name: as.name, ads: [] });
+    }
+    for (const ad of metaAdRowsFull) {
+      if (!ad.adSetId) continue;
+      const as = adSetById.get(ad.adSetId);
+      if (!as) continue;
+      const c = metaCampaigns.find((mc) => mc.id === as.campaignId);
+      if (!c) continue;
+      const obj = prettyObjective(c.objective);
+      const camp = byObj.get(obj)?.get(c.id);
+      camp?.adSets.get(ad.adSetId)?.ads.push({ id: ad.id, name: ad.name });
+    }
+    return [...byObj.entries()].map(([dim, camps]) => ({
+      dimensionValue: dim,
+      campaigns: [...camps.entries()].map(([id, c]) => ({
+        id, name: c.name,
+        adSets: [...c.adSets.entries()].map(([asId, a]) => ({ id: asId, name: a.name, ads: a.ads })),
+      })),
+    })).sort((a, b) => a.dimensionValue.localeCompare(b.dimensionValue));
+  }, [metaCampaigns, metaAdSets.rows, metaAdRowsFull, adSetById]);
+
+  const metaCreativeTree = useMemo<HierTreeNode[]>(() => {
+    const byFmt = new Map<string, Map<string, { name: string; adSets: Map<string, { name: string; ads: { id: string; name: string }[] }> }>>();
+    for (const ad of metaAdRowsFull) {
+      if (!byFmt.has(ad.format)) byFmt.set(ad.format, new Map());
+      const as = ad.adSetId ? adSetById.get(ad.adSetId) : undefined;
+      const cid = as?.campaignId || "unknown";
+      const cname = metaCampaigns.find((mc) => mc.id === cid)?.name || cid;
+      const camps = byFmt.get(ad.format)!;
+      if (!camps.has(cid)) camps.set(cid, { name: cname, adSets: new Map() });
+      const camp = camps.get(cid)!;
+      const asId = ad.adSetId || "unknown";
+      const asName = as?.name || "Unknown ad set";
+      if (!camp.adSets.has(asId)) camp.adSets.set(asId, { name: asName, ads: [] });
+      camp.adSets.get(asId)!.ads.push({ id: ad.id, name: ad.name });
+    }
+    return [...byFmt.entries()].map(([dim, camps]) => ({
+      dimensionValue: dim,
+      campaigns: [...camps.entries()].map(([id, c]) => ({
+        id, name: c.name,
+        adSets: [...c.adSets.entries()].map(([asId, a]) => ({ id: asId, name: a.name, ads: a.ads })),
+      })),
+    })).sort((a, b) => a.dimensionValue.localeCompare(b.dimensionValue));
+  }, [metaAdRowsFull, adSetById, metaCampaigns]);
+
+  const dv360ObjectiveTree = useMemo<HierTreeNode[]>(() => {
+    const byObj = new Map<string, Map<string, { name: string; adSets: Map<string, { name: string; ads: { id: string; name: string }[] }> }>>();
+    for (const c of dv360Campaigns) {
+      const obj = prettyObjective(c.objective);
+      if (!byObj.has(obj)) byObj.set(obj, new Map());
+      const camps = byObj.get(obj)!;
+      const adSets = new Map<string, { name: string; ads: { id: string; name: string }[] }>();
+      for (const io of c.adSets ?? []) {
+        adSets.set(io.id, { name: io.name, ads: (io.ads ?? []).map((li) => ({ id: li.id, name: li.name })) });
+      }
+      camps.set(c.id, { name: c.name, adSets });
+    }
+    return [...byObj.entries()].map(([dim, camps]) => ({
+      dimensionValue: dim,
+      campaigns: [...camps.entries()].map(([id, c]) => ({
+        id, name: c.name,
+        adSets: [...c.adSets.entries()].map(([asId, a]) => ({ id: asId, name: a.name, ads: a.ads })),
+      })),
+    })).sort((a, b) => a.dimensionValue.localeCompare(b.dimensionValue));
+  }, [dv360Campaigns]);
+
+  const dv360CreativeTree = useMemo<HierTreeNode[]>(() => {
+    const byFmt = new Map<string, Map<string, { name: string; adSets: Map<string, { name: string; ads: { id: string; name: string }[] }> }>>();
+    for (const c of dv360Campaigns) {
+      for (const io of c.adSets ?? []) {
+        for (const li of io.ads ?? []) {
+          const type = li.creatives?.[0]?.type || li.lineItemType || "Other";
+          const fmt = normFormat(type);
+          if (!byFmt.has(fmt)) byFmt.set(fmt, new Map());
+          const camps = byFmt.get(fmt)!;
+          if (!camps.has(c.id)) camps.set(c.id, { name: c.name, adSets: new Map() });
+          const camp = camps.get(c.id)!;
+          if (!camp.adSets.has(io.id)) camp.adSets.set(io.id, { name: io.name, ads: [] });
+          camp.adSets.get(io.id)!.ads.push({ id: li.id, name: li.name });
+        }
+      }
+    }
+    return [...byFmt.entries()].map(([dim, camps]) => ({
+      dimensionValue: dim,
+      campaigns: [...camps.entries()].map(([id, c]) => ({
+        id, name: c.name,
+        adSets: [...c.adSets.entries()].map(([asId, a]) => ({ id: asId, name: a.name, ads: a.ads })),
+      })),
+    })).sort((a, b) => a.dimensionValue.localeCompare(b.dimensionValue));
+  }, [dv360Campaigns]);
+
+  // Delivered sum for a hierarchical selection on Meta (walks metaAdRowsFull
+  // filtered by the roll-up rule declared on HierNodeSelection).
+  const metaHierDelivered = (selection: HierNodeSelection[]): Delivered => {
+    if (selection.length === 0) return deliveredOfGroup(metaCampaigns, strictWindow);
+    const acc = { spend: 0, impressions: 0, clicks: 0, reach: 0, videoViews: 0 };
+    for (const node of selection) {
+      const dimField = groupBy === "objective" ? "objective" : "format";
+      for (const ad of metaAdRowsFull) {
+        // Match dimension value.
+        if (dimField === "format" && ad.format !== node.dimensionValue) continue;
+        if (dimField === "objective") {
+          const as = ad.adSetId ? adSetById.get(ad.adSetId) : undefined;
+          const c = as ? metaCampaigns.find((mc) => mc.id === as.campaignId) : undefined;
+          if (!c || prettyObjective(c.objective) !== node.dimensionValue) continue;
+        }
+        // Narrow by campaign/adSet/ad ids if present.
+        if (node.campaignIds || node.adSetIds || node.adIds) {
+          const as = ad.adSetId ? adSetById.get(ad.adSetId) : undefined;
+          const cid = as?.campaignId;
+          if (node.campaignIds && (!cid || !node.campaignIds.includes(cid))) continue;
+          if (node.adSetIds && (!ad.adSetId || !node.adSetIds.includes(ad.adSetId))) continue;
+          if (node.adIds && !node.adIds.includes(ad.id)) continue;
+        }
+        acc.spend += ad.spend; acc.impressions += ad.impressions; acc.clicks += ad.clicks;
+        acc.reach += ad.reach; acc.videoViews += ad.videoViews;
+      }
+    }
+    return deriveDelivered(acc);
+  };
+
+  // Delivered sum for a hierarchical selection on DV360 (walks campaigns → IOs
+  // → LIs, filtered per node).
+  const dv360HierDelivered = (selection: HierNodeSelection[]): Delivered => {
+    if (selection.length === 0) return deliveredOfGroup(dv360Campaigns, strictWindow);
+    const acc = { spend: 0, impressions: 0, clicks: 0, reach: 0, videoViews: 0 };
+    for (const node of selection) {
+      for (const c of dv360Campaigns) {
+        if (groupBy === "objective" && prettyObjective(c.objective) !== node.dimensionValue) continue;
+        if (node.campaignIds && !node.campaignIds.includes(c.id)) continue;
+        for (const io of c.adSets ?? []) {
+          if (node.adSetIds && !node.adSetIds.includes(io.id)) continue;
+          for (const li of io.ads ?? []) {
+            if (node.adIds && !node.adIds.includes(li.id)) continue;
+            if (groupBy === "creative") {
+              const type = li.creatives?.[0]?.type || li.lineItemType || "Other";
+              if (normFormat(type) !== node.dimensionValue) continue;
+            }
+            acc.spend += li.spend ?? 0;
+            acc.impressions += li.impressions ?? 0;
+            acc.clicks += li.clicks ?? 0;
+            acc.reach += li.reach ?? 0;
+          }
+        }
+      }
+    }
+    return deriveDelivered(acc);
+  };
+
+  const computeComboDelivered = (platform: "meta" | "dv360", values: string[], hier?: HierNodeSelection[]): Delivered => {
+    // Hierarchical path takes precedence when caller supplies a hier selection.
+    if (hier && (groupBy === "objective" || groupBy === "creative")) {
+      return platform === "meta" ? metaHierDelivered(hier) : dv360HierDelivered(hier);
+    }
     if (groupBy === "channel") {
       if (platform === "meta") return values.length === 0 ? deliveredOfGroup(metaCampaigns, strictWindow) : sumRowsDelivered(metaPub.rows.filter((r) => values.includes(r.label)));
       return values.length === 0 ? deliveredOfGroup(dv360Campaigns, strictWindow) : sumRowsDelivered(dvExch.rows.filter((r) => values.includes(r.label)));
@@ -3591,15 +3879,19 @@ ${deepDivePlanPagesAll}
                 dv360AllLabel={comboDv360AllLabel}
                 initialMetaValues={panel.initial?.metaValues ?? []}
                 initialDv360Values={panel.initial?.dv360Values ?? []}
+                initialMetaHier={panel.initial?.metaHier}
+                initialDv360Hier={panel.initial?.dv360Hier}
                 initialPlannedMeta={panel.initial?.plannedMeta ?? {}}
                 initialPlannedDv360={panel.initial?.plannedDv360 ?? {}}
+                metaTree={comboDimension === "objective" ? metaObjectiveTree : comboDimension === "creative" ? metaCreativeTree : undefined}
+                dv360Tree={comboDimension === "objective" ? dv360ObjectiveTree : comboDimension === "creative" ? dv360CreativeTree : undefined}
                 computeDelivered={computeComboDelivered}
                 metaCurrency={metaCurrency}
                 dv360Currency={dv360Currency}
                 dateRange={dateRange}
                 onRemove={() => removeComboPanel(comboDimension, panel.id)}
                 onStateChange={(id, state) => { comboState.panelStates.current[id] = state; }}
-                onSavePanel={(name, state) => saveComboPlanGroup(comboDimension, name, [state])}
+                onSavePanel={(name, state) => saveComboPlanGroup(comboDimension, name, [state], activeComboPlanId[comboDimension])}
               />
             ))}
             <div className="flex items-center gap-3">
