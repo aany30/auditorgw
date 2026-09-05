@@ -15,7 +15,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ClipboardList, Info, Sparkles, Download, Upload, Save, Trash2, FileDown, Layers, Plus, X, Repeat } from "lucide-react";
+import { ClipboardList, Info, Sparkles, Download, Upload, Save, Trash2, FileDown, Layers, Plus, X } from "lucide-react";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ComposedChart, Bar,
@@ -800,50 +800,6 @@ export function PlanningSection({ campaigns, loading, currency, storageSuffix, d
     return result;
   }, [selected, byId, aiPlatform]);
 
-  // DV360-only: creative reuse — group real per-LI creative delivery (already
-  // threaded onto each Line Item by the campaigns API) by creative id across
-  // every selected campaign's IOs/LIs, so a creative reused in multiple ad
-  // sets/line items (or campaigns) surfaces with its combined delivery.
-  const creativeReuseRows = useMemo(() => {
-    if (aiPlatform !== "dv360") return [];
-    const map = new Map<string, {
-      id: string; name: string;
-      campaignIds: Set<string>; ioIds: Set<string>; liIds: Set<string>;
-      spend: number; impressions: number; clicks: number;
-    }>();
-    for (const cId of selected) {
-      const c = byId.get(cId);
-      if (!c?.adSets) continue;
-      for (const io of c.adSets) {
-        if (!io.ads) continue;
-        for (const li of io.ads) {
-          if (!li.creatives) continue;
-          for (const cr of li.creatives) {
-            if (!cr.id || cr.id === "0") continue;
-            let entry = map.get(cr.id);
-            if (!entry) {
-              entry = { id: cr.id, name: cr.name, campaignIds: new Set(), ioIds: new Set(), liIds: new Set(), spend: 0, impressions: 0, clicks: 0 };
-              map.set(cr.id, entry);
-            }
-            entry.campaignIds.add(cId);
-            entry.ioIds.add(io.id);
-            entry.liIds.add(li.id);
-            entry.spend += cr.spend ?? 0;
-            entry.impressions += cr.impressions ?? 0;
-            entry.clicks += cr.clicks ?? 0;
-          }
-        }
-      }
-    }
-    return [...map.values()]
-      .map((e) => ({
-        id: e.id, name: e.name,
-        campaignCount: e.campaignIds.size, ioCount: e.ioIds.size, liCount: e.liIds.size,
-        spend: e.spend, impressions: e.impressions, clicks: e.clicks,
-      }))
-      .sort((a, b) => (b.liCount - a.liCount) || (b.spend - a.spend));
-  }, [selected, byId, aiPlatform]);
-
   // ── Meta lifetime fallback: fetch all-time delivery for selected campaigns ──
   const selectedMetaIds = useMemo(
     () => aiPlatform === "meta" ? selected : [],
@@ -1585,54 +1541,6 @@ export function PlanningSection({ campaigns, loading, currency, storageSuffix, d
           </div>
         );
       })()}
-
-      {/* ── Creative Reuse — DV360 only: which creatives repeat across LIs/IOs/campaigns ── */}
-      {aiPlatform === "dv360" && selected.length > 0 && creativeReuseRows.length > 0 && (
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
-          <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-2">
-            <Repeat className="w-4 h-4 text-gray-400" />
-            <h3 className="text-sm font-bold text-gray-800">Creative Reuse</h3>
-            <span className="text-[11px] text-gray-400">
-              — across {selected.length} selected campaign{selected.length !== 1 ? "s" : ""}
-            </span>
-          </div>
-          <div>
-            <table className="w-full text-xs">
-              <thead className="bg-gray-50 border-b border-gray-100 sticky top-0 z-20 shadow-sm">
-                <tr>
-                  <th className="px-4 py-2 text-left text-[10px] uppercase font-semibold text-gray-500">Creative</th>
-                  <th className="px-3 py-2 text-left text-[10px] uppercase font-semibold text-gray-500">Used In</th>
-                  <th className="px-3 py-2 text-right text-[10px] uppercase font-semibold text-gray-500">Spend</th>
-                  <th className="px-3 py-2 text-right text-[10px] uppercase font-semibold text-gray-500">Impr</th>
-                  <th className="px-3 py-2 text-right text-[10px] uppercase font-semibold text-gray-500">Clicks</th>
-                  <th className="px-3 py-2 text-right text-[10px] uppercase font-semibold text-gray-500">CTR</th>
-                </tr>
-              </thead>
-              <tbody>
-                {creativeReuseRows.map((cr) => (
-                  <tr key={cr.id} className="border-b border-gray-50 last:border-0 hover:bg-gray-50">
-                    <td className="px-4 py-2 text-gray-800 font-medium max-w-[240px] truncate" title={cr.name}>{cr.name}</td>
-                    <td className="px-3 py-2">
-                      {cr.liCount > 1 ? (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 font-semibold text-[10px] whitespace-nowrap">
-                          <Repeat className="w-3 h-3" />
-                          {cr.liCount} LIs{cr.ioCount > 1 ? ` · ${cr.ioCount} IOs` : ""}{cr.campaignCount > 1 ? ` · ${cr.campaignCount} campaigns` : ""}
-                        </span>
-                      ) : (
-                        <span className="text-gray-400 text-[10px]">1 LI</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2 text-right tabular-nums font-semibold text-gray-900">{cr.spend > 0 ? formatMoney(cr.spend, currency, 0) : "—"}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-gray-900">{cr.impressions > 0 ? fmtInt(cr.impressions) : "—"}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-gray-900">{cr.clicks > 0 ? fmtInt(cr.clicks) : "—"}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-gray-900">{cr.impressions > 0 ? fmtPct((cr.clicks / cr.impressions) * 100) : "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
 
       {/* ── Extra deep-dive panels ── */}
       {rows.length > 0 && extraPanels.map((panel) => (
