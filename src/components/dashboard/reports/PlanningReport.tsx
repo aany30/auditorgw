@@ -2443,6 +2443,19 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
   const dv360Campaigns = useMemo(() => campaigns.filter((c) => c.platform === "dv360"), [campaigns]);
   const hasMeta = metaCampaigns.length > 0, hasDv = dv360Campaigns.length > 0;
 
+  // Auto-purge stale DV360 Channel selections whose dimensionValue no longer
+  // matches any current campaign name (leftovers from when Channel was an
+  // exchange-tree — those labels stopped resolving after the campaign drill
+  // rewrite and would otherwise silently contribute nothing to delivered).
+  useEffect(() => {
+    if (dv360Campaigns.length === 0) return;
+    const names = new Set(dv360Campaigns.map((c) => c.name));
+    setDv360ChannelHier((prev) => {
+      const kept = prev.filter((n) => names.has(n.dimensionValue));
+      return kept.length === prev.length ? prev : kept;
+    });
+  }, [dv360Campaigns]);
+
   // Planning always uses the widest flight window (not the date picker) so that
   // channel/exchange breakdowns cover the full campaign delivery period.
   const wideWindow = useMemo(() => {
