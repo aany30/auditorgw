@@ -167,14 +167,22 @@ function getDemoLineItems(): DV360LineItemRow[] {
 
 // ─── Targeting resolution helpers ────────────────────────────────────────────
 
-/** Summarise audience/targeting from DV360 assigned targeting options. */
+/** Summarise audience/targeting from DV360 assigned targeting options.
+ *  audienceType uses priority order so a single LI ends up in one bucket:
+ *    Audience Segments (first-party / third-party) > Demographic > Geo >
+ *    Contextual > Tech / Language > Broad.
+ */
 function summariseTargeting(
   targeting: Record<string, unknown[]>
 ): { audienceType: string; targeting: string } {
   const parts: string[] = [];
-  let audienceType = "Unknown";
+  let hasAudienceSegment = false;
+  let hasDemographic = false;
+  let hasGeo = false;
+  let hasContextual = false;
+  let hasTech = false;
 
-  // Audience groups
+  // Audience groups (real audience segments)
   const audienceGroups = targeting["TARGETING_TYPE_AUDIENCE_GROUP"] as
     | Array<{ audienceGroupDetails?: Record<string, unknown> }>
     | undefined;
@@ -186,72 +194,92 @@ function summariseTargeting(
         | Array<{ settings?: Array<{ firstAndThirdPartyAudienceId?: string }> }>
         | undefined;
       if (included?.length) {
-        audienceType = "First Party";
+        hasAudienceSegment = true;
         parts.push(`Audience Group (${included.length} segment${included.length > 1 ? "s" : ""})`);
       }
     }
   }
 
-  // Age ranges
+  // Demographic — age
   const ages = targeting["TARGETING_TYPE_AGE_RANGE"] as
     | Array<{ ageRange?: string }>
     | undefined;
   if (ages?.length) {
+    hasDemographic = true;
     const labels = ages
-      .map((a) =>
-        (a.ageRange ?? "")
-          .replace("AGE_RANGE_", "")
-          .replace(/_/g, "-")
-      )
+      .map((a) => (a.ageRange ?? "").replace("AGE_RANGE_", "").replace(/_/g, "-"))
       .filter(Boolean);
     if (labels.length) parts.push(`Age: ${labels.join(", ")}`);
   }
 
-  // Gender
+  // Demographic — gender
   const genders = targeting["TARGETING_TYPE_GENDER"] as
     | Array<{ gender?: string }>
     | undefined;
   if (genders?.length) {
+    hasDemographic = true;
     const labels = genders
       .map((g) => (g.gender ?? "").replace("GENDER_", "").replace(/_/g, " "))
       .filter(Boolean);
     if (labels.length) parts.push(`Gender: ${labels.join(", ")}`);
   }
 
+  // Demographic — parental / income
+  if ((targeting["TARGETING_TYPE_PARENTAL_STATUS"] as unknown[] | undefined)?.length) hasDemographic = true;
+  if ((targeting["TARGETING_TYPE_HOUSEHOLD_INCOME"] as unknown[] | undefined)?.length) hasDemographic = true;
+
   // Geo
   const geos = targeting["TARGETING_TYPE_GEO_REGION"] as
     | Array<{ displayName?: string }>
     | undefined;
   if (geos?.length) {
+    hasGeo = true;
     const names = geos.map((g) => g.displayName).filter(Boolean).slice(0, 5);
     if (names.length) parts.push(`Geo: ${names.join(", ")}${geos.length > 5 ? ` +${geos.length - 5} more` : ""}`);
   }
 
-  // Device
+  // Contextual — keyword / URL / app / app category / inventory / category
+  for (const type of [
+    "TARGETING_TYPE_KEYWORD", "TARGETING_TYPE_URL", "TARGETING_TYPE_APP",
+    "TARGETING_TYPE_APP_CATEGORY", "TARGETING_TYPE_INVENTORY_SOURCE",
+    "TARGETING_TYPE_INVENTORY_SOURCE_GROUP", "TARGETING_TYPE_CATEGORY",
+    "TARGETING_TYPE_CONTENT_INSTREAM_POSITION", "TARGETING_TYPE_CONTENT_OUTSTREAM_POSITION",
+    "TARGETING_TYPE_SENSITIVE_CATEGORY_EXCLUSION",
+  ]) {
+    if ((targeting[type] as unknown[] | undefined)?.length) { hasContextual = true; break; }
+  }
+
+  // Tech — device / language / OS / browser / carrier
   const devices = targeting["TARGETING_TYPE_DEVICE_TYPE"] as
     | Array<{ deviceType?: string }>
     | undefined;
   if (devices?.length) {
+    hasTech = true;
     const labels = devices
-      .map((d) =>
-        (d.deviceType ?? "")
-          .replace("DEVICE_TYPE_", "")
-          .replace(/_/g, " ")
-      )
+      .map((d) => (d.deviceType ?? "").replace("DEVICE_TYPE_", "").replace(/_/g, " "))
       .filter(Boolean);
     if (labels.length) parts.push(`Device: ${labels.join(", ")}`);
   }
-
-  // Language
   const langs = targeting["TARGETING_TYPE_LANGUAGE"] as
     | Array<{ displayName?: string }>
     | undefined;
   if (langs?.length) {
+    hasTech = true;
     const names = langs.map((l) => l.displayName).filter(Boolean).slice(0, 3);
     if (names.length) parts.push(`Lang: ${names.join(", ")}`);
   }
+  for (const type of [
+    "TARGETING_TYPE_OPERATING_SYSTEM", "TARGETING_TYPE_BROWSER", "TARGETING_TYPE_CARRIER_AND_ISP",
+  ]) {
+    if ((targeting[type] as unknown[] | undefined)?.length) { hasTech = true; break; }
+  }
 
-  if (audienceType === "Unknown" && parts.length > 0) audienceType = "Custom";
+  const audienceType = hasAudienceSegment ? "Audience Segments"
+    : hasDemographic ? "Demographic"
+    : hasGeo ? "Geo"
+    : hasContextual ? "Contextual"
+    : hasTech ? "Tech / Language"
+    : "Broad / No targeting";
 
   return {
     audienceType,
