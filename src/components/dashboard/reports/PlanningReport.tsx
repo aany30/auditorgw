@@ -2493,8 +2493,13 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
   // via adSetId), so fetch them unconditionally.
   const metaAdSets = useMetaAdSets("custom" as DateRange, wideWindow.start, wideWindow.end, hasMeta);
   const dv360LineItems = useDV360LineItems("custom" as DateRange, wideWindow.start, wideWindow.end, groupBy === "audience" && hasDv);
-  const [metaAudFilter, setMetaAudFilter] = useState("all");
-  const [dv360AudFilter, setDv360AudFilter] = useState("all");
+  // Audience hier state — same shape as Channel/Objective/Creative pickers.
+  // metaAudFilter/dv360AudFilter kept as derived string for the audience
+  // detail table below (accepts a comma-joined dim list or "all").
+  const [metaAudienceHier, setMetaAudienceHier] = useState<HierNodeSelection[]>([]);
+  const [dv360AudienceHier, setDv360AudienceHier] = useState<HierNodeSelection[]>([]);
+  const metaAudFilter = metaAudienceHier.length === 0 ? "all" : metaAudienceHier.map((n) => n.dimensionValue).join("||");
+  const dv360AudFilter = dv360AudienceHier.length === 0 ? "all" : dv360AudienceHier.map((n) => n.dimensionValue).join("||");
 
   // Saved audiences from the account — used for the audience dropdown.
   const { audiences: savedAudiences, audienceMap, adsets: insightAdSets } = useAdSetInsights(
@@ -2868,46 +2873,86 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
       }
       return out;
     }
-    // groupBy === "audience" — always 2 summary cards (Meta + DV360), detail table below shows filtered rows
+    // groupBy === "audience" — multi-select hier picker per platform. Union
+    // filter across selected audiences; drill respects campaign/adSet/ad
+    // narrowing on each node (walk the tree once, collect matching ad-set /
+    // LI ids per node, then sum).
     const out: AggTable[] = [];
     if (hasMeta) {
-      const match = audNameToAdSetMatch.get(metaAudFilter);
-      const filtered = metaAudFilter === "all"
-        ? metaAdSets.rows
-        : match && (match.ids.size > 0 || match.names.size > 0)
-          ? metaAdSets.rows.filter((r) => match.ids.has(r.id) || match.names.has(r.name))
-          : metaAdSets.rows.filter((r) => (r.targeting + " " + r.name).toLowerCase().includes(metaAudFilter.toLowerCase()));
-      // When a specific audience is picked but no ad sets match, show honest
-      // zeros — not the all-campaign total (which made the filter look broken).
-      const d = filtered.length > 0
-        ? deriveDelivered(filtered.reduce((a, r) => ({ spend: a.spend + r.spend, impressions: a.impressions + r.impressions, clicks: a.clicks + r.clicks, reach: a.reach + r.reach, videoViews: a.videoViews + r.videoViews }), { spend: 0, impressions: 0, clicks: 0, reach: 0, videoViews: 0 }))
-        : metaAudFilter === "all"
-          ? deliveredOfGroup(metaCampaigns, strictWindow)
-          : deriveDelivered({ spend: 0, impressions: 0, clicks: 0, reach: 0, videoViews: 0 });
+      // Union of ad-set ids matching the hier selection (any narrowing honored).
+      const matchedAdSetIds = new Set<string>();
+      const matchedAdIds = new Set<string>();
+      let anyAdNarrowed = false;
+      if (metaAudienceHier.length === 0) {
+        for (const as of metaAdSets.rows) matchedAdSetIds.add(as.id);
+      } else {
+        for (const node of metaAudienceHier) {
+          const treeNode = metaAudienceTree.find((n) => n.dimensionValue === node.dimensionValue);
+          if (!treeNode) continue;
+          for (const c of treeNode.campaigns) {
+            if (node.campaignIds && !node.campaignIds.includes(c.id)) continue;
+            for (const as of c.adSets) {
+              if (node.adSetIds && !node.adSetIds.includes(as.id)) continue;
+              matchedAdSetIds.add(as.id);
+              if (node.adIds) {
+                anyAdNarrowed = true;
+                for (const ad of as.ads) if (node.adIds.includes(ad.id)) matchedAdIds.add(ad.id);
+              }
+            }
+          }
+        }
+      }
+      // If narrowed to specific ads, sum ad-level delivery; else sum ad-set.
+      const filteredAdSets = metaAdSets.rows.filter((r) => matchedAdSetIds.has(r.id));
+      const d = anyAdNarrowed
+        ? deriveDelivered(metaAdRowsFull.filter((ad) => matchedAdIds.has(ad.id)).reduce((a, ad) => ({
+            spend: a.spend + ad.spend, impressions: a.impressions + ad.impressions, clicks: a.clicks + ad.clicks,
+            reach: a.reach + ad.reach, videoViews: a.videoViews + ad.videoViews,
+          }), { spend: 0, impressions: 0, clicks: 0, reach: 0, videoViews: 0 }))
+        : filteredAdSets.length > 0
+          ? deriveDelivered(filteredAdSets.reduce((a, r) => ({ spend: a.spend + r.spend, impressions: a.impressions + r.impressions, clicks: a.clicks + r.clicks, reach: a.reach + r.reach, videoViews: a.videoViews + r.videoViews }), { spend: 0, impressions: 0, clicks: 0, reach: 0, videoViews: 0 }))
+          : metaAudienceHier.length === 0
+            ? deliveredOfGroup(metaCampaigns, strictWindow)
+            : deriveDelivered({ spend: 0, impressions: 0, clicks: 0, reach: 0, videoViews: 0 });
       const subLabel = metaAdSets.loading
         ? "Loading ad sets…"
-        : metaAudFilter === "all"
-          ? `All ad sets (${filtered.length})`
-          : filtered.length === 0
-            ? `${metaAudFilter} — no ad sets target this audience`
-            : `${metaAudFilter} (${filtered.length} ad set${filtered.length === 1 ? "" : "s"})`;
-      out.push({ key: "aud:meta", label: "Meta", sub: subLabel, count: filtered.length, delivered: d, gcur: metaCurrency, platform: "meta" });
+        : subLabelForHier(metaAudienceHier, `All ad sets (${filteredAdSets.length})`);
+      out.push({ key: "aud:meta", label: "Meta", sub: subLabel, count: filteredAdSets.length, delivered: d, gcur: metaCurrency, platform: "meta" });
     }
     if (hasDv) {
-      const filtered = dv360AudFilter === "all" ? dv360LineItems.rows : dv360LineItems.rows.filter((r) => r.audienceType === dv360AudFilter);
-      const d = filtered.length > 0
-        ? deriveDelivered(filtered.reduce((a, r) => ({ spend: a.spend + r.spend, impressions: a.impressions + r.impressions, clicks: a.clicks + r.clicks, reach: 0, videoViews: a.videoViews + r.videoViews }), { spend: 0, impressions: 0, clicks: 0, reach: 0, videoViews: 0 }))
-        : dv360AudFilter === "all"
+      const matchedLiIds = new Set<string>();
+      const matchedIoIds = new Set<string>();
+      const matchedCampIds = new Set<string>();
+      if (dv360AudienceHier.length === 0) {
+        for (const r of dv360LineItems.rows) matchedLiIds.add(r.id);
+      } else {
+        for (const node of dv360AudienceHier) {
+          const treeNode = dv360AudienceTree.find((n) => n.dimensionValue === node.dimensionValue);
+          if (!treeNode) continue;
+          for (const c of treeNode.campaigns) {
+            if (node.campaignIds && !node.campaignIds.includes(c.id)) continue;
+            matchedCampIds.add(c.id);
+            for (const io of c.adSets) {
+              if (node.adSetIds && !node.adSetIds.includes(io.id)) continue;
+              matchedIoIds.add(io.id);
+              for (const li of io.ads) {
+                if (node.adIds && !node.adIds.includes(li.id)) continue;
+                matchedLiIds.add(li.id);
+              }
+            }
+          }
+        }
+      }
+      const filteredLi = dv360LineItems.rows.filter((r) => matchedLiIds.has(r.id));
+      const d = filteredLi.length > 0
+        ? deriveDelivered(filteredLi.reduce((a, r) => ({ spend: a.spend + r.spend, impressions: a.impressions + r.impressions, clicks: a.clicks + r.clicks, reach: 0, videoViews: a.videoViews + r.videoViews }), { spend: 0, impressions: 0, clicks: 0, reach: 0, videoViews: 0 }))
+        : dv360AudienceHier.length === 0
           ? deliveredOfGroup(dv360Campaigns, strictWindow)
           : deriveDelivered({ spend: 0, impressions: 0, clicks: 0, reach: 0, videoViews: 0 });
       const subLabel = dv360LineItems.loading
         ? "Loading line items…"
-        : dv360AudFilter === "all"
-          ? `All line items (${filtered.length})`
-          : filtered.length === 0
-            ? `${dv360AudFilter} — no line items match`
-            : `${dv360AudFilter} (${filtered.length} line item${filtered.length === 1 ? "" : "s"})`;
-      out.push({ key: "aud:dv360", label: "DV360", sub: subLabel, count: filtered.length, delivered: d, gcur: dv360Currency, platform: "dv360" });
+        : subLabelForHier(dv360AudienceHier, `All line items (${filteredLi.length})`);
+      out.push({ key: "aud:dv360", label: "DV360", sub: subLabel, count: filteredLi.length, delivered: d, gcur: dv360Currency, platform: "dv360" });
     }
     return out;
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2917,7 +2962,7 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
   const scopeLabel = groupBy === "overall" ? "Overall"
     : groupBy === "channel" ? `By channel (Meta: ${joinSel(metaChannel)}, DV360: ${joinSel(dv360Channel)})`
     : groupBy === "objective" ? `By objective (Meta: ${joinSel(metaObjective)}, DV360: ${joinSel(dv360Objective)})`
-    : groupBy === "audience" ? `By audience (Meta: ${metaAudFilter}, DV360: ${dv360AudFilter})`
+    : groupBy === "audience" ? `By audience (Meta: ${metaAudienceHier.length === 0 ? "All" : metaAudienceHier.map((n) => n.dimensionValue).join(" + ")}, DV360: ${dv360AudienceHier.length === 0 ? "All" : dv360AudienceHier.map((n) => n.dimensionValue).join(" + ")})`
     : `By creative (Meta: ${joinSel(metaCreative)}, DV360: ${joinSel(dv360Creative)})`;
 
   // Gap explainer data — the current view's PLANNED (user inputs) vs DELIVERED,
@@ -3663,18 +3708,19 @@ ${deepDivePlanPagesAll}
 
   const audienceDropdown = (platform: "meta" | "dv360") => {
     const isMeta = platform === "meta";
-    const sel = isMeta ? metaAudFilter : dv360AudFilter;
-    const setSel = isMeta ? setMetaAudFilter : setDv360AudFilter;
-    const opts = isMeta ? metaAudOptions : dv360AudOptions;
+    const sel = isMeta ? metaAudienceHier : dv360AudienceHier;
+    const setSel = isMeta ? setMetaAudienceHier : setDv360AudienceHier;
+    const tree = isMeta ? metaAudienceTree : dv360AudienceTree;
     const busy = isMeta ? metaAdSets.loading : dv360LineItems.loading;
     return (
       <div className="flex items-center gap-1.5">
-        <select value={sel} onChange={(e) => setSel(e.target.value)}
-          className="text-xs border border-gray-200 rounded-md px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 max-w-[220px]">
-          <option value="all">{isMeta ? "All ad sets" : "All audience types"}</option>
-          {opts.filter((o) => o !== "all").map((o) => <option key={o} value={o}>{o}</option>)}
-          {busy && opts.length <= 1 && <option disabled>Loading…</option>}
-        </select>
+        <HierarchicalDimensionPicker
+          tree={tree}
+          selection={sel}
+          onChange={setSel}
+          allLabelText={isMeta ? "All audiences" : "All audience types"}
+          entityLabel={isMeta ? "audiences" : "audience types"}
+        />
         {busy && <span className="text-[10px] text-gray-400 animate-pulse">Loading…</span>}
       </div>
     );
@@ -3934,6 +3980,73 @@ ${deepDivePlanPagesAll}
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dvCreativeType.rows, dv360Campaigns]);
 
+  // Meta audience tree — root = saved-audience name, then campaigns that
+  // target it, ad sets targeting it, ads in those ad sets.
+  const metaAudienceTree = useMemo<HierTreeNode[]>(() => {
+    // Fallback source when saved-audiences list is empty: use ad-set names as
+    // audience labels (matches the legacy flat select's fallback path).
+    const audNames = savedAudiences.length > 0
+      ? savedAudiences.map((a) => a.name).filter(Boolean)
+      : metaAdSets.rows.map((r) => r.name).filter(Boolean);
+    const unique = [...new Set(audNames)].sort();
+    return unique.map((audName) => {
+      const match = audNameToAdSetMatch.get(audName);
+      // Ad sets belonging to this audience (either mapped via targeting or
+      // — when the map is empty — name substring match, same as the old select).
+      const adSetsForAud = match && (match.ids.size > 0 || match.names.size > 0)
+        ? metaAdSets.rows.filter((r) => match.ids.has(r.id) || match.names.has(r.name))
+        : metaAdSets.rows.filter((r) => (r.targeting + " " + r.name).toLowerCase().includes(audName.toLowerCase()));
+      // Group ad sets by their parent campaign.
+      const byCampaign = new Map<string, { name: string; adSets: typeof adSetsForAud }>();
+      for (const as of adSetsForAud) {
+        const c = metaCampaigns.find((mc) => mc.id === as.campaignId);
+        const cid = c?.id || as.campaignId || "unknown";
+        const cname = c?.name || cid;
+        const cur = byCampaign.get(cid) ?? { name: cname, adSets: [] as typeof adSetsForAud };
+        cur.adSets.push(as);
+        byCampaign.set(cid, cur);
+      }
+      return {
+        dimensionValue: audName,
+        campaigns: [...byCampaign.entries()].map(([id, c]) => ({
+          id, name: c.name,
+          adSets: c.adSets.map((as) => ({
+            id: as.id, name: as.name,
+            ads: metaAdRowsFull.filter((ad) => ad.adSetId === as.id).map((ad) => ({ id: ad.id, name: ad.name })),
+          })),
+        })),
+      };
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedAudiences, metaAdSets.rows, audNameToAdSetMatch, metaCampaigns, metaAdRowsFull]);
+
+  // DV360 audience tree — root = audienceType label, campaigns/IOs/LIs that
+  // deliver on that audience type.
+  const dv360AudienceTree = useMemo<HierTreeNode[]>(() => {
+    const audTypes = [...new Set(dv360LineItems.rows.map((r) => r.audienceType).filter(Boolean))].sort();
+    return audTypes.map((audType) => {
+      const liIds = new Set(dv360LineItems.rows.filter((r) => r.audienceType === audType).map((r) => r.id));
+      // Which campaigns/IOs contain at least one matching LI.
+      const byCampaign = new Map<string, { name: string; ios: Map<string, { name: string; lis: { id: string; name: string }[] }> }>();
+      for (const c of dv360Campaigns) {
+        for (const io of c.adSets ?? []) {
+          const matchingLis = (io.ads ?? []).filter((li) => liIds.has(li.id));
+          if (matchingLis.length === 0) continue;
+          const cur = byCampaign.get(c.id) ?? { name: c.name, ios: new Map() };
+          cur.ios.set(io.id, { name: io.name, lis: matchingLis.map((li) => ({ id: li.id, name: li.name })) });
+          byCampaign.set(c.id, cur);
+        }
+      }
+      return {
+        dimensionValue: audType,
+        campaigns: [...byCampaign.entries()].map(([id, c]) => ({
+          id, name: c.name,
+          adSets: [...c.ios.entries()].map(([ioId, io]) => ({ id: ioId, name: io.name, ads: io.lis })),
+        })),
+      };
+    });
+  }, [dv360LineItems.rows, dv360Campaigns]);
+
   const computeComboDelivered = (platform: "meta" | "dv360", values: string[], hier?: HierNodeSelection[]): Delivered => {
     // Hierarchical path takes precedence when caller supplies a hier selection.
     if (hier && (groupBy === "channel" || groupBy === "objective" || groupBy === "creative")) {
@@ -4157,14 +4270,19 @@ ${deepDivePlanPagesAll}
       {/* Audience detail table — shows filtered line items when Audience view is active.
           (Meta ad-set detail table removed — Overall/Channel/etc. cards already cover Meta.) */}
       {groupBy === "audience" && (() => {
-        const filteredDv = dv360AudFilter === "all" ? dv360LineItems.rows : dv360LineItems.rows.filter((r) => r.audienceType === dv360AudFilter);
+        // Union of LI ids across selected audience nodes (drill respected).
+        const selectedAudTypes = dv360AudienceHier.map((n) => n.dimensionValue);
+        const filteredDv = dv360AudienceHier.length === 0
+          ? dv360LineItems.rows
+          : dv360LineItems.rows.filter((r) => selectedAudTypes.includes(r.audienceType));
+        const filterLabel = dv360AudienceHier.length === 0 ? "" : selectedAudTypes.join(" + ");
         return (
           <div className="border-t border-gray-100 px-5 py-4">
             {hasDv && filteredDv.length > 0 && (
               <div>
                 <h4 className="text-sm font-bold text-gray-900 mb-2">
                   DV360 Line Items ({filteredDv.length})
-                  {dv360AudFilter !== "all" && <span className="text-xs font-normal text-gray-400 ml-2">filtered by: {dv360AudFilter}</span>}
+                  {filterLabel && <span className="text-xs font-normal text-gray-400 ml-2">filtered by: {filterLabel}</span>}
                 </h4>
                 <div>
                   <table className="w-full text-xs">
