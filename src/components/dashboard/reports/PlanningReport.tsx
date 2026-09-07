@@ -1011,7 +1011,7 @@ export function PlanningSection({ campaigns, loading, currency, storageSuffix, d
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-3 flex-wrap flex-1">
             <span className="text-sm font-semibold text-gray-700">Campaigns:</span>
-            <CampaignMultiPicker options={options} values={selected} onChange={setSelected} allLabelText="None selected — pick campaigns to plan" loading={loading} />
+            <CampaignMultiPicker options={options} values={selected} onChange={setSelected} allLabelText="None selected — pick campaigns to plan" loading={loading} align="left" />
           </div>
           {/* Saved Plans dropdown + New plan button */}
           <div className="flex items-center gap-2 shrink-0">
@@ -1115,6 +1115,7 @@ export function PlanningSection({ campaigns, loading, currency, storageSuffix, d
               allLabelText={`All ${aiPlatform === "dv360" ? "IOs" : "ad sets"}`}
               entityLabel={aiPlatform === "dv360" ? "insertion orders" : "ad sets"}
               icon={<Layers className="w-3.5 h-3.5 text-gray-400" />}
+              align="left"
             />
           </div>
         )}
@@ -1128,6 +1129,7 @@ export function PlanningSection({ campaigns, loading, currency, storageSuffix, d
               allLabelText={`All ${aiPlatform === "dv360" ? "line items" : "ads"}`}
               entityLabel={aiPlatform === "dv360" ? "line items" : "ads"}
               icon={<ClipboardList className="w-3.5 h-3.5 text-gray-400" />}
+              align="left"
             />
           </div>
         )}
@@ -1141,6 +1143,7 @@ export function PlanningSection({ campaigns, loading, currency, storageSuffix, d
               allLabelText="All ad groups"
               entityLabel="ad groups"
               icon={<Layers className="w-3.5 h-3.5 text-gray-400" />}
+              align="left"
             />
           </div>
         )}
@@ -1154,6 +1157,7 @@ export function PlanningSection({ campaigns, loading, currency, storageSuffix, d
               allLabelText="All creatives"
               entityLabel="creatives"
               icon={<ClipboardList className="w-3.5 h-3.5 text-gray-400" />}
+              align="left"
             />
           </div>
         )}

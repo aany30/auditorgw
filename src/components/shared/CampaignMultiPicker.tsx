@@ -18,7 +18,7 @@ export function dotColor(id: string): string {
 
 export default function CampaignMultiPicker({
   options, values, onChange, allLabelText = "All campaigns", loading = false,
-  entityLabel = "campaigns", icon,
+  entityLabel = "campaigns", icon, align = "right",
 }: {
   options: { id: string; name: string }[];
   values: string[];
@@ -31,6 +31,10 @@ export default function CampaignMultiPicker({
   entityLabel?: string;
   /** Override the icon shown before the label. Null to hide. */
   icon?: React.ReactNode;
+  /** Which edge the popover snaps to. Use "left" when the picker sits at the
+   *  left side of a row (so the 420px popover extends rightward instead of
+   *  overflowing off the left). Default "right" for main-row headers. */
+  align?: "left" | "right";
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -64,7 +68,7 @@ export default function CampaignMultiPicker({
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-full mt-1.5 z-50 w-[420px] max-w-[90vw] bg-white text-gray-800 rounded-xl shadow-xl border border-gray-200 overflow-hidden">
+          <div className={`absolute ${align === "left" ? "left-0" : "right-0"} top-full mt-1.5 z-50 w-[420px] max-w-[90vw] bg-white text-gray-800 rounded-xl shadow-xl border border-gray-200 overflow-hidden`}>
             <div className="p-2 border-b border-gray-100">
               <div className="relative">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
