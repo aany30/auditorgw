@@ -4019,7 +4019,7 @@ ${deepDivePlanPagesAll}
           })),
         })),
       };
-    });
+    }).filter((n) => n.campaigns.length > 0);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [savedAudiences, metaAdSets.rows, audNameToAdSetMatch, metaCampaigns, metaAdRowsFull]);
 
