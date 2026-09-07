@@ -4270,61 +4270,6 @@ ${deepDivePlanPagesAll}
         )}
       </div>
 
-      {/* Audience detail table — shows filtered line items when Audience view is active.
-          (Meta ad-set detail table removed — Overall/Channel/etc. cards already cover Meta.) */}
-      {groupBy === "audience" && (() => {
-        // Union of LI ids across selected audience nodes (drill respected).
-        const selectedAudTypes = dv360AudienceHier.map((n) => n.dimensionValue);
-        const filteredDv = dv360AudienceHier.length === 0
-          ? dv360LineItems.rows
-          : dv360LineItems.rows.filter((r) => selectedAudTypes.includes(r.audienceType));
-        const filterLabel = dv360AudienceHier.length === 0 ? "" : selectedAudTypes.join(" + ");
-        return (
-          <div className="border-t border-gray-100 px-5 py-4">
-            {hasDv && filteredDv.length > 0 && (
-              <div>
-                <h4 className="text-sm font-bold text-gray-900 mb-2">
-                  DV360 Line Items ({filteredDv.length})
-                  {filterLabel && <span className="text-xs font-normal text-gray-400 ml-2">filtered by: {filterLabel}</span>}
-                </h4>
-                <div>
-                  <table className="w-full text-xs">
-                    <thead className="bg-white sticky top-0 z-20 shadow-sm">
-                      <tr className="text-gray-500 border-b border-gray-200">
-                        <th className="text-left py-2 px-2 font-semibold">Line Item</th>
-                        <th className="text-left py-2 px-2 font-semibold">Insertion Order</th>
-                        <th className="text-left py-2 px-2 font-semibold">Audience Type</th>
-                        <th className="text-left py-2 px-2 font-semibold">Targeting</th>
-                        <th className="text-right py-2 px-2 font-semibold">Spend</th>
-                        <th className="text-right py-2 px-2 font-semibold">Impressions</th>
-                        <th className="text-right py-2 px-2 font-semibold">Clicks</th>
-                        <th className="text-right py-2 px-2 font-semibold">CTR</th>
-                        <th className="text-right py-2 px-2 font-semibold">CPM</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredDv.map((r) => (
-                        <tr key={r.id} className="border-b border-gray-50 hover:bg-blue-50/30">
-                          <td className="py-1.5 px-2 font-medium text-gray-800 max-w-[180px] truncate" title={r.name}>{r.name}</td>
-                          <td className="py-1.5 px-2 text-gray-500 max-w-[160px] truncate" title={r.insertionOrderName}>{r.insertionOrderName}</td>
-                          <td className="py-1.5 px-2"><span className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-purple-50 text-purple-700">{r.audienceType}</span></td>
-                          <td className="py-1.5 px-2 text-gray-500 max-w-[200px] truncate" title={r.targeting}>{r.targeting}</td>
-                          <td className="py-1.5 px-2 text-right tabular-nums">{formatMoney(r.spend, dv360Currency)}</td>
-                          <td className="py-1.5 px-2 text-right tabular-nums">{fmtInt(r.impressions)}</td>
-                          <td className="py-1.5 px-2 text-right tabular-nums">{fmtInt(r.clicks)}</td>
-                          <td className="py-1.5 px-2 text-right tabular-nums">{r.ctr > 0 ? `${r.ctr.toFixed(2)}%` : "—"}</td>
-                          <td className="py-1.5 px-2 text-right tabular-nums">{formatMoney(r.cpm, dv360Currency)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-            {hasDv && dv360LineItems.loading && <div className="text-sm text-gray-400 animate-pulse">Loading DV360 line items…</div>}
-          </div>
-        );
-      })()}
 
       {/* Saved plans — dated snapshots to review later */}
       {snapshots.length > 0 && (
