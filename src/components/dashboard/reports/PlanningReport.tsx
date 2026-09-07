@@ -2492,7 +2492,9 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
   // for the hierarchical Objective/Creative drill-down picker (to join ads → campaigns
   // via adSetId), so fetch them unconditionally.
   const metaAdSets = useMetaAdSets("custom" as DateRange, wideWindow.start, wideWindow.end, hasMeta);
-  const dv360LineItems = useDV360LineItems("custom" as DateRange, wideWindow.start, wideWindow.end, groupBy === "audience" && hasDv);
+  // Fetch DV360 line items always (not gated to the Audience tab) so the
+  // Audience hier tree has data ready the moment the user switches to it.
+  const dv360LineItems = useDV360LineItems("custom" as DateRange, wideWindow.start, wideWindow.end, hasDv);
   // Audience hier state — same shape as Channel/Objective/Creative pickers.
   // metaAudFilter/dv360AudFilter kept as derived string for the audience
   // detail table below (accepts a comma-joined dim list or "all").
@@ -3720,6 +3722,7 @@ ${deepDivePlanPagesAll}
           onChange={setSel}
           allLabelText={isMeta ? "All audiences" : "All audience types"}
           entityLabel={isMeta ? "audiences" : "audience types"}
+          loading={busy}
         />
         {busy && <span className="text-[10px] text-gray-400 animate-pulse">Loading…</span>}
       </div>
