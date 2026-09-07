@@ -27,6 +27,7 @@ import { useMetaBreakdown } from "@/hooks/useMetaBreakdown";
 import { useDV360Breakdown } from "@/hooks/useDV360Breakdown";
 import { useDV360Reach } from "@/hooks/useDV360Reach";
 import { useDV360Creatives } from "@/hooks/useDV360Creatives";
+import { useMetaCampaignBreakdown } from "@/hooks/useMetaCampaignBreakdown";
 import { useMetaAdSets, useDV360LineItems } from "@/hooks/useAudienceData";
 import { useAdSetInsights } from "@/hooks/useAdSetInsights";
 import { useMetaCampaignLifetime } from "@/hooks/useMetaCampaignLifetime";
@@ -2457,6 +2458,10 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
   // breakdowns below) so the "Download PDF" button always has real data ready,
   // regardless of which Group By tab the user happens to be looking at.
   const metaPub = useMetaBreakdown("publisher_platform", "custom" as DateRange, wideWindow.start, wideWindow.end);
+  // Per-campaign publisher_platform delivery — used to filter which campaigns
+  // show under each publisher in the Channel drill tree (so each publisher
+  // only lists campaigns that actually delivered on it, not all 57).
+  const metaPubByCampaign = useMetaCampaignBreakdown("publisher_platform", "custom" as DateRange, wideWindow.start, wideWindow.end, hasMeta);
   const dvExch = useDV360Breakdown("exchange", "custom" as DateRange, wideWindow.start, wideWindow.end, hasDv);
   const dvCreativeType = useDV360Breakdown("creative_type", "custom" as DateRange, wideWindow.start, wideWindow.end, hasDv);
 
@@ -3789,22 +3794,39 @@ ${deepDivePlanPagesAll}
     })).sort((a, b) => a.dimensionValue.localeCompare(b.dimensionValue));
   }, [dv360Campaigns]);
 
-  // Channel tree — Meta publisher × campaigns/ad sets/ads. Per-ad publisher
-  // isn't in the ad-insights payload, so every publisher shows the same
-  // campaign tree. Delivered at the leaf sums the ad's total across
-  // publishers (documented in the caption).
+  // Channel tree — Meta publisher × campaigns/ad sets/ads. Each publisher
+  // now only lists campaigns that actually delivered on it (from the
+  // per-campaign publisher_platform breakdown). Ad-set/ad drill is still
+  // full (per-ad-per-publisher isn't in the payload — narrowed sums ad
+  // totals across publishers, honest).
   const metaChannelTree = useMemo<HierTreeNode[]>(() => {
-    return metaPub.rows.map((r) => ({
-      dimensionValue: metaPubLabel(r.label),
-      campaigns: metaCampaigns.map((c) => ({
-        id: c.id, name: c.name,
-        adSets: metaAdSets.rows.filter((as) => as.campaignId === c.id).map((as) => ({
-          id: as.id, name: as.name,
-          ads: metaAdRowsFull.filter((ad) => ad.adSetId === as.id).map((ad) => ({ id: ad.id, name: ad.name })),
+    // Group campaigns by publisher_platform.
+    const campaignsByPub = new Map<string, Set<string>>();
+    for (const r of metaPubByCampaign.rows) {
+      if (!(r.spend > 0 || r.impressions > 0)) continue;
+      const set = campaignsByPub.get(r.breakdownValue) ?? new Set<string>();
+      set.add(r.campaignId);
+      campaignsByPub.set(r.breakdownValue, set);
+    }
+    return metaPub.rows.map((r) => {
+      const activeIds = campaignsByPub.get(r.label);
+      // If per-campaign data hasn't landed yet, fall back to all Meta campaigns
+      // (previous behavior) so the picker isn't empty during the fetch.
+      const filtered = activeIds
+        ? metaCampaigns.filter((c) => activeIds.has(c.id))
+        : metaCampaigns;
+      return {
+        dimensionValue: metaPubLabel(r.label),
+        campaigns: filtered.map((c) => ({
+          id: c.id, name: c.name,
+          adSets: metaAdSets.rows.filter((as) => as.campaignId === c.id).map((as) => ({
+            id: as.id, name: as.name,
+            ads: metaAdRowsFull.filter((ad) => ad.adSetId === as.id).map((ad) => ({ id: ad.id, name: ad.name })),
+          })),
         })),
-      })),
-    })).sort((a, b) => a.dimensionValue.localeCompare(b.dimensionValue));
-  }, [metaPub.rows, metaCampaigns, metaAdSets.rows, metaAdRowsFull]);
+      };
+    }).sort((a, b) => a.dimensionValue.localeCompare(b.dimensionValue));
+  }, [metaPub.rows, metaPubByCampaign.rows, metaCampaigns, metaAdSets.rows, metaAdRowsFull]);
 
   // DV360 exchange tree — same shape. Per-LI exchange isn't decomposed, so
   // every exchange shows all campaigns; delivered at whole-dim uses the
