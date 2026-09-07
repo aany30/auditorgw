@@ -3684,7 +3684,45 @@ ${deepDivePlanPagesAll}
       delivered={t.delivered}
       planned={planned[t.key] || {}}
       onPlanChange={(metric, value) => setPlan(t.key, metric, value)}
-      countLabel={`${t.count} campaign${t.count === 1 ? "" : "s"}`}
+      countLabel={(() => {
+        // For dimensions where the same campaign can appear under multiple
+        // values (Meta Channel = automatic placements; Meta Creative = mixed
+        // ad formats in one campaign), show both the naive per-value sum
+        // AND the unique-campaign count so the overlap is visible.
+        const isMeta = t.platform === "meta";
+        if (isMeta && groupBy === "channel" && metaChannelHier.length >= 2) {
+          const selected = new Set(metaChannelHier.map((n) => n.dimensionValue));
+          const pubToLabel = new Map<string, string>(metaPub.rows.map((r) => [metaPubLabel(r.label), r.label]));
+          let sum = 0;
+          const unique = new Set<string>();
+          for (const dimVal of selected) {
+            const raw = pubToLabel.get(dimVal);
+            const campsHere = metaPubByCampaign.rows.filter((r) => r.breakdownValue === raw && (r.spend > 0 || r.impressions > 0));
+            sum += campsHere.length;
+            for (const r of campsHere) unique.add(r.campaignId);
+          }
+          if (sum > unique.size) return `${sum} · ${unique.size} unique campaign${unique.size === 1 ? "" : "s"}`;
+          return `${unique.size} campaign${unique.size === 1 ? "" : "s"}`;
+        }
+        if (isMeta && groupBy === "creative" && metaCreativeHier.length >= 2) {
+          const selected = new Set(metaCreativeHier.map((n) => n.dimensionValue));
+          let sum = 0;
+          const unique = new Set<string>();
+          for (const dimVal of selected) {
+            const campsHere = new Set<string>();
+            for (const ad of metaAdRowsFull) {
+              if (ad.format !== dimVal) continue;
+              const as = ad.adSetId ? adSetById.get(ad.adSetId) : undefined;
+              if (as?.campaignId) campsHere.add(as.campaignId);
+            }
+            sum += campsHere.size;
+            for (const cid of campsHere) unique.add(cid);
+          }
+          if (sum > unique.size) return `${sum} · ${unique.size} unique campaign${unique.size === 1 ? "" : "s"}`;
+          return `${unique.size} campaign${unique.size === 1 ? "" : "s"}`;
+        }
+        return `${t.count} campaign${t.count === 1 ? "" : "s"}`;
+      })()}
       headerRight={<>
         {groupBy === "channel" && t.platform && channelDropdown(t.platform)}
         {groupBy === "objective" && t.platform && objectiveDropdown(t.platform)}
