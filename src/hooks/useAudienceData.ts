@@ -90,7 +90,7 @@ export function useDV360LineItems(
   customEnd?: string,
   enabled = true
 ) {
-  const { dv360RefreshToken, dv360AdvertiserId, demoMode } = useAuthStore();
+  const { dv360ClientId, dv360ClientSecret, dv360RefreshToken, dv360AdvertiserId, dv360PartnerId, demoMode } = useAuthStore();
   const [rows, setRows] = useState<DV360LineItemRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -109,7 +109,15 @@ export function useDV360LineItems(
     fetch("/api/reporting/adsets/dv360", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refreshToken: token, advertiserId: adv, startDate, endDate }),
+      body: JSON.stringify({
+        clientId: dv360ClientId,
+        clientSecret: dv360ClientSecret,
+        refreshToken: token,
+        advertiserId: adv,
+        partnerId: dv360PartnerId,
+        startDate,
+        endDate,
+      }),
     })
       .then((r) => r.json())
       .then((d) => {
@@ -121,7 +129,7 @@ export function useDV360LineItems(
       .finally(() => { if (!cancelled) setLoading(false); });
 
     return () => { cancelled = true; };
-  }, [startDate, endDate, dv360RefreshToken, dv360AdvertiserId, demoMode, enabled]);
+  }, [startDate, endDate, dv360ClientId, dv360ClientSecret, dv360RefreshToken, dv360AdvertiserId, dv360PartnerId, demoMode, enabled]);
 
   return { rows, loading, error };
 }
