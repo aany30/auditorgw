@@ -2551,9 +2551,12 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
     if (n.includes("static") || n.includes("banner") || n.includes("display")) return "Static / Banner";
     return null;
   };
-  const classifyMetaFormat = (creativeType?: string, campaignName?: string): string => {
-    const byName = classifyFormatByName(campaignName);
-    if (byName) return byName;
+  const classifyMetaFormat = (creativeType?: string, campaignName?: string, adName?: string): string => {
+    // Priority: campaign-name nomenclature → ad-name nomenclature → real API type.
+    const byCampaignName = classifyFormatByName(campaignName);
+    if (byCampaignName) return byCampaignName;
+    const byAdName = classifyFormatByName(adName);
+    if (byAdName) return byAdName;
     const t = (creativeType || "").toUpperCase();
     if (t === "CAROUSEL_V2" || t === "MULTI_SHARE" || t.includes("CAROUSEL")) return "Carousel";
     if (t.includes("AUDIO")) return "Audio";
@@ -2601,7 +2604,9 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
         const ads = d.ads as Array<{ id?: string; name: string; adSetId?: string; creativeType?: string; spend: number; impressions: number; reach: number; clicks: number; conversions: number; conversionValue: number; videoViews: number }>;
         const adRowsFull: MetaAdRowFull[] = ads.map((ad, i) => ({
           id: ad.id || String(i), name: ad.name, adSetId: ad.adSetId, creativeType: ad.creativeType,
-          format: classifyMetaFormat(ad.creativeType, undefined),
+          // First pass with ad-name fallback only (campaign name isn't
+          // available at fetch time — the memo below re-classifies with it).
+          format: classifyMetaFormat(ad.creativeType, undefined, ad.name),
           spend: ad.spend, impressions: ad.impressions, clicks: ad.clicks, reach: ad.reach || 0, videoViews: ad.videoViews || 0,
         }));
         setMetaCreativeRows(
@@ -2639,7 +2644,7 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
     return metaAdRowsRaw.map((ad) => {
       const as = ad.adSetId ? adSetById.get(ad.adSetId) : undefined;
       const c = as ? metaCampaigns.find((mc) => mc.id === as.campaignId) : undefined;
-      return { ...ad, format: classifyMetaFormat(ad.creativeType, c?.name) };
+      return { ...ad, format: classifyMetaFormat(ad.creativeType, c?.name, ad.name) };
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [metaAdRowsRaw, metaCampaigns, adSetById]);
