@@ -2737,12 +2737,15 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
     const acc = { spend: 0, impressions: 0, clicks: 0, reach: 0, videoViews: 0 };
     for (const node of selection) {
       const narrowed = !!(node.campaignIds || node.adSetIds || node.adIds);
-      // Channel + whole exchange: honest per-exchange sum from Bid Manager.
+      // Channel dim on DV360 is now a Campaign → IO → LI drill (no exchange
+      // top level — per-campaign exchange data isn't available). Whole-node
+      // (no narrowing) means "this campaign", so look up by name.
       if (groupBy === "channel" && !narrowed) {
-        const row = dvExch.rows.find((r) => r.label === node.dimensionValue);
-        if (row) {
-          acc.spend += row.spend; acc.impressions += row.impressions;
-          acc.clicks += row.clicks; acc.videoViews += row.videoViews || 0;
+        const c = dv360Campaigns.find((x) => x.name === node.dimensionValue);
+        if (c) {
+          const d = deliveredOfGroup([c], strictWindow);
+          acc.spend += d.spend; acc.impressions += d.impressions;
+          acc.clicks += d.clicks; acc.reach += d.reach; acc.videoViews += d.videoViews || 0;
         }
         continue;
       }
@@ -2800,21 +2803,20 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
     if (groupBy === "channel") {
       const out: AggTable[] = [];
       if (hasMeta) {
-        const d = hierNarrowed(metaChannelHier)
+        const d = metaChannelHier.length > 0
           ? metaHierDelivered(metaChannelHier)
-          : metaChannel.length === 0
-            ? deliveredOfGroup(metaCampaigns, strictWindow)
-            : sumRowsDelivered(metaPub.rows.filter((r) => metaChannel.includes(r.label)));
+          : deliveredOfGroup(metaCampaigns, strictWindow);
         const sub = subLabelForHier(metaChannelHier, "All channels", metaPubLabel);
         out.push({ key: mainComboKey("channel", "meta", metaChannel), label: "Meta", sub, count: metaCampaigns.length, delivered: d, gcur: metaCurrency, platform: "meta" });
       }
       if (hasDv) {
-        const d = hierNarrowed(dv360ChannelHier)
+        // DV360 Channel is now a Campaign → IO → LI drill (dimensionValue =
+        // campaign name), so always route through hierDelivered when hier
+        // has entries — the old dvExch flat filter would miss every row.
+        const d = dv360ChannelHier.length > 0
           ? dv360HierDelivered(dv360ChannelHier)
-          : dv360Channel.length === 0
-            ? deliveredOfGroup(dv360Campaigns, strictWindow)
-            : sumRowsDelivered(dvExch.rows.filter((r) => dv360Channel.includes(r.label)));
-        const sub = subLabelForHier(dv360ChannelHier, "All exchanges");
+          : deliveredOfGroup(dv360Campaigns, strictWindow);
+        const sub = subLabelForHier(dv360ChannelHier, "All campaigns");
         out.push({ key: mainComboKey("channel", "dv360", dv360Channel), label: "DV360", sub, count: dv360Campaigns.length, delivered: d, gcur: dv360Currency, platform: "dv360" });
       }
       return out;
@@ -3612,8 +3614,8 @@ ${deepDivePlanPagesAll}
         tree={tree}
         selection={sel}
         onChange={setSel}
-        allLabelText={isMeta ? "All channels" : "All exchanges"}
-        entityLabel={isMeta ? "channels" : "exchanges"}
+        allLabelText={isMeta ? "All channels" : "All campaigns"}
+        entityLabel={isMeta ? "channels" : "campaigns"}
       />
     );
   };
@@ -3705,9 +3707,9 @@ ${deepDivePlanPagesAll}
     : groupBy === "creative" ? dv360Formats.map((o) => ({ id: o, name: o }))
     : [];
   const comboMetaAllLabel = groupBy === "channel" ? "All channels" : groupBy === "objective" ? "All objectives" : "All formats";
-  const comboDv360AllLabel = groupBy === "channel" ? "All exchanges" : groupBy === "objective" ? "All objectives" : "All creative types";
+  const comboDv360AllLabel = groupBy === "channel" ? "All campaigns" : groupBy === "objective" ? "All objectives" : "All creative types";
   const comboMetaEntityLabel = groupBy === "channel" ? "channels" : groupBy === "objective" ? "objectives" : "formats";
-  const comboDv360EntityLabel = groupBy === "channel" ? "exchanges" : groupBy === "objective" ? "objectives" : "creative types";
+  const comboDv360EntityLabel = groupBy === "channel" ? "campaigns" : groupBy === "objective" ? "objectives" : "creative types";
   const comboMetaLoading = groupBy === "channel" ? metaPub.loading : groupBy === "creative" ? metaFormatLoading : false;
   const comboDv360Loading = groupBy === "channel" ? (dvExch.loading || dvExch.pending) : groupBy === "creative" ? (dvCreativeType.loading || dvCreativeType.pending) : false;
 
@@ -3828,21 +3830,23 @@ ${deepDivePlanPagesAll}
     }).sort((a, b) => a.dimensionValue.localeCompare(b.dimensionValue));
   }, [metaPub.rows, metaPubByCampaign.rows, metaCampaigns, metaAdSets.rows, metaAdRowsFull]);
 
-  // DV360 exchange tree — same shape. Per-LI exchange isn't decomposed, so
-  // every exchange shows all campaigns; delivered at whole-dim uses the
-  // exchange breakdown row.
+  // DV360 Channel drill — per-campaign exchange isn't available from the
+  // campaigns payload, so listing every campaign under every exchange (the
+  // previous "17 camp. per exchange" tree) was misleading. Instead, put
+  // campaigns directly at the top level and drill Campaign → IO → LI.
+  // dimensionValue = campaign name so the picker still filters on selection.
   const dv360ChannelTree = useMemo<HierTreeNode[]>(() => {
-    return dvExch.rows.map((r) => ({
-      dimensionValue: r.label,
-      campaigns: dv360Campaigns.map((c) => ({
+    return dv360Campaigns.map((c) => ({
+      dimensionValue: c.name,
+      campaigns: [{
         id: c.id, name: c.name,
         adSets: (c.adSets ?? []).map((io) => ({
           id: io.id, name: io.name,
           ads: (io.ads ?? []).map((li) => ({ id: li.id, name: li.name })),
         })),
-      })),
+      }],
     })).sort((a, b) => a.dimensionValue.localeCompare(b.dimensionValue));
-  }, [dvExch.rows, dv360Campaigns]);
+  }, [dv360Campaigns]);
 
   // DV360 creative tree — real Bid Manager creative_type labels plus a
   // campaign-name fallback bucket: any campaign whose name mentions Video /
