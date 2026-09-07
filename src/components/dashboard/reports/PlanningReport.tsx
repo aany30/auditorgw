@@ -2531,7 +2531,36 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
     return [...new Set([...DV360_OBJECTIVES, ...from])].filter(Boolean).sort();
   }, [dv360Campaigns]);
 
-  // Normalise a raw format token to the same labels the Creative Intelligence tab uses.
+  // Format classifier: campaign name first (honors accounts that tag format
+  // in the campaign name), then real Meta creative.object_type. If neither
+  // gives a signal → "Unknown" (accounts with no naming convention AND no
+  // API object_type — rare).
+  const classifyFormatByName = (name?: string): string | null => {
+    if (!name) return null;
+    const n = name.toLowerCase();
+    if (n.includes("carousel")) return "Carousel";
+    if (n.includes("reel")) return "Video";
+    if (n.includes("video")) return "Video";
+    if (n.includes("audio")) return "Audio";
+    if (n.includes("native")) return "Native";
+    if (n.includes("static") || n.includes("banner") || n.includes("display")) return "Static / Banner";
+    return null;
+  };
+  const classifyMetaFormat = (creativeType?: string, campaignName?: string): string => {
+    const byName = classifyFormatByName(campaignName);
+    if (byName) return byName;
+    const t = (creativeType || "").toUpperCase();
+    if (t === "CAROUSEL_V2" || t === "MULTI_SHARE" || t.includes("CAROUSEL")) return "Carousel";
+    if (t.includes("AUDIO")) return "Audio";
+    if (t.includes("NATIVE")) return "Native";
+    if (t === "VIDEO" || t === "REEL" || t.includes("VIDEO")) return "Video";
+    if (t === "SHARE" || t === "PHOTO" || t === "STATUS" || t === "INSTAGRAM_MEDIA"
+        || t.includes("PHOTO") || t.includes("IMAGE") || t.includes("DISPLAY")
+        || t.includes("STANDARD") || t.includes("STATIC")) return "Static / Banner";
+    if (t) return "Other";
+    return "Unknown";
+  };
+
   // ── Meta creative format breakdown (ad-level, same source as Creative Intelligence) ──
   // Unconditional (like the audience breakdowns above) — the PDF's Format Wise
   // and Creative Performance sections need this regardless of which Group By
@@ -2539,15 +2568,19 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
   const { metaAccessToken, metaBusinessId, demoMode } = useAuthStore();
   interface MetaFormatRow { label: string; spend: number; impressions: number; reach: number; clicks: number; conversions: number; conversionValue: number; videoViews: number }
   interface MetaCreativeRow { id: string; name: string; spend: number; impressions: number; clicks: number; videoViews: number }
-  // Full per-ad rows preserved from the same fetch — needed by the hierarchical
-  // Objective/Creative picker to drill format → campaign → ad set → ad.
-  interface MetaAdRowFull { id: string; name: string; adSetId?: string; format: string; spend: number; impressions: number; clicks: number; reach: number; videoViews: number }
-  const [metaFormatRows, setMetaFormatRows] = useState<MetaFormatRow[]>([]);
+  // Full per-ad rows preserved from the same fetch. `creativeType` is the raw
+  // Meta object_type enum (SHARE/VIDEO/CAROUSEL_V2/etc.); `format` is the
+  // final classification (campaign-name fallback applied later in a memo
+  // that has campaign access).
+  interface MetaAdRowFull { id: string; name: string; adSetId?: string; creativeType?: string; format: string; spend: number; impressions: number; clicks: number; reach: number; videoViews: number }
   const [metaCreativeRows, setMetaCreativeRows] = useState<MetaCreativeRow[]>([]);
-  const [metaAdRowsFull, setMetaAdRowsFull] = useState<MetaAdRowFull[]>([]);
+  // Raw per-ad rows from the fetch. `format` here is a naive first pass
+  // using API type only (no campaign context available at fetch time);
+  // the final format used everywhere else is computed in the memo below.
+  const [metaAdRowsRaw, setMetaAdRowsRaw] = useState<MetaAdRowFull[]>([]);
   const [metaFormatLoading, setMetaFormatLoading] = useState(false);
   useEffect(() => {
-    if (!hasMeta) { setMetaFormatRows([]); setMetaCreativeRows([]); setMetaAdRowsFull([]); return; }
+    if (!hasMeta) { setMetaCreativeRows([]); setMetaAdRowsRaw([]); return; }
     const token = demoMode ? "demo-meta-token" : metaAccessToken;
     const biz = demoMode ? "demo-business-123" : metaBusinessId;
     if (!token || !biz) return;
@@ -2561,48 +2594,61 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
       .then((d) => {
         if (cancelled || !d.ads) return;
         const ads = d.ads as Array<{ id?: string; name: string; adSetId?: string; creativeType?: string; spend: number; impressions: number; reach: number; clicks: number; conversions: number; conversionValue: number; videoViews: number }>;
-        const byFmt = new Map<string, MetaFormatRow>();
-        const adRowsFull: MetaAdRowFull[] = [];
-        for (const ad of ads) {
-          // Real Meta creative.object_type only — no name-string inference.
-          // Meta returns raw enum values, not our labels, so map explicitly:
-          //  CAROUSEL_V2 / MULTI_SHARE           → Carousel
-          //  VIDEO / REEL                        → Video
-          //  PHOTO / SHARE / STATUS /
-          //     INSTAGRAM_MEDIA / IMAGE          → Static / Banner
-          //  (any other returned value)          → Other
-          //  (no object_type returned at all)    → Unknown
-          const t = (ad.creativeType || "").toUpperCase();
-          let fmt: string;
-          if (t === "CAROUSEL_V2" || t === "MULTI_SHARE" || t.includes("CAROUSEL")) fmt = "Carousel";
-          else if (t.includes("AUDIO")) fmt = "Audio";
-          else if (t.includes("NATIVE")) fmt = "Native";
-          else if (t === "VIDEO" || t === "REEL" || t.includes("VIDEO")) fmt = "Video";
-          else if (t === "SHARE" || t === "PHOTO" || t === "STATUS" || t === "INSTAGRAM_MEDIA"
-              || t.includes("PHOTO") || t.includes("IMAGE") || t.includes("DISPLAY")
-              || t.includes("STANDARD") || t.includes("STATIC")) fmt = "Static / Banner";
-          else if (t) fmt = "Other";
-          else fmt = "Unknown";
-          const cur = byFmt.get(fmt) ?? { label: fmt, spend: 0, impressions: 0, reach: 0, clicks: 0, conversions: 0, conversionValue: 0, videoViews: 0 };
-          cur.spend += ad.spend; cur.impressions += ad.impressions; cur.reach += ad.reach || 0; cur.clicks += ad.clicks;
-          cur.conversions += ad.conversions; cur.conversionValue += ad.conversionValue;
-          cur.videoViews += ad.videoViews || 0;
-          byFmt.set(fmt, cur);
-          adRowsFull.push({
-            id: ad.id || `${adRowsFull.length}`, name: ad.name, adSetId: ad.adSetId, format: fmt,
-            spend: ad.spend, impressions: ad.impressions, clicks: ad.clicks, reach: ad.reach || 0, videoViews: ad.videoViews || 0,
-          });
-        }
-        setMetaFormatRows([...byFmt.values()].sort((a, b) => b.spend - a.spend));
+        const adRowsFull: MetaAdRowFull[] = ads.map((ad, i) => ({
+          id: ad.id || String(i), name: ad.name, adSetId: ad.adSetId, creativeType: ad.creativeType,
+          format: classifyMetaFormat(ad.creativeType, undefined),
+          spend: ad.spend, impressions: ad.impressions, clicks: ad.clicks, reach: ad.reach || 0, videoViews: ad.videoViews || 0,
+        }));
         setMetaCreativeRows(
           ads.map((ad, i) => ({ id: ad.id || String(i), name: ad.name, spend: ad.spend, impressions: ad.impressions, clicks: ad.clicks, videoViews: ad.videoViews || 0 }))
              .sort((a, b) => b.spend - a.spend)
         );
-        setMetaAdRowsFull(adRowsFull);
+        setMetaAdRowsRaw(adRowsFull);
       })
       .finally(() => { if (!cancelled) setMetaFormatLoading(false); });
     return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasMeta, demoMode, metaAccessToken, metaBusinessId, wideWindow.start, wideWindow.end]);
+
+  // Union of every ad-set we know about: from the ad-sets fetch AND from each
+  // campaign's own .adSets list (the campaigns API returns them nested). The
+  // campaigns-nested source is the one that always has the parent campaignId,
+  // so we prefer it — it prevents "unknown" campaign nodes when the flat
+  // ad-sets endpoint is slow, paginated, or hasn't returned yet.
+  const adSetById = useMemo(() => {
+    const m = new Map<string, { id: string; name: string; campaignId: string }>();
+    for (const c of metaCampaigns) {
+      for (const as of c.adSets ?? []) m.set(as.id, { id: as.id, name: as.name, campaignId: c.id });
+    }
+    for (const as of metaAdSets.rows) {
+      if (!m.has(as.id)) m.set(as.id, { id: as.id, name: as.name, campaignId: as.campaignId });
+    }
+    return m;
+  }, [metaCampaigns, metaAdSets.rows]);
+
+  // Enriched per-ad rows: apply campaign-name fallback on top of the raw API
+  // classification. Campaign name mentions win first (buyer intent), then
+  // the real Meta object_type. This memo is the source of truth for both
+  // metaFormatRows (aggregate for picker/tables) and metaCreativeTree (drill).
+  const metaAdRowsFull = useMemo<MetaAdRowFull[]>(() => {
+    return metaAdRowsRaw.map((ad) => {
+      const as = ad.adSetId ? adSetById.get(ad.adSetId) : undefined;
+      const c = as ? metaCampaigns.find((mc) => mc.id === as.campaignId) : undefined;
+      return { ...ad, format: classifyMetaFormat(ad.creativeType, c?.name) };
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [metaAdRowsRaw, metaCampaigns, adSetById]);
+
+  const metaFormatRows = useMemo<MetaFormatRow[]>(() => {
+    const byFmt = new Map<string, MetaFormatRow>();
+    for (const ad of metaAdRowsFull) {
+      const cur = byFmt.get(ad.format) ?? { label: ad.format, spend: 0, impressions: 0, reach: 0, clicks: 0, conversions: 0, conversionValue: 0, videoViews: 0 };
+      cur.spend += ad.spend; cur.impressions += ad.impressions; cur.reach += ad.reach; cur.clicks += ad.clicks;
+      cur.videoViews += ad.videoViews;
+      byFmt.set(ad.format, cur);
+    }
+    return [...byFmt.values()].sort((a, b) => b.spend - a.spend);
+  }, [metaAdRowsFull]);
 
   const metaFormats = useMemo(() => metaFormatRows.map((r) => r.label), [metaFormatRows]);
   // Real Bid Manager creative_type labels — no normalizer, no name inference.
@@ -2639,22 +2685,6 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
   // DV360 reach is now enriched on each campaign object (summed from line-item
   // REACH reports). deliveredOfGroup already sums it, so no special override
   // needed — every group (full or sub) gets real summed LI reach.
-
-  // Union of every ad-set we know about: from the ad-sets fetch AND from each
-  // campaign's own .adSets list (the campaigns API returns them nested). The
-  // campaigns-nested source is the one that always has the parent campaignId,
-  // so we prefer it — it prevents "unknown" campaign nodes when the flat
-  // ad-sets endpoint is slow, paginated, or hasn't returned yet.
-  const adSetById = useMemo(() => {
-    const m = new Map<string, { id: string; name: string; campaignId: string }>();
-    for (const c of metaCampaigns) {
-      for (const as of c.adSets ?? []) m.set(as.id, { id: as.id, name: as.name, campaignId: c.id });
-    }
-    for (const as of metaAdSets.rows) {
-      if (!m.has(as.id)) m.set(as.id, { id: as.id, name: as.name, campaignId: as.campaignId });
-    }
-    return m;
-  }, [metaCampaigns, metaAdSets.rows]);
 
   // Delivered sum for a hierarchical selection on Meta (walks metaAdRowsFull
   // filtered by the roll-up rule declared on HierNodeSelection). Channel-mode
@@ -3792,13 +3822,14 @@ ${deepDivePlanPagesAll}
     })).sort((a, b) => a.dimensionValue.localeCompare(b.dimensionValue));
   }, [dvExch.rows, dv360Campaigns]);
 
-  // DV360 creative tree sourced from real Bid Manager creative_type breakdown
-  // (dvCreativeType.rows) — no name-string inference, no normalizer. Each
-  // creative_type from the API becomes a top-level node; drill shows every
-  // campaign / IO / LI (per-LI creative type isn't in the same payload so the
-  // narrowed delivered sums LI totals across all creative types — honest).
+  // DV360 creative tree — real Bid Manager creative_type labels plus a
+  // campaign-name fallback bucket: any campaign whose name mentions Video /
+  // Carousel / Static / Banner / Audio gets a top-level tree entry with that
+  // label, listing that campaign's own IOs and LIs. Accounts without a
+  // naming convention still see the raw API creative_types.
   const dv360CreativeTree = useMemo<HierTreeNode[]>(() => {
-    return dvCreativeType.rows.map((r) => ({
+    // Real API creative_type buckets (each shows all campaigns, no narrowing).
+    const apiNodes: HierTreeNode[] = dvCreativeType.rows.map((r) => ({
       dimensionValue: r.label,
       campaigns: dv360Campaigns.map((c) => ({
         id: c.id, name: c.name,
@@ -3807,7 +3838,31 @@ ${deepDivePlanPagesAll}
           ads: (io.ads ?? []).map((li) => ({ id: li.id, name: li.name })),
         })),
       })),
-    })).sort((a, b) => a.dimensionValue.localeCompare(b.dimensionValue));
+    }));
+    // Campaign-name fallback: group campaigns whose name hints a format.
+    const byName = new Map<string, typeof dv360Campaigns>();
+    for (const c of dv360Campaigns) {
+      const fmt = classifyFormatByName(c.name);
+      if (!fmt) continue;
+      const list = byName.get(fmt) ?? [];
+      list.push(c);
+      byName.set(fmt, list);
+    }
+    const nameNodes: HierTreeNode[] = [...byName.entries()].map(([label, camps]) => ({
+      dimensionValue: label,
+      campaigns: camps.map((c) => ({
+        id: c.id, name: c.name,
+        adSets: (c.adSets ?? []).map((io) => ({
+          id: io.id, name: io.name,
+          ads: (io.ads ?? []).map((li) => ({ id: li.id, name: li.name })),
+        })),
+      })),
+    }));
+    // De-dupe by dimensionValue (API label wins if both exist).
+    const seen = new Set(apiNodes.map((n) => n.dimensionValue));
+    const merged = [...apiNodes, ...nameNodes.filter((n) => !seen.has(n.dimensionValue))];
+    return merged.sort((a, b) => a.dimensionValue.localeCompare(b.dimensionValue));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dvCreativeType.rows, dv360Campaigns]);
 
   const computeComboDelivered = (platform: "meta" | "dv360", values: string[], hier?: HierNodeSelection[]): Delivered => {
