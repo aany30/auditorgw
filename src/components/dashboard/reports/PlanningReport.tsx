@@ -2532,22 +2532,6 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
   }, [dv360Campaigns]);
 
   // Normalise a raw format token to the same labels the Creative Intelligence tab uses.
-  function normFormat(raw: string): string {
-    const s = raw.toLowerCase().trim();
-    if (s.includes("carousel")) return "Carousel";
-    if (s.includes("audio")) return "Audio";
-    if (s.includes("native")) return "Native";
-    if (s.includes("ctv") || s.includes("connected tv")) return "CTV";
-    if (s.includes("reel") || s.includes("stories")) return "Video";
-    if (/video.*30|30\s?s/.test(s)) return "Video 30s";
-    if (/video.*15|15\s?s/.test(s)) return "Video 15s";
-    if (s.includes("video")) return "Video";
-    if (s.includes("display") || s.includes("standard") || s.includes("static") || s.includes("banner")
-        || s.includes("image") || s.includes("photo") || s.includes("html")) return "Static / Banner";
-    if (s.includes("rich")) return "Rich Media";
-    return raw || "Other";
-  }
-
   // ── Meta creative format breakdown (ad-level, same source as Creative Intelligence) ──
   // Unconditional (like the audience breakdowns above) — the PDF's Format Wise
   // and Creative Performance sections need this regardless of which Group By
@@ -2580,17 +2564,23 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
         const byFmt = new Map<string, MetaFormatRow>();
         const adRowsFull: MetaAdRowFull[] = [];
         for (const ad of ads) {
-          // Real Meta creative.object_type only — no name-string inference,
-          // per no-synthetic-data policy. Ads with no object_type (deleted
-          // creative, unsupported type, or fetch-fail) fall into "Unknown".
+          // Real Meta creative.object_type only — no name-string inference.
+          // Meta returns raw enum values, not our labels, so map explicitly:
+          //  CAROUSEL_V2 / MULTI_SHARE           → Carousel
+          //  VIDEO / REEL                        → Video
+          //  PHOTO / SHARE / STATUS /
+          //     INSTAGRAM_MEDIA / IMAGE          → Static / Banner
+          //  (any other returned value)          → Other
+          //  (no object_type returned at all)    → Unknown
           const t = (ad.creativeType || "").toUpperCase();
           let fmt: string;
-          if (t.includes("CAROUSEL")) fmt = "Carousel";
+          if (t === "CAROUSEL_V2" || t === "MULTI_SHARE" || t.includes("CAROUSEL")) fmt = "Carousel";
           else if (t.includes("AUDIO")) fmt = "Audio";
           else if (t.includes("NATIVE")) fmt = "Native";
-          else if (t.includes("VIDEO") || t === "REEL") fmt = "Video";
-          else if (t.includes("DISPLAY") || t.includes("STANDARD") || t.includes("IMAGE") || t.includes("PHOTO")
-              || t.includes("STATIC")) fmt = "Static / Banner";
+          else if (t === "VIDEO" || t === "REEL" || t.includes("VIDEO")) fmt = "Video";
+          else if (t === "SHARE" || t === "PHOTO" || t === "STATUS" || t === "INSTAGRAM_MEDIA"
+              || t.includes("PHOTO") || t.includes("IMAGE") || t.includes("DISPLAY")
+              || t.includes("STANDARD") || t.includes("STATIC")) fmt = "Static / Banner";
           else if (t) fmt = "Other";
           else fmt = "Unknown";
           const cur = byFmt.get(fmt) ?? { label: fmt, spend: 0, impressions: 0, reach: 0, clicks: 0, conversions: 0, conversionValue: 0, videoViews: 0 };
@@ -2615,8 +2605,9 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
   }, [hasMeta, demoMode, metaAccessToken, metaBusinessId, wideWindow.start, wideWindow.end]);
 
   const metaFormats = useMemo(() => metaFormatRows.map((r) => r.label), [metaFormatRows]);
+  // Real Bid Manager creative_type labels — no normalizer, no name inference.
   const dv360Formats = useMemo(() => {
-    const from = dvCreativeType.rows.map((r) => normFormat(r.label));
+    const from = dvCreativeType.rows.map((r) => r.label);
     return [...new Set(from)].filter(Boolean).sort();
   }, [dvCreativeType.rows]);
 
@@ -2711,8 +2702,18 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
     const acc = { spend: 0, impressions: 0, clicks: 0, reach: 0, videoViews: 0 };
     for (const node of selection) {
       const narrowed = !!(node.campaignIds || node.adSetIds || node.adIds);
+      // Channel + whole exchange: honest per-exchange sum from Bid Manager.
       if (groupBy === "channel" && !narrowed) {
         const row = dvExch.rows.find((r) => r.label === node.dimensionValue);
+        if (row) {
+          acc.spend += row.spend; acc.impressions += row.impressions;
+          acc.clicks += row.clicks; acc.videoViews += row.videoViews || 0;
+        }
+        continue;
+      }
+      // Creative + whole creative_type: honest per-type sum from Bid Manager.
+      if (groupBy === "creative" && !narrowed) {
+        const row = dvCreativeType.rows.find((r) => r.label === node.dimensionValue);
         if (row) {
           acc.spend += row.spend; acc.impressions += row.impressions;
           acc.clicks += row.clicks; acc.videoViews += row.videoViews || 0;
@@ -2726,10 +2727,8 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
           if (node.adSetIds && !node.adSetIds.includes(io.id)) continue;
           for (const li of io.ads ?? []) {
             if (node.adIds && !node.adIds.includes(li.id)) continue;
-            if (groupBy === "creative") {
-              const type = li.creatives?.[0]?.type || li.lineItemType || "Other";
-              if (normFormat(type) !== node.dimensionValue) continue;
-            }
+            // Creative + narrowed: sum LI total (across creative types).
+            // Per-LI-per-type isn't in the LI payload — honest limitation.
             acc.spend += li.spend ?? 0;
             acc.impressions += li.impressions ?? 0;
             acc.clicks += li.clicks ?? 0;
@@ -2739,7 +2738,7 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
       }
     }
     return deriveDelivered(acc);
-  }, [groupBy, dv360Campaigns, dvExch.rows, strictWindow]);
+  }, [groupBy, dv360Campaigns, dvExch.rows, dvCreativeType.rows, strictWindow]);
 
   // The tables currently on screen — drives both the render and CSV export.
   const tables = useMemo<AggTable[]>(() => {
@@ -2821,7 +2820,7 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
           ? dv360HierDelivered(dv360CreativeHier)
           : dv360Creative.length === 0
             ? deliveredOfGroup(dv360Campaigns, strictWindow)
-            : sumRowsDelivered(dvCreativeType.rows.filter((r) => dv360Creative.includes(normFormat(r.label))));
+            : sumRowsDelivered(dvCreativeType.rows.filter((r) => dv360Creative.includes(r.label)));
         const sub = subLabelForHier(dv360CreativeHier, "All creative types");
         out.push({ key: mainComboKey("creative", "dv360", dv360Creative), label: "DV360", sub, count: dv360Campaigns.length, delivered: d, gcur: dv360Currency, platform: "dv360" });
       }
@@ -3218,14 +3217,12 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
 
     const hasPlanned = totalP.spend>0||totalP.impressions>0||totalP.reach>0;
 
-    // DV360 Format Wise — real, bucketed by normalized creative type.
-    const dvFmtAgg: Record<string, { spend: number; impressions: number; clicks: number }> = {};
-    for (const r of dvCreativeType.rows) {
-      const k = normFormat(r.label);
-      if (!dvFmtAgg[k]) dvFmtAgg[k] = { spend: 0, impressions: 0, clicks: 0 };
-      dvFmtAgg[k].spend += r.spend; dvFmtAgg[k].impressions += r.impressions; dvFmtAgg[k].clicks += r.clicks;
-    }
-    const dvFmtRows = Object.entries(dvFmtAgg).map(([label, v]) => ({ label, ...v })).sort((a, b) => b.spend - a.spend);
+    // DV360 Format Wise — real raw creative_type labels from Bid Manager,
+    // no bucketing/normalization (some accounts don't follow a naming
+    // convention we can safely bucket by).
+    const dvFmtRows = dvCreativeType.rows.map((r) => ({
+      label: r.label, spend: r.spend, impressions: r.impressions, clicks: r.clicks,
+    })).sort((a, b) => b.spend - a.spend);
     const dvCreativePdfRows = [...dv360CreativeRows].sort((a, b) => b.spend - a.spend);
 
     // ── Daily trend data (real) for Reach Build Up / Day-Wise Reach & Impressions
@@ -3795,30 +3792,23 @@ ${deepDivePlanPagesAll}
     })).sort((a, b) => a.dimensionValue.localeCompare(b.dimensionValue));
   }, [dvExch.rows, dv360Campaigns]);
 
+  // DV360 creative tree sourced from real Bid Manager creative_type breakdown
+  // (dvCreativeType.rows) — no name-string inference, no normalizer. Each
+  // creative_type from the API becomes a top-level node; drill shows every
+  // campaign / IO / LI (per-LI creative type isn't in the same payload so the
+  // narrowed delivered sums LI totals across all creative types — honest).
   const dv360CreativeTree = useMemo<HierTreeNode[]>(() => {
-    const byFmt = new Map<string, Map<string, { name: string; adSets: Map<string, { name: string; ads: { id: string; name: string }[] }> }>>();
-    for (const c of dv360Campaigns) {
-      for (const io of c.adSets ?? []) {
-        for (const li of io.ads ?? []) {
-          const type = li.creatives?.[0]?.type || li.lineItemType || "Other";
-          const fmt = normFormat(type);
-          if (!byFmt.has(fmt)) byFmt.set(fmt, new Map());
-          const camps = byFmt.get(fmt)!;
-          if (!camps.has(c.id)) camps.set(c.id, { name: c.name, adSets: new Map() });
-          const camp = camps.get(c.id)!;
-          if (!camp.adSets.has(io.id)) camp.adSets.set(io.id, { name: io.name, ads: [] });
-          camp.adSets.get(io.id)!.ads.push({ id: li.id, name: li.name });
-        }
-      }
-    }
-    return [...byFmt.entries()].map(([dim, camps]) => ({
-      dimensionValue: dim,
-      campaigns: [...camps.entries()].map(([id, c]) => ({
-        id, name: c.name,
-        adSets: [...c.adSets.entries()].map(([asId, a]) => ({ id: asId, name: a.name, ads: a.ads })),
+    return dvCreativeType.rows.map((r) => ({
+      dimensionValue: r.label,
+      campaigns: dv360Campaigns.map((c) => ({
+        id: c.id, name: c.name,
+        adSets: (c.adSets ?? []).map((io) => ({
+          id: io.id, name: io.name,
+          ads: (io.ads ?? []).map((li) => ({ id: li.id, name: li.name })),
+        })),
       })),
     })).sort((a, b) => a.dimensionValue.localeCompare(b.dimensionValue));
-  }, [dv360Campaigns]);
+  }, [dvCreativeType.rows, dv360Campaigns]);
 
   const computeComboDelivered = (platform: "meta" | "dv360", values: string[], hier?: HierNodeSelection[]): Delivered => {
     // Hierarchical path takes precedence when caller supplies a hier selection.
@@ -3836,7 +3826,7 @@ ${deepDivePlanPagesAll}
     }
     // creative
     if (platform === "meta") return values.length === 0 ? deliveredOfGroup(metaCampaigns, strictWindow) : sumRowsDelivered(metaFormatRows.filter((r) => values.includes(r.label)));
-    return values.length === 0 ? deliveredOfGroup(dv360Campaigns, strictWindow) : sumRowsDelivered(dvCreativeType.rows.filter((r) => values.includes(normFormat(r.label))));
+    return values.length === 0 ? deliveredOfGroup(dv360Campaigns, strictWindow) : sumRowsDelivered(dvCreativeType.rows.filter((r) => values.includes(r.label)));
   };
 
   const comboState = comboDimension ? comboDimensionState(comboDimension) : null;
