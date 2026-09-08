@@ -2811,7 +2811,12 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
   const tables = useMemo<AggTable[]>(() => {
     if (groupBy === "overall") {
       const delivered = deliveredOfGroup(campaigns, strictWindow);
-      return [{ key: "overall", label: "Overall — all campaigns", count: campaigns.length, delivered, gcur: metaCurrency }];
+      // Currency choice: when only one platform is active, use its currency.
+      // When both are active, prefer DV360's (typically the account's local
+      // currency, e.g. INR) so the combined figure isn't shown in Meta's
+      // billing currency (often USD).
+      const gcur = hasDv && hasMeta ? dv360Currency : (hasDv ? dv360Currency : metaCurrency);
+      return [{ key: "overall", label: "Overall — all campaigns", count: campaigns.length, delivered, gcur }];
     }
     // For channel/objective/creative, when hier is engaged, delegate to
     // metaHierDelivered/dv360HierDelivered so any drill-narrowing shows up
