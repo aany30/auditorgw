@@ -2807,6 +2807,66 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
     return deriveDelivered(acc);
   }, [groupBy, dv360Campaigns, dvExch.rows, dvCreativeType.rows, strictWindow]);
 
+  // Audience trees — root = audience name (Meta) / audience type (DV360),
+  // then campaigns targeting it → ad sets → ads (Meta) or IOs → LIs (DV360).
+  // Declared before `tables` so the tables useMemo can safely reference them.
+  const metaAudienceTree = useMemo<HierTreeNode[]>(() => {
+    const audNames = savedAudiences.length > 0
+      ? savedAudiences.map((a) => a.name).filter(Boolean)
+      : metaAdSets.rows.map((r) => r.name).filter(Boolean);
+    const unique = [...new Set(audNames)].sort();
+    return unique.map((audName) => {
+      const match = audNameToAdSetMatch.get(audName);
+      const adSetsForAud = match && (match.ids.size > 0 || match.names.size > 0)
+        ? metaAdSets.rows.filter((r) => match.ids.has(r.id) || match.names.has(r.name))
+        : metaAdSets.rows.filter((r) => (r.targeting + " " + r.name).toLowerCase().includes(audName.toLowerCase()));
+      const byCampaign = new Map<string, { name: string; adSets: typeof adSetsForAud }>();
+      for (const as of adSetsForAud) {
+        const c = metaCampaigns.find((mc) => mc.id === as.campaignId);
+        const cid = c?.id || as.campaignId || "unknown";
+        const cname = c?.name || cid;
+        const cur = byCampaign.get(cid) ?? { name: cname, adSets: [] as typeof adSetsForAud };
+        cur.adSets.push(as);
+        byCampaign.set(cid, cur);
+      }
+      return {
+        dimensionValue: audName,
+        campaigns: [...byCampaign.entries()].map(([id, c]) => ({
+          id, name: c.name,
+          adSets: c.adSets.map((as) => ({
+            id: as.id, name: as.name,
+            ads: metaAdRowsFull.filter((ad) => ad.adSetId === as.id).map((ad) => ({ id: ad.id, name: ad.name })),
+          })),
+        })),
+      };
+    }).filter((n) => n.campaigns.length > 0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedAudiences, metaAdSets.rows, audNameToAdSetMatch, metaCampaigns, metaAdRowsFull]);
+
+  const dv360AudienceTree = useMemo<HierTreeNode[]>(() => {
+    const audTypes = [...new Set(dv360LineItems.rows.map((r) => r.audienceType).filter(Boolean))].sort();
+    return audTypes.map((audType) => {
+      const liIds = new Set(dv360LineItems.rows.filter((r) => r.audienceType === audType).map((r) => r.id));
+      const byCampaign = new Map<string, { name: string; ios: Map<string, { name: string; lis: { id: string; name: string }[] }> }>();
+      for (const c of dv360Campaigns) {
+        for (const io of c.adSets ?? []) {
+          const matchingLis = (io.ads ?? []).filter((li) => liIds.has(li.id));
+          if (matchingLis.length === 0) continue;
+          const cur = byCampaign.get(c.id) ?? { name: c.name, ios: new Map() };
+          cur.ios.set(io.id, { name: io.name, lis: matchingLis.map((li) => ({ id: li.id, name: li.name })) });
+          byCampaign.set(c.id, cur);
+        }
+      }
+      return {
+        dimensionValue: audType,
+        campaigns: [...byCampaign.entries()].map(([id, c]) => ({
+          id, name: c.name,
+          adSets: [...c.ios.entries()].map(([ioId, io]) => ({ id: ioId, name: io.name, ads: io.lis })),
+        })),
+      };
+    });
+  }, [dv360LineItems.rows, dv360Campaigns]);
+
   // The tables currently on screen — drives both the render and CSV export.
   const tables = useMemo<AggTable[]>(() => {
     if (groupBy === "overall") {
@@ -4007,71 +4067,6 @@ ${deepDivePlanPagesAll}
 
   // Meta audience tree — root = saved-audience name, then campaigns that
   // target it, ad sets targeting it, ads in those ad sets.
-  const metaAudienceTree = useMemo<HierTreeNode[]>(() => {
-    // Fallback source when saved-audiences list is empty: use ad-set names as
-    // audience labels (matches the legacy flat select's fallback path).
-    const audNames = savedAudiences.length > 0
-      ? savedAudiences.map((a) => a.name).filter(Boolean)
-      : metaAdSets.rows.map((r) => r.name).filter(Boolean);
-    const unique = [...new Set(audNames)].sort();
-    return unique.map((audName) => {
-      const match = audNameToAdSetMatch.get(audName);
-      // Ad sets belonging to this audience (either mapped via targeting or
-      // — when the map is empty — name substring match, same as the old select).
-      const adSetsForAud = match && (match.ids.size > 0 || match.names.size > 0)
-        ? metaAdSets.rows.filter((r) => match.ids.has(r.id) || match.names.has(r.name))
-        : metaAdSets.rows.filter((r) => (r.targeting + " " + r.name).toLowerCase().includes(audName.toLowerCase()));
-      // Group ad sets by their parent campaign.
-      const byCampaign = new Map<string, { name: string; adSets: typeof adSetsForAud }>();
-      for (const as of adSetsForAud) {
-        const c = metaCampaigns.find((mc) => mc.id === as.campaignId);
-        const cid = c?.id || as.campaignId || "unknown";
-        const cname = c?.name || cid;
-        const cur = byCampaign.get(cid) ?? { name: cname, adSets: [] as typeof adSetsForAud };
-        cur.adSets.push(as);
-        byCampaign.set(cid, cur);
-      }
-      return {
-        dimensionValue: audName,
-        campaigns: [...byCampaign.entries()].map(([id, c]) => ({
-          id, name: c.name,
-          adSets: c.adSets.map((as) => ({
-            id: as.id, name: as.name,
-            ads: metaAdRowsFull.filter((ad) => ad.adSetId === as.id).map((ad) => ({ id: ad.id, name: ad.name })),
-          })),
-        })),
-      };
-    }).filter((n) => n.campaigns.length > 0);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [savedAudiences, metaAdSets.rows, audNameToAdSetMatch, metaCampaigns, metaAdRowsFull]);
-
-  // DV360 audience tree — root = audienceType label, campaigns/IOs/LIs that
-  // deliver on that audience type.
-  const dv360AudienceTree = useMemo<HierTreeNode[]>(() => {
-    const audTypes = [...new Set(dv360LineItems.rows.map((r) => r.audienceType).filter(Boolean))].sort();
-    return audTypes.map((audType) => {
-      const liIds = new Set(dv360LineItems.rows.filter((r) => r.audienceType === audType).map((r) => r.id));
-      // Which campaigns/IOs contain at least one matching LI.
-      const byCampaign = new Map<string, { name: string; ios: Map<string, { name: string; lis: { id: string; name: string }[] }> }>();
-      for (const c of dv360Campaigns) {
-        for (const io of c.adSets ?? []) {
-          const matchingLis = (io.ads ?? []).filter((li) => liIds.has(li.id));
-          if (matchingLis.length === 0) continue;
-          const cur = byCampaign.get(c.id) ?? { name: c.name, ios: new Map() };
-          cur.ios.set(io.id, { name: io.name, lis: matchingLis.map((li) => ({ id: li.id, name: li.name })) });
-          byCampaign.set(c.id, cur);
-        }
-      }
-      return {
-        dimensionValue: audType,
-        campaigns: [...byCampaign.entries()].map(([id, c]) => ({
-          id, name: c.name,
-          adSets: [...c.ios.entries()].map(([ioId, io]) => ({ id: ioId, name: io.name, ads: io.lis })),
-        })),
-      };
-    });
-  }, [dv360LineItems.rows, dv360Campaigns]);
-
   const computeComboDelivered = (platform: "meta" | "dv360", values: string[], hier?: HierNodeSelection[]): Delivered => {
     // Hierarchical path takes precedence when caller supplies a hier selection.
     if (hier && (groupBy === "channel" || groupBy === "objective" || groupBy === "creative")) {
