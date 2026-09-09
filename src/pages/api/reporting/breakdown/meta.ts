@@ -19,6 +19,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { MetaApiClient } from "@/lib/api-clients/meta";
 import { isDemoCredential } from "@/lib/demo-data";
+import { metaSafeCall, metaCache, cacheKey } from "@/lib/meta-request-utils";
 
 type Row = {
   label: string;
@@ -180,13 +181,28 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return;
   }
 
+  const accountPath = businessId.startsWith("act_") ? businessId : `act_${businessId}`;
+
+  // Cache first — reload storms + Aggregate view re-mounting hit the same key.
+  const ck = cacheKey(accountPath, `breakdown:${breakdown}`, { startDate, endDate });
+  const cached = metaCache.get<unknown[]>(ck);
+  if (cached) {
+    res.status(200).json({ source: "cache", rows: cached });
+    return;
+  }
+
   try {
     const client = new MetaApiClient(accessToken);
-    const accountPath = businessId.startsWith("act_") ? businessId : `act_${businessId}`;
     // "daily" is a pseudo-breakdown — uses time_increment=1 rather than breakdowns=
-    const rows = breakdown === "daily"
-      ? await client.getAccountDailyInsights(accountPath, startDate, endDate)
-      : await client.getInsightsBreakdown(accountPath, breakdown, startDate, endDate);
+    // Wrap in metaSafeCall = semaphore(3) + exponential backoff on transient 5xx
+    // (Meta's "Service temporarily unavailable" errors clear on retry).
+    const rows = await metaSafeCall<unknown[]>(async () =>
+      breakdown === "daily"
+        ? await client.getAccountDailyInsights(accountPath, startDate, endDate)
+        : await client.getInsightsBreakdown(accountPath, breakdown, startDate, endDate),
+      { onRetry: (attempt, err) => console.warn(`[Meta breakdown "${breakdown}"] retry #${attempt}: ${err.message}`) },
+    );
+    metaCache.set(ck, rows);
     res.status(200).json({ source: "live", rows });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Meta breakdown fetch failed";

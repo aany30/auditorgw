@@ -9,6 +9,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { MetaApiClient } from "@/lib/api-clients/meta";
 import { isDemoCredential } from "@/lib/demo-data";
+import { metaSafeCall, metaCache, cacheKey } from "@/lib/meta-request-utils";
 
 export interface AdInsightRow {
   id: string;
@@ -116,12 +117,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return;
   }
 
+  const accountPath = businessId.startsWith("act_") ? businessId : `act_${businessId}`;
+
+  // Cache first — Creative view + PDF pipeline both hit this key.
+  const ck = cacheKey(accountPath, "ad-insights", { startDate, endDate, limit: String(limit || 100) });
+  const cached = metaCache.get<{ ads: AdInsightRow[]; currency: string }>(ck);
+  if (cached) {
+    res.status(200).json({ source: "cache", ...cached });
+    return;
+  }
+
   try {
     const client = new MetaApiClient(accessToken);
-    const accountPath = businessId.startsWith("act_") ? businessId : `act_${businessId}`;
     const [ads, currency] = await Promise.all([
-      client.getAdInsights(accountPath, startDate, endDate, limit || 100),
-      client.getAccountCurrency(accountPath),
+      metaSafeCall(() => client.getAdInsights(accountPath, startDate, endDate, limit || 100), {
+        onRetry: (attempt, err) => console.warn(`[ad-insights/meta] retry #${attempt}: ${err.message}`),
+      }),
+      metaSafeCall(() => client.getAccountCurrency(accountPath)),
     ]);
 
     // Fetch targeting locales for the unique ad sets represented in this batch.
@@ -129,7 +141,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     type TargetingMap = Awaited<ReturnType<typeof client.getAdSetsTargeting>>;
     const [targetingMap, localeNames] = await Promise.all([
       adSetIds.length
-        ? client.getAdSetsTargeting(accountPath, adSetIds).catch(() => ({} as TargetingMap))
+        ? metaSafeCall(() => client.getAdSetsTargeting(accountPath, adSetIds)).catch(() => ({} as TargetingMap))
         : Promise.resolve({} as TargetingMap),
       getLocaleNameMap(client),
     ]);
@@ -142,7 +154,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       language: localesToLanguage(localesFor(a.adSetId), localeNames),
     }));
 
-    res.status(200).json({ source: "live", ads: enriched, currency: currency || "USD" });
+    const payload = { ads: enriched, currency: currency || "USD" };
+    metaCache.set(ck, payload);
+    res.status(200).json({ source: "live", ...payload });
   } catch (e) {
     res.status(502).json({ error: e instanceof Error ? e.message : "Ad insights fetch failed" });
   }

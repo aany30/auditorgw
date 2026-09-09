@@ -13,6 +13,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { MetaApiClient } from "@/lib/api-clients/meta";
 import { isDemoCredential } from "@/lib/demo-data";
+import { metaSafeCall, metaCache, cacheKey } from "@/lib/meta-request-utils";
 
 interface Row {
   campaignId: string;
@@ -53,9 +54,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return;
   }
 
+  const accountPath = businessId.startsWith("act_") ? businessId : `act_${businessId}`;
+
+  // Cache — this endpoint took 27s on Flipkart-scale accounts; reloads hurt.
+  const ck = cacheKey(accountPath, `by-campaign:${breakdown}`, { startDate, endDate });
+  const cached = metaCache.get<Row[]>(ck);
+  if (cached) {
+    res.status(200).json({ source: "cache", rows: cached });
+    return;
+  }
+
   try {
     const client = new MetaApiClient(accessToken);
-    const accountPath = businessId.startsWith("act_") ? businessId : `act_${businessId}`;
 
     // Graph API accepts breakdowns on level=campaign; each returned row carries
     // campaign_id + the breakdown value.
@@ -68,38 +78,39 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (startDate && endDate) params.time_range = `{"since":"${startDate}","until":"${endDate}"}`;
     else params.date_preset = "last_30d";
 
-    // Use the client's raw fetch helper via a request that mirrors getInsightsBreakdown's
-    // shape. We can't reuse getInsightsBreakdown (which is account-level), so
-    // inline the walk here.
-    const rows: Row[] = [];
-    let nextUrl: string | undefined;
-    // First page via the client so tokens/base URL are consistent.
-    const firstPage = await (client as unknown as {
-      fetch: <T>(path: string, params?: Record<string, string>) => Promise<T>;
-    }).fetch<{ data?: unknown[]; paging?: { next?: string } }>(`/${accountPath}/insights`, params);
-    const collect = (data?: unknown[]) => {
-      for (const raw of data ?? []) {
-        const r = raw as Record<string, unknown>;
-        rows.push({
-          campaignId: String(r.campaign_id ?? ""),
-          breakdownValue: String(r[breakdown] ?? ""),
-          spend: r.spend ? parseFloat(String(r.spend)) : 0,
-          impressions: r.impressions ? parseInt(String(r.impressions), 10) : 0,
-          clicks: r.clicks ? parseInt(String(r.clicks), 10) : 0,
-        });
+    const rows = await metaSafeCall<Row[]>(async () => {
+      const out: Row[] = [];
+      const firstPage = await (client as unknown as {
+        fetch: <T>(path: string, params?: Record<string, string>) => Promise<T>;
+      }).fetch<{ data?: unknown[]; paging?: { next?: string } }>(`/${accountPath}/insights`, params);
+      const collect = (data?: unknown[]) => {
+        for (const raw of data ?? []) {
+          const r = raw as Record<string, unknown>;
+          out.push({
+            campaignId: String(r.campaign_id ?? ""),
+            breakdownValue: String(r[breakdown] ?? ""),
+            spend: r.spend ? parseFloat(String(r.spend)) : 0,
+            impressions: r.impressions ? parseInt(String(r.impressions), 10) : 0,
+            clicks: r.clicks ? parseInt(String(r.clicks), 10) : 0,
+          });
+        }
+      };
+      collect(firstPage.data);
+      let nextUrl = firstPage.paging?.next;
+      let pageBudget = 20;
+      while (nextUrl && pageBudget-- > 0) {
+        const page = await (client as unknown as {
+          fetchAbsolute: <T>(url: string) => Promise<T>;
+        }).fetchAbsolute<{ data?: unknown[]; paging?: { next?: string } }>(nextUrl);
+        collect(page.data);
+        nextUrl = page.paging?.next;
       }
-    };
-    collect(firstPage.data);
-    nextUrl = firstPage.paging?.next;
-    // Walk pages defensively — cap at a handful so a runaway account can't hang.
-    let pageBudget = 20;
-    while (nextUrl && pageBudget-- > 0) {
-      const page = await (client as unknown as {
-        fetchAbsolute: <T>(url: string) => Promise<T>;
-      }).fetchAbsolute<{ data?: unknown[]; paging?: { next?: string } }>(nextUrl);
-      collect(page.data);
-      nextUrl = page.paging?.next;
-    }
+      return out;
+    }, {
+      onRetry: (attempt, err) => console.warn(`[Meta by-campaign "${breakdown}"] retry #${attempt}: ${err.message}`),
+    });
+
+    metaCache.set(ck, rows);
     res.status(200).json({ source: "live", rows });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Meta campaign breakdown fetch failed";

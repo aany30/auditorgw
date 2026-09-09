@@ -7,6 +7,22 @@
  *
  * Body: { accessToken, businessId, startDate?, endDate? }
  *
+ * ── Scaling notes ──
+ * For large accounts (50+ campaigns) Meta's Graph API rejects a single
+ * `/act_/adsets` call with "Please reduce the amount of data you're asking
+ * for". To handle Flipkart-scale accounts (100+ campaigns) we:
+ *   1. Fetch campaign IDs first (cheap).
+ *   2. Chunk them into groups of 20 and query adsets per chunk via the
+ *      `filtering=[{field:"campaign.id", operator:"IN", value:[...]}]`
+ *      predicate.
+ *   3. Run chunks through metaSafeCall — semaphore(3) + retry with
+ *      exponential backoff on transient 5xx errors.
+ *   4. Cache the merged response for 15 min so reload storms don't
+ *      re-hit Meta.
+ * If any chunk fails all retries, we return the partial rows plus a
+ * `partial: true` flag + `failedChunks` list so the UI can show
+ * "80 of 100 campaigns — retry?" instead of silently dropping data.
+ *
  * Demo passthrough: when accessToken is a demo placeholder, returns ~15
  * realistic Indian-market ad sets so the dashboard can preview the UI
  * without a real Meta connection.
@@ -14,8 +30,10 @@
 
 import type { NextApiRequest, NextApiResponse } from "next";
 import { isDemoCredential } from "@/lib/demo-data";
+import { metaSafeCall, metaCache, cacheKey, chunk } from "@/lib/meta-request-utils";
 
 const META_API_BASE = "https://graph.facebook.com/v18.0";
+const CAMPAIGNS_PER_CHUNK = 20;
 
 type AdSetRow = {
   id: string;
@@ -306,6 +324,55 @@ function sumActionValues(rows: Array<{ action_type: string; value: string }> | u
 }
 
 // ---------------------------------------------------------------------------
+// Chunked fetches — the scale fix
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch adsets for a single chunk of campaign IDs using Meta's `filtering`
+ * predicate. Keeps each call small enough that Meta doesn't hit its
+ * per-response aggregation cap ("Please reduce the amount of data").
+ */
+async function fetchAdSetsForCampaignChunk(
+  accessToken: string,
+  accountPath: string,
+  campaignIds: string[],
+): Promise<any[]> {
+  const filtering = JSON.stringify([
+    { field: "campaign.id", operator: "IN", value: campaignIds },
+  ]);
+  return metaFetchAll<any>(accessToken, `/${accountPath}/adsets`, {
+    fields: "id,name,campaign_id,campaign{name},targeting",
+    filtering,
+    limit: "500",
+  });
+}
+
+/**
+ * Fetch adset-level insights for a chunk of campaigns via the account-level
+ * `/insights` edge with a campaign_id filter. Same chunking as adsets.
+ */
+async function fetchAdSetInsightsForCampaignChunk(
+  accessToken: string,
+  accountPath: string,
+  campaignIds: string[],
+  startDate?: string,
+  endDate?: string,
+): Promise<any[]> {
+  const filtering = JSON.stringify([
+    { field: "campaign.id", operator: "IN", value: campaignIds },
+  ]);
+  const params: Record<string, string> = {
+    level: "adset",
+    fields: "adset_id,spend,impressions,clicks,reach,frequency,actions,action_values,video_play_actions",
+    filtering,
+    limit: "500",
+  };
+  if (startDate && endDate) params.time_range = `{"since":"${startDate}","until":"${endDate}"}`;
+  else params.date_preset = "last_30d";
+  return metaFetchAll<any>(accessToken, `/${accountPath}/insights`, params);
+}
+
+// ---------------------------------------------------------------------------
 // Handler
 // ---------------------------------------------------------------------------
 
@@ -327,42 +394,78 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return;
   }
 
+  const accountPath = businessId.startsWith("act_") ? businessId : `act_${businessId}`;
+
+  // ---- Cache check ----
+  const ck = cacheKey(accountPath, "adsets", { startDate, endDate });
+  const cached = metaCache.get<{ rows: AdSetRow[]; partial?: boolean; failedChunks?: unknown[] }>(ck);
+  if (cached) {
+    res.status(200).json({ source: "cache", ...cached });
+    return;
+  }
+
   // ---- Live mode ----
   try {
-    const accountPath = businessId.startsWith("act_") ? businessId : `act_${businessId}`;
+    // Step 1: Get the campaign IDs (cheap — one call, minimal fields).
+    const campaigns = await metaSafeCall(() =>
+      metaFetchAll<{ id: string }>(accessToken, `/${accountPath}/campaigns`, {
+        fields: "id",
+        limit: "500",
+      }),
+    );
 
-    // Step 1: Fetch ad sets with targeting + parent campaign name
-    const adSetsRaw = await metaFetchAll<any>(accessToken, `/${accountPath}/adsets`, {
-      fields: "id,name,campaign_id,campaign{name},targeting",
-      limit: "500",
-    });
-
-    if (!adSetsRaw || adSetsRaw.length === 0) {
+    if (!campaigns || campaigns.length === 0) {
       res.status(200).json({ source: "live", rows: [] });
       return;
     }
 
-    // Step 2: Fetch insights at adset level (one call with level=adset)
-    const timeParams: Record<string, string> = {
-      level: "adset",
-      fields: "adset_id,spend,impressions,clicks,reach,frequency,actions,action_values,video_play_actions",
-      limit: "500",
-    };
-    if (startDate && endDate) {
-      timeParams.time_range = `{"since":"${startDate}","until":"${endDate}"}`;
-    } else {
-      timeParams.date_preset = "last_30d";
+    const campaignIds = campaigns.map((c) => String(c.id));
+    const chunks = chunk(campaignIds, CAMPAIGNS_PER_CHUNK);
+
+    // Step 2: Fetch adsets per chunk in parallel — the semaphore inside
+    // metaSafeCall keeps us to 3 concurrent Meta calls at a time.
+    const adSetChunkResults = await Promise.allSettled(
+      chunks.map((ids) => metaSafeCall(() => fetchAdSetsForCampaignChunk(accessToken, accountPath, ids), {
+        onRetry: (attempt, err) => console.warn(`[adsets/meta] adset chunk retry #${attempt}: ${err.message}`),
+      })),
+    );
+
+    const insightsChunkResults = await Promise.allSettled(
+      chunks.map((ids) => metaSafeCall(() => fetchAdSetInsightsForCampaignChunk(accessToken, accountPath, ids, startDate, endDate), {
+        onRetry: (attempt, err) => console.warn(`[adsets/meta] insights chunk retry #${attempt}: ${err.message}`),
+      })),
+    );
+
+    // Step 3: Merge successful chunks, record failures for the UI.
+    const adSetsRaw: any[] = [];
+    const insightsRaw: any[] = [];
+    const failedChunks: Array<{ range: string; kind: "adsets" | "insights"; reason: string }> = [];
+
+    for (let i = 0; i < chunks.length; i++) {
+      const label = `campaigns ${i * CAMPAIGNS_PER_CHUNK + 1}–${Math.min((i + 1) * CAMPAIGNS_PER_CHUNK, campaignIds.length)}`;
+
+      const asRes = adSetChunkResults[i];
+      if (asRes.status === "fulfilled") adSetsRaw.push(...asRes.value);
+      else failedChunks.push({ range: label, kind: "adsets", reason: (asRes.reason as Error)?.message || "unknown" });
+
+      const insRes = insightsChunkResults[i];
+      if (insRes.status === "fulfilled") insightsRaw.push(...insRes.value);
+      else failedChunks.push({ range: label, kind: "insights", reason: (insRes.reason as Error)?.message || "unknown" });
     }
 
-    const insightsRaw = await metaFetchAll<any>(accessToken, `/${accountPath}/insights`, timeParams);
+    if (adSetsRaw.length === 0 && failedChunks.length > 0) {
+      // Every chunk failed — surface the first error message honestly.
+      const firstReason = failedChunks[0]?.reason ?? "All ad set fetches failed";
+      console.error("[adsets/meta] all chunks failed:", firstReason);
+      res.status(500).json({ error: firstReason });
+      return;
+    }
 
     // Build a map of adset_id -> insights
     const insightsMap: Record<string, any> = {};
-    for (const row of insightsRaw) {
-      insightsMap[String(row.adset_id)] = row;
-    }
+    for (const row of insightsRaw) insightsMap[String(row.adset_id)] = row;
 
-    // Step 3: Merge ad set metadata with insights
+    // Step 4: Merge ad set metadata with insights
     const rows: AdSetRow[] = adSetsRaw.map((adset: any) => {
       const id = String(adset.id);
       const ins = insightsMap[id];
@@ -394,7 +497,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       };
     });
 
-    res.status(200).json({ source: "live", rows });
+    const payload = {
+      rows,
+      ...(failedChunks.length > 0 ? { partial: true, failedChunks } : {}),
+    };
+
+    // Cache the successful (or partial) result — 15 min default TTL.
+    metaCache.set(ck, payload);
+
+    res.status(200).json({ source: "live", ...payload });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Meta ad set insights fetch failed";
     console.error("[Meta adsets] failed:", message);
