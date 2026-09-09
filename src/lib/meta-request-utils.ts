@@ -69,12 +69,15 @@ function shouldRetry(error: Error): boolean {
 }
 
 export async function metaRetry<T>(fn: () => Promise<T>, opts: RetryOptions = {}): Promise<T> {
-  // Standard default: 2 retries, ~25s budget. Handles genuine transient
-  // blips without over-committing when the account isn't actually stuck.
-  // Callers that hit real throttle repeatedly can pass `longBackoff: true`
-  // via retry-shape options to switch to `[15s, 60s, 180s]` — 4 min budget
-  // aligned with Meta's actual soft-throttle recovery window.
-  const delays = opts.delays ?? (opts.longBackoff ? [15000, 60000, 180000] : [5000, 20000]);
+  // Standard default: 2 retries, ~25s budget. Handles genuine transient blips.
+  // longBackoff: single 20s retry — one shot at Meta's fast-recovery window.
+  // If Meta hasn't recovered in 20s, backing off 4+ min blindly wastes quota
+  // (burns 3-4x more Meta calls) AND makes the user wait 8+ minutes only to
+  // often still fail. Better to surface the throttled empty state fast and
+  // let the user click Retry when the quota chip shows recovery — a manual
+  // retry only re-fires failed chunks (cached chunks are served instantly),
+  // and the user can pick a moment when Meta is actually ready.
+  const delays = opts.delays ?? (opts.longBackoff ? [20000] : [5000, 20000]);
   const retries = opts.retries ?? delays.length;
 
   let lastErr: Error | null = null;

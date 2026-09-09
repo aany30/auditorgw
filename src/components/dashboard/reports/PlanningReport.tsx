@@ -2611,20 +2611,30 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
   // the final format used everywhere else is computed in the memo below.
   const [metaAdRowsRaw, setMetaAdRowsRaw] = useState<MetaAdRowFull[]>([]);
   const [metaFormatLoading, setMetaFormatLoading] = useState(false);
+  const [metaAdInsightsError, setMetaAdInsightsError] = useState<string | null>(null);
+  const setMetaQuota = useAuthStore((s) => s.setMetaQuota);
   useEffect(() => {
-    if (!hasMeta) { setMetaCreativeRows([]); setMetaAdRowsRaw([]); return; }
+    if (!hasMeta) { setMetaCreativeRows([]); setMetaAdRowsRaw([]); setMetaAdInsightsError(null); return; }
     const token = demoMode ? "demo-meta-token" : metaAccessToken;
     const biz = demoMode ? "demo-business-123" : metaBusinessId;
     if (!token || !biz) return;
     let cancelled = false;
     setMetaFormatLoading(true);
+    setMetaAdInsightsError(null);
     fetch("/api/reporting/ad-insights/meta", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ accessToken: token, businessId: biz, startDate: wideWindow.start, endDate: wideWindow.end, limit: 200 }),
     })
       .then((r) => r.json())
       .then((d) => {
-        if (cancelled || !d.ads) return;
+        if (cancelled) return;
+        if (d.error) { setMetaAdInsightsError(d.error); return; }
+        // Pipe Meta's live throttle usage into the header quota chip.
+        if (d.metaQuota && biz) {
+          const acctId = biz.startsWith("act_") ? biz : `act_${biz}`;
+          setMetaQuota(acctId, d.metaQuota);
+        }
+        if (!d.ads) return;
         const ads = d.ads as Array<{ id?: string; name: string; adSetId?: string; creativeType?: string; spend: number; impressions: number; reach: number; clicks: number; conversions: number; conversionValue: number; videoViews: number }>;
         const adRowsFull: MetaAdRowFull[] = ads.map((ad, i) => ({
           id: ad.id || String(i), name: ad.name, adSetId: ad.adSetId, creativeType: ad.creativeType,
@@ -2639,6 +2649,7 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
         );
         setMetaAdRowsRaw(adRowsFull);
       })
+      .catch((e) => { if (!cancelled) setMetaAdInsightsError(e?.message || "Ad insights fetch failed"); })
       .finally(() => { if (!cancelled) setMetaFormatLoading(false); });
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3743,6 +3754,12 @@ ${deepDivePlanPagesAll}
     const sel = isMeta ? metaChannelHier : dv360ChannelHier;
     const setSel = isMeta ? setMetaChannelHier : setDv360ChannelHier;
     const tree = isMeta ? metaChannelTree : dv360ChannelTree;
+    // Show throttled empty state when the primary data hook errored — the
+    // user then clicks Retry (which triggers a full reload; server cache
+    // serves any already-fetched chunks instantly, so only failed chunks
+    // re-hit Meta). Retry button lets the user pick the moment when the
+    // Meta Quota chip in the header shows healthy.
+    const throttleError = isMeta && metaPub.error && tree.length === 0 ? metaPub.error : null;
     return (
       <HierarchicalDimensionPicker
         tree={tree}
@@ -3750,6 +3767,8 @@ ${deepDivePlanPagesAll}
         onChange={setSel}
         allLabelText={isMeta ? "All channels" : "All campaigns"}
         entityLabel={isMeta ? "channels" : "campaigns"}
+        throttleError={throttleError}
+        onRetry={() => window.location.reload()}
       />
     );
   };
@@ -3759,6 +3778,8 @@ ${deepDivePlanPagesAll}
     const sel = isMeta ? metaObjectiveHier : dv360ObjectiveHier;
     const setSel = isMeta ? setMetaObjectiveHier : setDv360ObjectiveHier;
     const tree = isMeta ? metaObjectiveTree : dv360ObjectiveTree;
+    // Objective is derived from campaigns list (already loaded); no separate
+    // throttle path — just show tree or empty as before.
     return (
       <HierarchicalDimensionPicker
         tree={tree}
@@ -3776,6 +3797,9 @@ ${deepDivePlanPagesAll}
     const setSel = isMeta ? setMetaCreativeHier : setDv360CreativeHier;
     const tree = isMeta ? metaCreativeTree : dv360CreativeTree;
     const busy = isMeta ? metaFormatLoading : (dvCreativeType.loading || dvCreativeType.pending);
+    // Creative tree comes from ad-insights fetch; if the fetch errored we
+    // won't have any ads and the tree will be empty. Surface throttle state.
+    const throttleError = isMeta && metaAdInsightsError && tree.length === 0 ? metaAdInsightsError : null;
     return (
       <div className="flex items-center gap-1.5">
         <HierarchicalDimensionPicker
@@ -3784,6 +3808,9 @@ ${deepDivePlanPagesAll}
           onChange={setSel}
           allLabelText={isMeta ? "All formats" : "All creative types"}
           entityLabel={isMeta ? "formats" : "creative types"}
+          loading={busy}
+          throttleError={throttleError}
+          onRetry={() => window.location.reload()}
         />
         {busy && <span className="text-[10px] text-gray-400 animate-pulse">Loading…</span>}
       </div>
@@ -3796,6 +3823,7 @@ ${deepDivePlanPagesAll}
     const setSel = isMeta ? setMetaAudienceHier : setDv360AudienceHier;
     const tree = isMeta ? metaAudienceTree : dv360AudienceTree;
     const busy = isMeta ? metaAdSets.loading : dv360LineItems.loading;
+    const throttleError = isMeta && metaAdSets.error && tree.length === 0 ? metaAdSets.error : null;
     return (
       <div className="flex items-center gap-1.5">
         <HierarchicalDimensionPicker
@@ -3805,6 +3833,8 @@ ${deepDivePlanPagesAll}
           allLabelText={isMeta ? "All audiences" : "All audience types"}
           entityLabel={isMeta ? "audiences" : "audience types"}
           loading={busy}
+          throttleError={throttleError}
+          onRetry={() => window.location.reload()}
         />
         {busy && <span className="text-[10px] text-gray-400 animate-pulse">Loading…</span>}
       </div>
