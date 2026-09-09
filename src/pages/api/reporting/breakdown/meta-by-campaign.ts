@@ -34,7 +34,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return;
   }
 
-  const ALLOWED = new Set(["publisher_platform", "platform_position", "device_platform", "impression_device"]);
+  const ALLOWED = new Set(["publisher_platform", "platform_position", "device_platform", "impression_device", "age", "gender", "country", "region"]);
   if (!ALLOWED.has(breakdown)) {
     res.status(400).json({ error: `Unsupported breakdown "${breakdown}"` });
     return;

@@ -191,19 +191,76 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return;
   }
 
+  // Breakdowns Meta refuses to aggregate at the account level on very large
+  // accounts (silent empty or "reduce data" error). For these we skip the
+  // failing account-level call entirely and aggregate the by-campaign
+  // endpoint's results server-side — that endpoint returned successfully at
+  // 2534 rows on the accounts the direct call was 500ing.
+  const BY_CAMPAIGN_AGGREGATE = new Set([
+    "publisher_platform", "platform_position", "device_platform", "impression_device",
+    "age", "gender", "country", "region",
+  ]);
+
   try {
     const client = new MetaApiClient(accessToken);
-    // "daily" is a pseudo-breakdown — uses time_increment=1 rather than breakdowns=
-    // Wrap in metaSafeCall = semaphore(3) + exponential backoff on transient 5xx
-    // (Meta's "Service temporarily unavailable" errors clear on retry).
-    const rows = await metaSafeCall<unknown[]>(async () =>
-      breakdown === "daily"
-        ? await client.getAccountDailyInsights(accountPath, startDate, endDate)
-        : await client.getInsightsBreakdown(accountPath, breakdown, startDate, endDate),
-      { onRetry: (attempt, err) => console.warn(`[Meta breakdown "${breakdown}"] retry #${attempt}: ${err.message}`) },
-    );
+    let rows: unknown[] = [];
+    let source: "account-direct" | "by-campaign-aggregate" = "account-direct";
+
+    if (breakdown === "daily") {
+      // Daily works via time_increment=1 — different code path, no fallback needed.
+      rows = await metaSafeCall<unknown[]>(async () =>
+        await client.getAccountDailyInsights(accountPath, startDate, endDate),
+        { onRetry: (attempt, err) => console.warn(`[Meta breakdown "daily"] retry #${attempt}: ${err.message}`) },
+      );
+    } else if (BY_CAMPAIGN_AGGREGATE.has(breakdown)) {
+      // Preferred path for the heavy account-level breakdowns: hit the
+      // /breakdown/meta-by-campaign endpoint (which chunks internally and is
+      // known to work at Flipkart scale) and aggregate the per-campaign rows
+      // back up into the account-level shape callers expect.
+      source = "by-campaign-aggregate";
+      const proto = (req.headers["x-forwarded-proto"] as string) || "http";
+      const host = (req.headers["x-forwarded-host"] as string) || req.headers.host;
+      const url = `${proto}://${host}/api/reporting/breakdown/meta-by-campaign`;
+      const forwarded = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accessToken, businessId, breakdown, startDate, endDate }),
+      });
+      if (!forwarded.ok) {
+        // If by-campaign fails too, fall back to the direct account-level call as a last resort.
+        console.warn(`[breakdown/meta "${breakdown}"] by-campaign fallback failed (${forwarded.status}), trying account-level`);
+        rows = await metaSafeCall<unknown[]>(async () =>
+          await client.getInsightsBreakdown(accountPath, breakdown, startDate, endDate),
+          { onRetry: (attempt, err) => console.warn(`[Meta breakdown "${breakdown}"] retry #${attempt}: ${err.message}`) },
+        );
+        source = "account-direct";
+      } else {
+        const j = await forwarded.json() as { rows?: Array<{ breakdownValue: string; spend: number; impressions: number; clicks: number }> };
+        const perCampaign = j.rows ?? [];
+        // Aggregate up: sum spend/impressions/clicks per breakdownValue.
+        const byValue = new Map<string, { label: string; breakdownValues: Record<string, string>; spend: number; impressions: number; clicks: number; reach: number; conversions: number; conversionValue: number; videoViews: number }>();
+        for (const r of perCampaign) {
+          const key = r.breakdownValue;
+          const cur = byValue.get(key) ?? { label: key, breakdownValues: { [breakdown]: key }, spend: 0, impressions: 0, clicks: 0, reach: 0, conversions: 0, conversionValue: 0, videoViews: 0 };
+          cur.spend += r.spend; cur.impressions += r.impressions; cur.clicks += r.clicks;
+          byValue.set(key, cur);
+        }
+        // Reach and videoViews aren't in the by-campaign payload — leave as 0
+        // (documented in the endpoint: per-campaign breakdown returns spend/
+        // impressions/clicks only). Consumers that need reach fall through to
+        // per-campaign fetch or accept "—".
+        rows = [...byValue.values()].sort((a, b) => b.spend - a.spend);
+      }
+    } else {
+      // Anything else — original path.
+      rows = await metaSafeCall<unknown[]>(async () =>
+        await client.getInsightsBreakdown(accountPath, breakdown, startDate, endDate),
+        { onRetry: (attempt, err) => console.warn(`[Meta breakdown "${breakdown}"] retry #${attempt}: ${err.message}`) },
+      );
+    }
+
     if (Array.isArray(rows) && rows.length > 0) metaCache.set(ck, rows);
-    console.log(`[breakdown/meta "${breakdown}"] account=${accountPath} rows=${Array.isArray(rows) ? rows.length : "?"}`);
+    console.log(`[breakdown/meta "${breakdown}"] account=${accountPath} rows=${Array.isArray(rows) ? rows.length : "?"} source=${source}`);
     res.status(200).json({ source: "live", rows });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Meta breakdown fetch failed";
