@@ -31,12 +31,16 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface RetryOptions {
-  /** Number of retry attempts AFTER the initial call. Default 3 (so 4 total tries). */
+  /** Number of retry attempts AFTER the initial call. Defaults to delays.length. */
   retries?: number;
-  /** Delays in ms between attempts. Default [5000, 15000, 45000]. */
+  /** Explicit delays in ms between attempts. Overrides `longBackoff`. Default [5000, 20000]. */
   delays?: number[];
   /** Called with (attemptNumber, error) between retries. Useful for logging. */
   onRetry?: (attempt: number, error: Error) => void;
+  /** Switch to `[15s, 60s, 180s]` delays — aligned with Meta's ~2-3 min throttle
+   *  recovery. Use for the three heavy endpoints that repeatedly hit
+   *  "Service temporarily unavailable": ad-insights, adsets, non-daily breakdowns. */
+  longBackoff?: boolean;
 }
 
 /**
@@ -65,7 +69,12 @@ function shouldRetry(error: Error): boolean {
 }
 
 export async function metaRetry<T>(fn: () => Promise<T>, opts: RetryOptions = {}): Promise<T> {
-  const delays = opts.delays ?? [5000, 15000, 45000];
+  // Standard default: 2 retries, ~25s budget. Handles genuine transient
+  // blips without over-committing when the account isn't actually stuck.
+  // Callers that hit real throttle repeatedly can pass `longBackoff: true`
+  // via retry-shape options to switch to `[15s, 60s, 180s]` — 4 min budget
+  // aligned with Meta's actual soft-throttle recovery window.
+  const delays = opts.delays ?? (opts.longBackoff ? [15000, 60000, 180000] : [5000, 20000]);
   const retries = opts.retries ?? delays.length;
 
   let lastErr: Error | null = null;
@@ -199,7 +208,81 @@ class Semaphore {
 export const metaSemaphore = new Semaphore(3);
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 4. Convenience helper — the full "safe fetch" wrapper
+// 4. Meta throttle tracker — parses X-Business-Use-Case-Usage responses so
+//    (a) the UI can display current quota usage, and (b) callers can back
+//    off adaptively when we're near the throttle wall.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface MetaQuotaState {
+  /** call_count percentage from Meta (0-100) */
+  callPct: number;
+  /** total_cputime percentage from Meta (0-100) */
+  cpuPct: number;
+  /** total_time percentage from Meta (0-100) */
+  timePct: number;
+  /** Meta's suggested cool-down in seconds if throttled (from estimated_time_to_regain_access), or 0 if none */
+  estCooldownSec: number;
+  /** Milliseconds since epoch when this record was last updated */
+  updatedAt: number;
+}
+
+class MetaThrottleTracker {
+  private byAccount = new Map<string, MetaQuotaState>();
+
+  /** Called by MetaApiClient after every response with the raw header value. */
+  recordFromHeader(accountId: string, headerValue: string | null | undefined): MetaQuotaState | undefined {
+    if (!headerValue || !accountId) return undefined;
+    try {
+      const parsed = JSON.parse(headerValue) as Record<string, unknown>;
+      // Header shape is {"<biz-or-account-id>": [{call_count, total_cputime, total_time, ...}]}
+      // Only one key typically; grab the first non-empty array.
+      let entry: Record<string, unknown> | undefined;
+      for (const val of Object.values(parsed)) {
+        if (Array.isArray(val) && val.length > 0 && typeof val[0] === "object" && val[0]) {
+          entry = val[0] as Record<string, unknown>;
+          break;
+        }
+      }
+      if (!entry) return undefined;
+      const num = (k: string): number => {
+        const v = entry![k];
+        return typeof v === "number" ? v : (typeof v === "string" ? parseInt(v, 10) || 0 : 0);
+      };
+      const state: MetaQuotaState = {
+        callPct: num("call_count"),
+        cpuPct: num("total_cputime"),
+        timePct: num("total_time"),
+        estCooldownSec: num("estimated_time_to_regain_access"),
+        updatedAt: Date.now(),
+      };
+      this.byAccount.set(accountId, state);
+      return state;
+    } catch {
+      return undefined;
+    }
+  }
+
+  get(accountId: string): MetaQuotaState | undefined {
+    return this.byAccount.get(accountId);
+  }
+
+  /** Peak percentage across the three counters — the safest single number for the UI chip. */
+  peakPct(accountId: string): number {
+    const s = this.byAccount.get(accountId);
+    if (!s) return 0;
+    return Math.max(s.callPct, s.cpuPct, s.timePct);
+  }
+
+  /** True if any counter is >= threshold (default 80). */
+  isNearWall(accountId: string, threshold = 80): boolean {
+    return this.peakPct(accountId) >= threshold;
+  }
+}
+
+export const metaThrottle = new MetaThrottleTracker();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5. Convenience helper — the full "safe fetch" wrapper
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -220,4 +303,69 @@ export function chunk<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
   return out;
+}
+
+/**
+ * Race a task against a hard timeout — aborts the underlying work on timeout
+ * so the semaphore slot and network connection are released immediately.
+ *
+ * The old fire-and-race version leaked semaphore slots: a timed-out fetch
+ * kept running to completion, so with 20 chunks × 45s timeouts, effective
+ * concurrency dropped from 3 to 0-1 within seconds of hitting throttle.
+ *
+ * Usage: pass a `taskFactory` that receives the AbortSignal and forwards it
+ * to `fetch(url, { signal })`. When the timer fires we `abort()` the signal
+ * and Node's fetch rejects synchronously, freeing the slot.
+ *
+ *   const rows = await withAbortTimeout(
+ *     (signal) => metaFetch(token, path, params, signal),
+ *     45_000,
+ *     [] as Row[],
+ *   );
+ */
+export async function withAbortTimeout<T>(
+  taskFactory: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+  fallback: T,
+): Promise<T> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<T>((resolve) => {
+    timer = setTimeout(() => {
+      try { controller.abort(); } catch {}
+      resolve(fallback);
+    }, timeoutMs);
+  });
+  try {
+    const winner = await Promise.race([
+      taskFactory(controller.signal).catch(() => fallback),
+      timeoutPromise,
+    ]);
+    return winner;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
+ * Backward-compatible wrapper for call sites that already have a Promise in
+ * hand and can't easily accept a signal. Same semantics as the old
+ * `withTimeout`, kept for compatibility. Prefer `withAbortTimeout` for new
+ * code so the underlying work is actually cancelled on timeout.
+ *
+ * @deprecated Use `withAbortTimeout` with a signal-aware task factory.
+ */
+export function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+  return new Promise<T>((resolve) => {
+    let done = false;
+    const timer = setTimeout(() => {
+      if (done) return;
+      done = true;
+      resolve(fallback);
+    }, timeoutMs);
+    promise.then(
+      (v) => { if (!done) { done = true; clearTimeout(timer); resolve(v); } },
+      () => { if (!done) { done = true; clearTimeout(timer); resolve(fallback); } },
+    );
+  });
 }

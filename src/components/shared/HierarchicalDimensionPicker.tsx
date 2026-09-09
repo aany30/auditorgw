@@ -190,6 +190,15 @@ interface Props {
   allLabelText: string;
   entityLabel: string;
   loading?: boolean;
+  /** When the source hook reports an error (Meta throttled, network failure,
+   *  etc.), pass its message here. Instead of "No X match." we render an
+   *  honest "Meta is throttling this account — retry in 2 min" block with a
+   *  retry button. Distinguishes an empty-because-throttled state from
+   *  empty-because-account-really-has-none. */
+  throttleError?: string | null;
+  /** Called when the user clicks the retry button. Should re-fire the
+   *  source hook (usually by bumping a `reloadTick` state). */
+  onRetry?: () => void;
 }
 
 const CheckBox = ({ state }: { state: "unchecked" | "checked" | "indeterminate" }) => (
@@ -204,7 +213,7 @@ const CheckBox = ({ state }: { state: "unchecked" | "checked" | "indeterminate" 
 );
 
 export default function HierarchicalDimensionPicker({
-  tree, selection, onChange, allLabelText, entityLabel, loading = false,
+  tree, selection, onChange, allLabelText, entityLabel, loading = false, throttleError = null, onRetry,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -271,9 +280,26 @@ export default function HierarchicalDimensionPicker({
             </div>
             <div className="max-h-96 overflow-y-auto">
               {filteredTree.length === 0 ? (
-                <div className="px-3 py-6 text-center text-xs text-gray-400">
-                  {loading && tree.length === 0 ? `Loading ${entityLabel}…` : `No ${entityLabel} match.`}
-                </div>
+                loading && tree.length === 0 ? (
+                  <div className="px-3 py-6 text-center text-xs text-gray-400">Loading {entityLabel}…</div>
+                ) : throttleError ? (
+                  <div className="px-4 py-6 text-center">
+                    <p className="text-xs font-semibold text-amber-700 mb-1">Meta is throttling this account</p>
+                    <p className="text-[11px] text-gray-500 mb-3">
+                      {throttleError.length > 120 ? "Try again in ~2 min — Meta usually recovers within that window." : throttleError}
+                    </p>
+                    {onRetry && (
+                      <button
+                        onClick={onRetry}
+                        className="inline-flex items-center gap-1 px-3 py-1 rounded-md text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 hover:bg-amber-100"
+                      >
+                        Retry
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="px-3 py-6 text-center text-xs text-gray-400">No {entityLabel} match.</div>
+                )
               ) : filteredTree.map((node) => {
                 const dimKey = `dim:${node.dimensionValue}`;
                 const dimOpen = expanded.has(dimKey);

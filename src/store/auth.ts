@@ -92,6 +92,17 @@ interface CustomBenchmarks {
  */
 export interface EmqKeyBenchmark { min: number; max: number }
 
+/** Mirror of Meta's X-Business-Use-Case-Usage response header, per ad account.
+ *  Percentages are 0-100. `estCooldownSec` is Meta's own estimated recovery
+ *  time when throttled. All fields updated together on every Meta response. */
+export interface MetaQuotaSnapshot {
+  callPct: number;
+  cpuPct: number;
+  timePct: number;
+  estCooldownSec: number;
+  updatedAt: number;
+}
+
 const DEFAULT_BENCHMARKS: CustomBenchmarks = {
   metaEMQScore: 0.88,
   metaDedupRate: 0.95,
@@ -247,6 +258,13 @@ interface AuthState {
   setMetaCurrency: (c: string) => void;
   setDv360Currency: (c: string) => void;
 
+  // Meta quota chip — mirror of the last-seen X-Business-Use-Case-Usage header
+  // from Meta, per ad account. Updated by every Meta API response handler
+  // (client-side hooks push into this from response.metaQuota). Not persisted
+  // — it's live throttle state and stale info would be misleading.
+  metaQuota: Record<string, MetaQuotaSnapshot>;
+  setMetaQuota: (accountId: string, snapshot: MetaQuotaSnapshot) => void;
+
   // Custom Benchmarks
   customBenchmarks: CustomBenchmarks;
 
@@ -364,6 +382,9 @@ export const useAuthStore = create<AuthState>()(
       dv360Currency: null,
       setMetaCurrency: (c: string) => { if (c && c !== get().metaCurrency) set({ metaCurrency: c }); },
       setDv360Currency: (c: string) => { if (c && c !== get().dv360Currency) set({ dv360Currency: c }); },
+      metaQuota: {},
+      setMetaQuota: (accountId, snapshot) =>
+        set((state) => ({ metaQuota: { ...state.metaQuota, [accountId]: snapshot } })),
       customBenchmarks: DEFAULT_BENCHMARKS,
       emqKeyBenchmarks: {},
       dateRange: "30d",

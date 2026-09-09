@@ -30,7 +30,7 @@
 
 import type { NextApiRequest, NextApiResponse } from "next";
 import { isDemoCredential } from "@/lib/demo-data";
-import { metaSafeCall, metaCache, cacheKey, chunk } from "@/lib/meta-request-utils";
+import { metaSafeCall, metaCache, cacheKey, chunk, withAbortTimeout, metaThrottle } from "@/lib/meta-request-utils";
 
 const META_API_BASE = "https://graph.facebook.com/v18.0";
 // Chunk size chosen empirically for Meta's per-response aggregation cap.
@@ -259,11 +259,15 @@ function parseMetaError(status: number, body: string): string {
   return `Meta API ${status}: ${body.slice(0, 120)}`;
 }
 
-async function metaFetch<T>(accessToken: string, path: string, params: Record<string, string> = {}): Promise<T> {
+async function metaFetch<T>(accessToken: string, path: string, params: Record<string, string> = {}, signal?: AbortSignal): Promise<T> {
   const url = new URL(`${META_API_BASE}${path}`);
   url.searchParams.set("access_token", accessToken);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
-  const res = await fetch(url.toString());
+  const res = await fetch(url.toString(), signal ? { signal } : undefined);
+  try {
+    const acctMatch = path.match(/\/act_(\d+)/);
+    if (acctMatch) metaThrottle.recordFromHeader(`act_${acctMatch[1]}`, res.headers.get("x-business-use-case-usage") ?? res.headers.get("x-ad-account-usage") ?? res.headers.get("x-app-usage"));
+  } catch { /* best-effort */ }
   if (!res.ok) {
     const body = await res.text();
     throw new Error(parseMetaError(res.status, body));
@@ -272,7 +276,7 @@ async function metaFetch<T>(accessToken: string, path: string, params: Record<st
 }
 
 /** Follow pagination to collect all rows from a Meta Graph API edge. */
-async function metaFetchAll<T>(accessToken: string, path: string, params: Record<string, string> = {}): Promise<T[]> {
+async function metaFetchAll<T>(accessToken: string, path: string, params: Record<string, string> = {}, signal?: AbortSignal): Promise<T[]> {
   const rows: T[] = [];
   let url: string | null = null;
 
@@ -283,7 +287,11 @@ async function metaFetchAll<T>(accessToken: string, path: string, params: Record
   url = firstUrl.toString();
 
   for (let page = 0; page < 10 && url; page++) {
-    const res = await fetch(url);
+    const res = await fetch(url, signal ? { signal } : undefined);
+    try {
+      const acctMatch = url.match(/\/act_(\d+)/);
+      if (acctMatch) metaThrottle.recordFromHeader(`act_${acctMatch[1]}`, res.headers.get("x-business-use-case-usage") ?? res.headers.get("x-ad-account-usage") ?? res.headers.get("x-app-usage"));
+    } catch { /* best-effort */ }
     if (!res.ok) {
       const body = await res.text();
       throw new Error(parseMetaError(res.status, body));
@@ -342,6 +350,7 @@ async function fetchAdSetsForCampaignChunk(
   accessToken: string,
   accountPath: string,
   campaignIds: string[],
+  signal?: AbortSignal,
 ): Promise<any[]> {
   const filtering = JSON.stringify([
     { field: "campaign.id", operator: "IN", value: campaignIds },
@@ -350,7 +359,7 @@ async function fetchAdSetsForCampaignChunk(
     fields: "id,name,campaign_id,campaign{name},targeting",
     filtering,
     limit: "500",
-  });
+  }, signal);
 }
 
 /**
@@ -363,6 +372,7 @@ async function fetchAdSetInsightsForCampaignChunk(
   campaignIds: string[],
   startDate?: string,
   endDate?: string,
+  signal?: AbortSignal,
 ): Promise<any[]> {
   const filtering = JSON.stringify([
     { field: "campaign.id", operator: "IN", value: campaignIds },
@@ -375,7 +385,7 @@ async function fetchAdSetInsightsForCampaignChunk(
   };
   if (startDate && endDate) params.time_range = `{"since":"${startDate}","until":"${endDate}"}`;
   else params.date_preset = "last_30d";
-  return metaFetchAll<any>(accessToken, `/${accountPath}/insights`, params);
+  return metaFetchAll<any>(accessToken, `/${accountPath}/insights`, params, signal);
 }
 
 // ---------------------------------------------------------------------------
@@ -428,21 +438,44 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const campaignIds = campaigns.map((c) => String(c.id));
     const chunks = chunk(campaignIds, CAMPAIGNS_PER_CHUNK);
 
-    // Step 2: Fetch adsets per chunk in parallel — the semaphore inside
-    // metaSafeCall keeps us to 3 concurrent Meta calls at a time.
-    const adSetChunkResults = await Promise.allSettled(
-      chunks.map((ids) => metaSafeCall(() => fetchAdSetsForCampaignChunk(accessToken, accountPath, ids), {
-        onRetry: (attempt, err) => console.warn(`[adsets/meta] adset chunk retry #${attempt}: ${err.message}`),
-      })),
+    // Step 2: Fire adsets AND insights chunks in ONE interleaved batch — same
+    // semaphore budget, but they overlap instead of running sequentially.
+    // AbortSignal is threaded end-to-end so a timed-out chunk actually
+    // cancels its fetch and releases the semaphore slot immediately (fixes
+    // the leak that dropped effective concurrency to ~0 under throttle).
+    const CHUNK_TIMEOUT_MS = 45_000;
+    const heavyRetry = { longBackoff: true }; // 15s / 60s / 180s — matches Meta's real throttle recovery
+
+    const adsetTasks: Array<Promise<any[]>> = chunks.map((ids) =>
+      withAbortTimeout(
+        (signal) => metaSafeCall(() => fetchAdSetsForCampaignChunk(accessToken, accountPath, ids, signal), {
+          ...heavyRetry,
+          onRetry: (attempt, err) => console.warn(`[adsets/meta] adset chunk retry #${attempt}: ${err.message}`),
+        }),
+        CHUNK_TIMEOUT_MS,
+        [] as any[],
+      ),
+    );
+    const insightsTasks: Array<Promise<any[]>> = chunks.map((ids) =>
+      withAbortTimeout(
+        (signal) => metaSafeCall(() => fetchAdSetInsightsForCampaignChunk(accessToken, accountPath, ids, startDate, endDate, signal), {
+          ...heavyRetry,
+          onRetry: (attempt, err) => console.warn(`[adsets/meta] insights chunk retry #${attempt}: ${err.message}`),
+        }),
+        CHUNK_TIMEOUT_MS,
+        [] as any[],
+      ),
     );
 
-    const insightsChunkResults = await Promise.allSettled(
-      chunks.map((ids) => metaSafeCall(() => fetchAdSetInsightsForCampaignChunk(accessToken, accountPath, ids, startDate, endDate), {
-        onRetry: (attempt, err) => console.warn(`[adsets/meta] insights chunk retry #${attempt}: ${err.message}`),
-      })),
-    );
+    const [adSetChunkResults, insightsChunkResults] = await Promise.all([
+      Promise.allSettled(adsetTasks),
+      Promise.allSettled(insightsTasks),
+    ]);
 
-    // Step 3: Merge successful chunks, record failures for the UI.
+    // Step 3: Merge successful chunks, record failures for the UI. An empty
+    // array from withAbortTimeout means either (a) timeout fired and we
+    // aborted the fetch, or (b) the chunk genuinely returned no rows — we
+    // count either as a soft failure so the caller can decide what to do.
     const adSetsRaw: any[] = [];
     const insightsRaw: any[] = [];
     const failedChunks: Array<{ range: string; kind: "adsets" | "insights"; reason: string }> = [];
@@ -451,11 +484,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const label = `campaigns ${i * CAMPAIGNS_PER_CHUNK + 1}–${Math.min((i + 1) * CAMPAIGNS_PER_CHUNK, campaignIds.length)}`;
 
       const asRes = adSetChunkResults[i];
-      if (asRes.status === "fulfilled") adSetsRaw.push(...asRes.value);
+      if (asRes.status === "fulfilled" && Array.isArray(asRes.value) && asRes.value.length > 0) adSetsRaw.push(...asRes.value);
+      else if (asRes.status === "fulfilled") failedChunks.push({ range: label, kind: "adsets", reason: "empty or timeout" });
       else failedChunks.push({ range: label, kind: "adsets", reason: (asRes.reason as Error)?.message || "unknown" });
 
       const insRes = insightsChunkResults[i];
-      if (insRes.status === "fulfilled") insightsRaw.push(...insRes.value);
+      if (insRes.status === "fulfilled" && Array.isArray(insRes.value) && insRes.value.length > 0) insightsRaw.push(...insRes.value);
+      else if (insRes.status === "fulfilled") failedChunks.push({ range: label, kind: "insights", reason: "empty or timeout" });
       else failedChunks.push({ range: label, kind: "insights", reason: (insRes.reason as Error)?.message || "unknown" });
     }
 
@@ -512,9 +547,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Skip caching if we got 0 rows AND no chunks succeeded (likely a
     // transient Meta stress event; don't pin an empty state for 15 min).
     if (rows.length > 0) metaCache.set(ck, payload);
-    console.log(`[adsets/meta] account=${accountPath} rows=${rows.length} failedChunks=${failedChunks.length}`);
+    const quota = metaThrottle.get(accountPath);
+    console.log(`[adsets/meta] account=${accountPath} rows=${rows.length} failedChunks=${failedChunks.length} quota=${quota ? Math.max(quota.callPct, quota.cpuPct, quota.timePct) : "?"}%`);
 
-    res.status(200).json({ source: "live", ...payload });
+    res.status(200).json({ source: "live", ...payload, metaQuota: quota });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Meta ad set insights fetch failed";
     console.error("[Meta adsets] failed:", message);

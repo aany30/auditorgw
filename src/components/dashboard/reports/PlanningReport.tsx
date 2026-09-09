@@ -2474,7 +2474,7 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
   // Real sub-channel / creative-type delivery — unconditional (like the audience
   // breakdowns below) so the "Download PDF" button always has real data ready,
   // regardless of which Group By tab the user happens to be looking at.
-  const metaPub = useMetaBreakdown("publisher_platform", "custom" as DateRange, wideWindow.start, wideWindow.end);
+  const metaPub = useMetaBreakdown("publisher_platform", "custom" as DateRange, wideWindow.start, wideWindow.end, hasMeta);
   // Per-campaign publisher_platform delivery — used to filter which campaigns
   // show under each publisher in the Channel drill tree (so each publisher
   // only lists campaigns that actually delivered on it, not all 57).

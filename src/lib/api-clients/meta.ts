@@ -5,6 +5,8 @@
  *   - Meta CAPI (server-side events + dedupe + payload + auth + latency)
  */
 
+import { metaThrottle } from "@/lib/meta-request-utils";
+
 const META_API_BASE = "https://graph.facebook.com/v18.0";
 
 /** Convert a raw Meta API error response into a clean human-readable message. */
@@ -340,12 +342,19 @@ export class MetaApiClient {
     this.accessToken = accessToken;
   }
 
-  private async fetch<T>(path: string, params: Record<string, string> = {}): Promise<T> {
+  private async fetch<T>(path: string, params: Record<string, string> = {}, signal?: AbortSignal): Promise<T> {
     const url = new URL(`${META_API_BASE}${path}`);
     url.searchParams.set("access_token", this.accessToken);
     Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
 
-    const res = await fetch(url.toString());
+    const res = await fetch(url.toString(), signal ? { signal } : undefined);
+    // Record Meta's live throttle-usage header on every response — the UI
+    // quota chip and the semaphore's adaptive-backoff logic read this.
+    // Account ID is inferred from path when it looks like /act_XXX/...
+    try {
+      const acctMatch = path.match(/\/act_(\d+)/);
+      if (acctMatch) metaThrottle.recordFromHeader(`act_${acctMatch[1]}`, res.headers.get("x-business-use-case-usage") ?? res.headers.get("x-ad-account-usage") ?? res.headers.get("x-app-usage"));
+    } catch { /* header parse is best-effort */ }
     if (!res.ok) {
       const body = await res.text();
       throw new Error(parseMetaError(res.status, body));
@@ -358,8 +367,12 @@ export class MetaApiClient {
    * which already includes the access token and all query params). Used to walk
    * paginated Insights responses.
    */
-  private async fetchAbsolute<T>(absoluteUrl: string): Promise<T> {
-    const res = await fetch(absoluteUrl);
+  private async fetchAbsolute<T>(absoluteUrl: string, signal?: AbortSignal): Promise<T> {
+    const res = await fetch(absoluteUrl, signal ? { signal } : undefined);
+    try {
+      const acctMatch = absoluteUrl.match(/\/act_(\d+)/);
+      if (acctMatch) metaThrottle.recordFromHeader(`act_${acctMatch[1]}`, res.headers.get("x-business-use-case-usage") ?? res.headers.get("x-ad-account-usage") ?? res.headers.get("x-app-usage"));
+    } catch { /* header parse is best-effort */ }
     if (!res.ok) {
       const body = await res.text();
       throw new Error(parseMetaError(res.status, body));

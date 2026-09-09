@@ -19,7 +19,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { MetaApiClient } from "@/lib/api-clients/meta";
 import { isDemoCredential } from "@/lib/demo-data";
-import { metaSafeCall, metaCache, cacheKey } from "@/lib/meta-request-utils";
+import { metaSafeCall, metaCache, cacheKey, metaThrottle } from "@/lib/meta-request-utils";
 
 type Row = {
   label: string;
@@ -231,7 +231,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         console.warn(`[breakdown/meta "${breakdown}"] by-campaign fallback failed (${forwarded.status}), trying account-level`);
         rows = await metaSafeCall<unknown[]>(async () =>
           await client.getInsightsBreakdown(accountPath, breakdown, startDate, endDate),
-          { onRetry: (attempt, err) => console.warn(`[Meta breakdown "${breakdown}"] retry #${attempt}: ${err.message}`) },
+          {
+            longBackoff: true, // heavy account-level breakdown — match Meta's real throttle recovery
+            onRetry: (attempt, err) => console.warn(`[Meta breakdown "${breakdown}"] retry #${attempt}: ${err.message}`),
+          },
         );
         source = "account-direct";
       } else {
@@ -252,16 +255,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         rows = [...byValue.values()].sort((a, b) => b.spend - a.spend);
       }
     } else {
-      // Anything else — original path.
+      // Anything else — original path (age,gender combined and region,city).
       rows = await metaSafeCall<unknown[]>(async () =>
         await client.getInsightsBreakdown(accountPath, breakdown, startDate, endDate),
-        { onRetry: (attempt, err) => console.warn(`[Meta breakdown "${breakdown}"] retry #${attempt}: ${err.message}`) },
+        {
+          longBackoff: true, // still a heavy breakdown call — match Meta's recovery window
+          onRetry: (attempt, err) => console.warn(`[Meta breakdown "${breakdown}"] retry #${attempt}: ${err.message}`),
+        },
       );
     }
 
     if (Array.isArray(rows) && rows.length > 0) metaCache.set(ck, rows);
-    console.log(`[breakdown/meta "${breakdown}"] account=${accountPath} rows=${Array.isArray(rows) ? rows.length : "?"} source=${source}`);
-    res.status(200).json({ source: "live", rows });
+    const quota = metaThrottle.get(accountPath);
+    console.log(`[breakdown/meta "${breakdown}"] account=${accountPath} rows=${Array.isArray(rows) ? rows.length : "?"} source=${source} quota=${quota ? Math.max(quota.callPct, quota.cpuPct, quota.timePct) : "?"}%`);
+    res.status(200).json({ source: "live", rows, metaQuota: quota });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Meta breakdown fetch failed";
     console.error(`[Meta breakdown "${breakdown}"] failed:`, message);

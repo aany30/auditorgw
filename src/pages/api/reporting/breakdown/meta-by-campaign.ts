@@ -13,7 +13,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { MetaApiClient } from "@/lib/api-clients/meta";
 import { isDemoCredential } from "@/lib/demo-data";
-import { metaSafeCall, metaCache, cacheKey } from "@/lib/meta-request-utils";
+import { metaSafeCall, metaCache, cacheKey, metaThrottle } from "@/lib/meta-request-utils";
 
 interface Row {
   campaignId: string;
@@ -107,12 +107,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
       return out;
     }, {
+      longBackoff: true, // heavy by-campaign breakdown — match Meta's real recovery
       onRetry: (attempt, err) => console.warn(`[Meta by-campaign "${breakdown}"] retry #${attempt}: ${err.message}`),
     });
 
     if (rows.length > 0) metaCache.set(ck, rows);
-    console.log(`[breakdown/meta-by-campaign "${breakdown}"] account=${accountPath} rows=${rows.length}`);
-    res.status(200).json({ source: "live", rows });
+    const quota = metaThrottle.get(accountPath);
+    console.log(`[breakdown/meta-by-campaign "${breakdown}"] account=${accountPath} rows=${rows.length} quota=${quota ? Math.max(quota.callPct, quota.cpuPct, quota.timePct) : "?"}%`);
+    res.status(200).json({ source: "live", rows, metaQuota: quota });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Meta campaign breakdown fetch failed";
     console.error(`[Meta by-campaign breakdown "${breakdown}"] failed:`, message);

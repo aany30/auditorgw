@@ -36,6 +36,8 @@ export function useMetaBreakdown(
 
   const { startDate, endDate } = rangeToDates(dateRange, customStart, customEnd);
 
+  const setMetaQuota = useAuthStore((s) => s.setMetaQuota);
+
   useEffect(() => {
     if (!enabled) { setRows([]); return; }
     const token = demoMode ? "demo-meta-token" : metaAccessToken;
@@ -55,6 +57,11 @@ export function useMetaBreakdown(
         if (cancelled) return;
         if (d.error) setError(d.error);
         else setRows(d.rows || []);
+        // Pipe Meta's live throttle-usage into the store so the header chip updates.
+        if (d.metaQuota && biz) {
+          const acctId = biz.startsWith("act_") ? biz : `act_${biz}`;
+          setMetaQuota(acctId, d.metaQuota);
+        }
       })
       .catch(e => { if (!cancelled) setError(e.message); })
       .finally(() => { if (!cancelled) setLoading(false); });

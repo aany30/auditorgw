@@ -26,6 +26,7 @@ import GenerateReport from "@/components/dashboard/reports/GenerateReport";
 import DashboardReport from "@/components/dashboard/reports/DashboardReport";
 import AskAITab from "@/components/dashboard/tabs/AskAITab";
 import AccountSelector from "@/components/dashboard/AccountSelector";
+import MetaQuotaChip from "@/components/shared/MetaQuotaChip";
 import CampaignObjectiveFilter from "@/components/dashboard/CampaignObjectiveFilter";
 import PlatformFilter, { PlatformValue, toLegacyPlatform } from "@/components/dashboard/PlatformFilter";
 import DateRangePicker, { DateRange } from "@/components/shared/DateRangePicker";
@@ -494,6 +495,10 @@ export default function Dashboard() {
           {/* Right: Account Selector + AI Credits counter + Logout */}
           <div className="flex items-center gap-3">
             <AccountSelector />
+
+            {/* Meta API quota chip — live usage % from Meta's X-Business-Use-Case-Usage
+                header. Green <70%, amber 70-85%, red >85%. Hover for details. */}
+            <MetaQuotaChip />
 
             {/* Running AI credit counter — accumulates the product-priced cost of every AI call, saved per account */}
             <div

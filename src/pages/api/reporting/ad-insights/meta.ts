@@ -9,7 +9,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { MetaApiClient } from "@/lib/api-clients/meta";
 import { isDemoCredential } from "@/lib/demo-data";
-import { metaSafeCall, metaCache, cacheKey, chunk } from "@/lib/meta-request-utils";
+import { metaSafeCall, metaCache, cacheKey, chunk, withAbortTimeout, metaThrottle } from "@/lib/meta-request-utils";
 
 // Same chunk-size rationale as /adsets/meta — some large accounts have
 // Meta silently returning 0 ads on account-level `/act_/insights?level=ad`
@@ -116,11 +116,15 @@ const DEMO_ADS: AdInsightRow[] = [
 
 /** Direct Meta fetch — used for the campaign-list lookup and the chunked
  *  insights calls. Uses the same error-parsing shape as the client. */
-async function metaFetch<T>(token: string, path: string, params: Record<string, string> = {}): Promise<T> {
+async function metaFetch<T>(token: string, path: string, params: Record<string, string> = {}, signal?: AbortSignal): Promise<T> {
   const url = new URL(`${META_API_BASE}${path}`);
   url.searchParams.set("access_token", token);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
-  const res = await fetch(url.toString());
+  const res = await fetch(url.toString(), signal ? { signal } : undefined);
+  try {
+    const acctMatch = path.match(/\/act_(\d+)/);
+    if (acctMatch) metaThrottle.recordFromHeader(`act_${acctMatch[1]}`, res.headers.get("x-business-use-case-usage") ?? res.headers.get("x-ad-account-usage") ?? res.headers.get("x-app-usage"));
+  } catch { /* best-effort */ }
   if (!res.ok) {
     const body = await res.text();
     let msg = `Meta API ${res.status}`;
@@ -141,6 +145,7 @@ async function fetchAdInsightsForCampaignChunk(
   startDate?: string,
   endDate?: string,
   limit = 200,
+  signal?: AbortSignal,
 ): Promise<any[]> {
   const filtering = JSON.stringify([{ field: "campaign.id", operator: "IN", value: campaignIds }]);
   const params: Record<string, string> = {
@@ -152,7 +157,7 @@ async function fetchAdInsightsForCampaignChunk(
   };
   if (startDate && endDate) params.time_range = `{"since":"${startDate}","until":"${endDate}"}`;
   else params.date_preset = "last_30d";
-  const res = await metaFetch<{ data?: any[] }>(token, `/${accountPath}/insights`, params);
+  const res = await metaFetch<{ data?: any[] }>(token, `/${accountPath}/insights`, params, signal);
   return res.data ?? [];
 }
 
@@ -255,11 +260,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const chunks = chunk(campaignIds, CAMPAIGNS_PER_CHUNK);
     const perAdLimit = Math.max(50, Math.floor((limit || 200) / Math.max(1, chunks.length)));
 
+    const CHUNK_TIMEOUT_MS = 45_000;
     const chunkResults = await Promise.allSettled(
       chunks.map((ids) =>
-        metaSafeCall(
-          () => fetchAdInsightsForCampaignChunk(accessToken, accountPath, ids, startDate, endDate, perAdLimit),
-          { onRetry: (attempt, err) => console.warn(`[ad-insights/meta] insights chunk retry #${attempt}: ${err.message}`) },
+        withAbortTimeout(
+          (signal) => metaSafeCall(
+            () => fetchAdInsightsForCampaignChunk(accessToken, accountPath, ids, startDate, endDate, perAdLimit, signal),
+            {
+              longBackoff: true, // ad-insights is one of the heavy endpoints; match Meta's real recovery window
+              onRetry: (attempt, err) => console.warn(`[ad-insights/meta] insights chunk retry #${attempt}: ${err.message}`),
+            },
+          ),
+          CHUNK_TIMEOUT_MS,
+          [] as any[],
         ),
       ),
     );
@@ -267,7 +280,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const rawAds: any[] = [];
     let failedChunks = 0;
     for (const r of chunkResults) {
-      if (r.status === "fulfilled") rawAds.push(...r.value);
+      if (r.status === "fulfilled" && Array.isArray(r.value) && r.value.length > 0) rawAds.push(...r.value);
+      else if (r.status === "fulfilled") failedChunks++; // empty result (timeout or truly empty)
       else failedChunks++;
     }
 
@@ -327,9 +341,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const payload = { ads: enriched, currency: currency || "USD" };
     if (enriched.length > 0) metaCache.set(ck, payload);
+    const quota = metaThrottle.get(accountPath);
     res.status(200).json({
       source: "live",
       ...payload,
+      metaQuota: quota,
       ...(failedChunks > 0 ? { partial: true, failedChunks } : {}),
     });
   } catch (e) {
