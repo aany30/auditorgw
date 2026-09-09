@@ -9,7 +9,14 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { MetaApiClient } from "@/lib/api-clients/meta";
 import { isDemoCredential } from "@/lib/demo-data";
-import { metaSafeCall, metaCache, cacheKey } from "@/lib/meta-request-utils";
+import { metaSafeCall, metaCache, cacheKey, chunk } from "@/lib/meta-request-utils";
+
+// Same chunk-size rationale as /adsets/meta — some large accounts have
+// Meta silently returning 0 ads on account-level `/act_/insights?level=ad`
+// because the aggregation ceiling is exceeded. Splitting by campaign IDs
+// via a filtering predicate keeps every request well under the ceiling.
+const CAMPAIGNS_PER_CHUNK = 10;
+const META_API_BASE = "https://graph.facebook.com/v18.0";
 
 export interface AdInsightRow {
   id: string;
@@ -107,6 +114,102 @@ const DEMO_ADS: AdInsightRow[] = [
   { id: "ad_10", adSetId: "as_010", name: "Static — Brand Awareness",             campaignName: "Plenaire - TOF - B1G1 - 21/05",                 adSetName: "TOF - Broad - All India",         creativeType: "PHOTO",    language: "English / Hindi", spend: 3800,  impressions: 142000, reach: 105000,  clicks: 2100,  conversions: 24,  conversionValue: 16000,  videoViews: 0 },
 ];
 
+/** Direct Meta fetch — used for the campaign-list lookup and the chunked
+ *  insights calls. Uses the same error-parsing shape as the client. */
+async function metaFetch<T>(token: string, path: string, params: Record<string, string> = {}): Promise<T> {
+  const url = new URL(`${META_API_BASE}${path}`);
+  url.searchParams.set("access_token", token);
+  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+  const res = await fetch(url.toString());
+  if (!res.ok) {
+    const body = await res.text();
+    let msg = `Meta API ${res.status}`;
+    try { const j = JSON.parse(body); msg = `Meta API: ${j?.error?.message ?? msg}`; } catch {}
+    throw new Error(msg);
+  }
+  return res.json() as Promise<T>;
+}
+
+/** Fetch ad-level insights for a specific chunk of campaign IDs using the
+ *  filtering=[{field:"campaign.id",operator:"IN",value:[...]}] predicate.
+ *  This bypasses Meta's account-level aggregation ceiling that returns
+ *  empty 200s on very large accounts. */
+async function fetchAdInsightsForCampaignChunk(
+  token: string,
+  accountPath: string,
+  campaignIds: string[],
+  startDate?: string,
+  endDate?: string,
+  limit = 200,
+): Promise<any[]> {
+  const filtering = JSON.stringify([{ field: "campaign.id", operator: "IN", value: campaignIds }]);
+  const params: Record<string, string> = {
+    level: "ad",
+    fields: "ad_id,ad_name,adset_id,campaign_name,adset_name,spend,impressions,reach,clicks,actions,action_values,video_play_actions",
+    filtering,
+    limit: String(limit),
+    sort: "spend_descending",
+  };
+  if (startDate && endDate) params.time_range = `{"since":"${startDate}","until":"${endDate}"}`;
+  else params.date_preset = "last_30d";
+  const res = await metaFetch<{ data?: any[] }>(token, `/${accountPath}/insights`, params);
+  return res.data ?? [];
+}
+
+/** Hydrate object_type + thumbnail for a batch of ad IDs via the
+ *  ?ids=... batch endpoint. Chunked at 50 (Graph's practical limit). */
+async function hydrateAdCreatives(
+  token: string,
+  adIds: string[],
+): Promise<Record<string, { object_type?: string; thumbnail_url?: string }>> {
+  const out: Record<string, { object_type?: string; thumbnail_url?: string }> = {};
+  const CHUNK = 50;
+  for (let i = 0; i < adIds.length; i += CHUNK) {
+    const ids = adIds.slice(i, i + CHUNK);
+    try {
+      const res = await metaFetch<Record<string, { creative?: { object_type?: string; thumbnail_url?: string } }>>(
+        token,
+        "/",
+        { ids: ids.join(","), fields: "creative{object_type,thumbnail_url}" }
+      );
+      for (const id of ids) {
+        const rec = res?.[id]?.creative;
+        if (rec) out[id] = { object_type: rec.object_type, thumbnail_url: rec.thumbnail_url };
+      }
+    } catch { /* skip failed batch, leave those ads without creative type */ }
+  }
+  return out;
+}
+
+/** Sum conversion events, deduplicating aliases. Mirrors MetaApiClient. */
+function sumConversions(rows: Array<{ action_type: string; value: string }> | undefined): number {
+  if (!rows || rows.length === 0) return 0;
+  const byType: Record<string, number> = {};
+  for (const r of rows) byType[r.action_type] = (byType[r.action_type] || 0) + (parseFloat(r.value) || 0);
+  const groups: Array<[string, ...string[]]> = [
+    ["purchase", "offsite_conversion.fb_pixel_purchase"],
+    ["subscribe", "offsite_conversion.fb_pixel_subscribe"],
+    ["start_trial", "offsite_conversion.fb_pixel_start_trial"],
+    ["lead", "offsite_conversion.fb_pixel_lead"],
+    ["onsite_conversion.lead_grouped"],
+    ["complete_registration", "offsite_conversion.fb_pixel_complete_registration"],
+    ["app_install", "mobile_app_install"],
+    ["onsite_conversion.messaging_conversation_started_7d"],
+    ["onsite_conversion.total_messaging_connection"],
+  ];
+  let total = 0;
+  for (const group of groups) {
+    for (const t of group) {
+      if (byType[t] !== undefined) { total += byType[t]; break; }
+    }
+  }
+  return total;
+}
+function sumActionValues(rows: Array<{ action_type: string; value: string }> | undefined): number {
+  if (!rows || rows.length === 0) return 0;
+  return rows.reduce((s, r) => s + (parseFloat(r.value) || 0), 0);
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") { res.status(405).json({ error: "Method not allowed" }); return; }
   const { accessToken, businessId, startDate, endDate, limit } = req.body || {};
@@ -129,15 +232,80 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   try {
     const client = new MetaApiClient(accessToken);
-    const [ads, currency] = await Promise.all([
-      metaSafeCall(() => client.getAdInsights(accountPath, startDate, endDate, limit || 100), {
-        onRetry: (attempt, err) => console.warn(`[ad-insights/meta] retry #${attempt}: ${err.message}`),
-      }),
+
+    // Step 1: fetch campaign IDs so we can chunk the insights call.
+    // Also fetch currency in parallel — cheap ping.
+    const [campaigns, currency] = await Promise.all([
+      metaSafeCall(() =>
+        metaFetch<{ data?: Array<{ id: string }> }>(accessToken, `/${accountPath}/campaigns`, {
+          fields: "id", limit: "500",
+        }).then((r) => r.data ?? []),
+        { onRetry: (attempt, err) => console.warn(`[ad-insights/meta] campaigns retry #${attempt}: ${err.message}`) },
+      ),
       metaSafeCall(() => client.getAccountCurrency(accountPath)),
     ]);
 
-    // Fetch targeting locales for the unique ad sets represented in this batch.
-    const adSetIds = [...new Set(ads.map(a => a.adSetId).filter(Boolean) as string[])];
+    if (!campaigns || campaigns.length === 0) {
+      res.status(200).json({ source: "live", ads: [], currency: currency || "USD" });
+      return;
+    }
+
+    // Step 2: chunk campaign IDs and fetch ad-level insights per chunk.
+    const campaignIds = campaigns.map((c) => String(c.id));
+    const chunks = chunk(campaignIds, CAMPAIGNS_PER_CHUNK);
+    const perAdLimit = Math.max(50, Math.floor((limit || 200) / Math.max(1, chunks.length)));
+
+    const chunkResults = await Promise.allSettled(
+      chunks.map((ids) =>
+        metaSafeCall(
+          () => fetchAdInsightsForCampaignChunk(accessToken, accountPath, ids, startDate, endDate, perAdLimit),
+          { onRetry: (attempt, err) => console.warn(`[ad-insights/meta] insights chunk retry #${attempt}: ${err.message}`) },
+        ),
+      ),
+    );
+
+    const rawAds: any[] = [];
+    let failedChunks = 0;
+    for (const r of chunkResults) {
+      if (r.status === "fulfilled") rawAds.push(...r.value);
+      else failedChunks++;
+    }
+
+    if (rawAds.length === 0 && failedChunks > 0) {
+      const firstErr = chunkResults.find((r) => r.status === "rejected") as PromiseRejectedResult | undefined;
+      const errMsg = firstErr ? (firstErr.reason as Error).message : "All ad-insights chunks failed";
+      throw new Error(errMsg);
+    }
+
+    // Step 3: hydrate creative type + thumbnail via batch endpoint.
+    const adIds = rawAds.map((a) => String(a.ad_id || "")).filter(Boolean);
+    const creativeMeta = adIds.length > 0
+      ? await metaSafeCall(() => hydrateAdCreatives(accessToken, adIds)).catch(() => ({} as Record<string, { object_type?: string; thumbnail_url?: string }>))
+      : {} as Record<string, { object_type?: string; thumbnail_url?: string }>;
+
+    const baseRows: AdInsightRow[] = rawAds.map((row: any) => {
+      const id = String(row.ad_id || "");
+      const cm = creativeMeta[id];
+      return {
+        id,
+        name: String(row.ad_name || ""),
+        campaignName: row.campaign_name ? String(row.campaign_name) : undefined,
+        adSetName: row.adset_name ? String(row.adset_name) : undefined,
+        adSetId: row.adset_id ? String(row.adset_id) : undefined,
+        creativeType: cm?.object_type,
+        thumbnailUrl: cm?.thumbnail_url,
+        spend: row.spend ? parseFloat(row.spend) : 0,
+        impressions: row.impressions ? parseInt(row.impressions, 10) : 0,
+        reach: row.reach ? parseInt(row.reach, 10) : 0,
+        clicks: row.clicks ? parseInt(row.clicks, 10) : 0,
+        conversions: sumConversions(row.actions),
+        conversionValue: sumConversions(row.action_values),
+        videoViews: sumActionValues(row.video_play_actions),
+      };
+    });
+
+    // Step 4: fetch targeting locales for the unique ad sets represented.
+    const adSetIds = [...new Set(baseRows.map(a => a.adSetId).filter(Boolean) as string[])];
     type TargetingMap = Awaited<ReturnType<typeof client.getAdSetsTargeting>>;
     const [targetingMap, localeNames] = await Promise.all([
       adSetIds.length
@@ -149,21 +317,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const localesFor = (adSetId?: string): number[] | undefined =>
       adSetId && targetingMap[adSetId]?.targeting?.locales ? targetingMap[adSetId].targeting!.locales : undefined;
 
-    const enriched: AdInsightRow[] = ads.map(a => ({
+    const enriched: AdInsightRow[] = baseRows.map(a => ({
       ...a,
       language: localesToLanguage(localesFor(a.adSetId), localeNames),
     }));
 
     const withCreativeType = enriched.filter(a => a.creativeType).length;
-    console.log(`[ad-insights/meta] account=${accountPath} ads=${enriched.length} withCreativeType=${withCreativeType} withoutCreativeType=${enriched.length - withCreativeType}`);
+    console.log(`[ad-insights/meta] account=${accountPath} campaigns=${campaigns.length} chunks=${chunks.length} failedChunks=${failedChunks} ads=${enriched.length} withCreativeType=${withCreativeType} withoutCreativeType=${enriched.length - withCreativeType}`);
 
     const payload = { ads: enriched, currency: currency || "USD" };
-    // Only cache non-empty results — an empty successful response is almost
-    // always Meta returning nothing under transient stress; caching it would
-    // pin the empty state for 15 min.
     if (enriched.length > 0) metaCache.set(ck, payload);
-    res.status(200).json({ source: "live", ...payload });
+    res.status(200).json({
+      source: "live",
+      ...payload,
+      ...(failedChunks > 0 ? { partial: true, failedChunks } : {}),
+    });
   } catch (e) {
+    console.error("[ad-insights/meta] failed:", e instanceof Error ? e.message : e);
     res.status(502).json({ error: e instanceof Error ? e.message : "Ad insights fetch failed" });
   }
 }

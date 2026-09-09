@@ -33,7 +33,13 @@ import { isDemoCredential } from "@/lib/demo-data";
 import { metaSafeCall, metaCache, cacheKey, chunk } from "@/lib/meta-request-utils";
 
 const META_API_BASE = "https://graph.facebook.com/v18.0";
-const CAMPAIGNS_PER_CHUNK = 20;
+// Chunk size chosen empirically for Meta's per-response aggregation cap.
+// At 20 campaigns per chunk, some large accounts (e.g. act_1946024479209663)
+// still hit "Please reduce the amount of data" — Meta's payload ceiling is
+// dynamic, not just size-based. Dropping to 10 keeps every chunk under the
+// cap on the accounts we've seen. Once we get higher app rate limits or
+// switch to a System User token this can safely go back up to 20.
+const CAMPAIGNS_PER_CHUNK = 10;
 
 type AdSetRow = {
   id: string;
