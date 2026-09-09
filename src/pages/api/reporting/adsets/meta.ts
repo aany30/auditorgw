@@ -503,7 +503,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     };
 
     // Cache the successful (or partial) result — 15 min default TTL.
-    metaCache.set(ck, payload);
+    // Skip caching if we got 0 rows AND no chunks succeeded (likely a
+    // transient Meta stress event; don't pin an empty state for 15 min).
+    if (rows.length > 0) metaCache.set(ck, payload);
+    console.log(`[adsets/meta] account=${accountPath} rows=${rows.length} failedChunks=${failedChunks.length}`);
 
     res.status(200).json({ source: "live", ...payload });
   } catch (e) {

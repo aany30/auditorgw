@@ -110,7 +110,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       onRetry: (attempt, err) => console.warn(`[Meta by-campaign "${breakdown}"] retry #${attempt}: ${err.message}`),
     });
 
-    metaCache.set(ck, rows);
+    if (rows.length > 0) metaCache.set(ck, rows);
+    console.log(`[breakdown/meta-by-campaign "${breakdown}"] account=${accountPath} rows=${rows.length}`);
     res.status(200).json({ source: "live", rows });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Meta campaign breakdown fetch failed";

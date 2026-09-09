@@ -154,8 +154,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       language: localesToLanguage(localesFor(a.adSetId), localeNames),
     }));
 
+    const withCreativeType = enriched.filter(a => a.creativeType).length;
+    console.log(`[ad-insights/meta] account=${accountPath} ads=${enriched.length} withCreativeType=${withCreativeType} withoutCreativeType=${enriched.length - withCreativeType}`);
+
     const payload = { ads: enriched, currency: currency || "USD" };
-    metaCache.set(ck, payload);
+    // Only cache non-empty results — an empty successful response is almost
+    // always Meta returning nothing under transient stress; caching it would
+    // pin the empty state for 15 min.
+    if (enriched.length > 0) metaCache.set(ck, payload);
     res.status(200).json({ source: "live", ...payload });
   } catch (e) {
     res.status(502).json({ error: e instanceof Error ? e.message : "Ad insights fetch failed" });
