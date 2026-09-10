@@ -41,6 +41,7 @@ import type { CampaignData, AdSetData } from "@/types";
 import type { PlanGroup, SavedPlanStoreV2, DrillPathEntry, AggComboSelection, AggPlanGroup, AggPlanGroupStore, HierNodeSelection } from "@/types/planning";
 import HierarchicalDimensionPicker, { type HierTreeNode } from "@/components/shared/HierarchicalDimensionPicker";
 import SmartNumberInput from "@/components/shared/SmartNumberInput";
+import { rangeToDates } from "@/lib/date-range";
 
 interface Props {
   platform: "meta" | "dv360" | "both";
@@ -2458,6 +2459,18 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
 
   // Planning always uses the widest flight window (not the date picker) so that
   // channel/exchange breakdowns cover the full campaign delivery period.
+  // wideWindow was the historical "widest flight span across all campaigns"
+  // approach. It caused two big problems on large accounts:
+  //   1. Meta rejected any request with startDate >37 months back (error #3018)
+  //   2. 3-year × 100-campaign payloads tripped Meta's aggregation ceiling
+  //      and DV360's timeouts, producing empty results
+  // The user's ask is now explicit: "range picker ke according data — 30 days,
+  // 1 year, 90 days, yesterday — should show correct data." So we honor the
+  // date-range picker for every Meta and DV360 delivery call below. The
+  // resolved date pair from the picker is used everywhere via `pickerStart`
+  // and `pickerEnd`. `wideWindow` is retained only for the campaigns list
+  // itself (which needs to include historical campaigns so the picker can
+  // reference them) and the reach-over-flight fallback in DV360.
   const wideWindow = useMemo(() => {
     const today = new Date().toISOString().slice(0, 10);
     const DAY = 86_400_000;
@@ -2471,31 +2484,44 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
     return { start, end };
   }, [campaigns]);
 
+  // Resolve the picker's date range into concrete start/end strings. When the
+  // picker is on a preset (7d/30d/90d/yesterday) the hooks resolve it
+  // themselves; when it's "custom" we pass through the custom dates. This
+  // single pair drives EVERY Meta + DV360 fetch below so numbers match the
+  // header ("Last 30 Days" → 30-day totals, "Last 90 Days" → 90-day totals).
+  const pickerCustomStart = dateRange === "custom" ? customStart : undefined;
+  const pickerCustomEnd = dateRange === "custom" ? customEnd : undefined;
+  // Resolve to concrete dates for the ad-insights fetch effect below (which
+  // POSTs a body with explicit startDate/endDate strings — can't rely on a
+  // hook to do the resolution).
+  const { startDate: pickerStartDate, endDate: pickerEndDate } = rangeToDates(dateRange, pickerCustomStart, pickerCustomEnd);
+
   // Real sub-channel / creative-type delivery — unconditional (like the audience
   // breakdowns below) so the "Download PDF" button always has real data ready,
   // regardless of which Group By tab the user happens to be looking at.
-  const metaPub = useMetaBreakdown("publisher_platform", "custom" as DateRange, wideWindow.start, wideWindow.end, hasMeta);
+  // Every Meta + DV360 fetch below uses the DATE-RANGE PICKER's window (not
+  // the wide flight span). This makes Overall Deliveries and every picker
+  // reflect exactly what the header selector says ("Last 30 Days" → 30-day
+  // totals, etc.) and simultaneously eliminates: (a) Meta #3018 37-month
+  // lookback rejects, (b) Meta aggregation-cap failures on multi-year
+  // payloads, (c) DV360 timeouts on huge date spans.
+  const metaPub = useMetaBreakdown("publisher_platform", dateRange, pickerCustomStart, pickerCustomEnd, hasMeta);
   // Per-campaign publisher_platform delivery — used to filter which campaigns
-  // show under each publisher in the Channel drill tree (so each publisher
-  // only lists campaigns that actually delivered on it, not all 57).
-  const metaPubByCampaign = useMetaCampaignBreakdown("publisher_platform", "custom" as DateRange, wideWindow.start, wideWindow.end, hasMeta);
-  const dvExch = useDV360Breakdown("exchange", "custom" as DateRange, wideWindow.start, wideWindow.end, hasDv);
-  const dvCreativeType = useDV360Breakdown("creative_type", "custom" as DateRange, wideWindow.start, wideWindow.end, hasDv);
+  // show under each publisher in the Channel drill tree.
+  const metaPubByCampaign = useMetaCampaignBreakdown("publisher_platform", dateRange, pickerCustomStart, pickerCustomEnd, hasMeta);
+  const dvExch = useDV360Breakdown("exchange", dateRange, pickerCustomStart, pickerCustomEnd, hasDv);
+  const dvCreativeType = useDV360Breakdown("creative_type", dateRange, pickerCustomStart, pickerCustomEnd, hasDv);
 
   // Audience breakdowns for the PDF (always fetched — real data from APIs).
-  const metaAge = useMetaBreakdown("age", "custom" as DateRange, wideWindow.start, wideWindow.end, hasMeta);
-  const metaGender = useMetaBreakdown("gender", "custom" as DateRange, wideWindow.start, wideWindow.end, hasMeta);
-  const dvAge = useDV360Breakdown("age", "custom" as DateRange, wideWindow.start, wideWindow.end, hasDv);
-  const dvGender = useDV360Breakdown("gender", "custom" as DateRange, wideWindow.start, wideWindow.end, hasDv);
-  // Daily delivery for the PDF's trend charts (Reach Build Up, Day-Wise Reach
-  // & Impressions, Spend vs Impressions, Planned vs Spends) — real, same
-  // per-day source the live Daily Trends section uses. Meta carries reach;
-  // DV360's daily breakdown does not (honest — never summed/estimated here).
-  const metaDailyAgg = useMetaBreakdown("daily", "custom" as DateRange, wideWindow.start, wideWindow.end, hasMeta);
-  const dvDailyAgg = useDV360Breakdown("daily", "custom" as DateRange, wideWindow.start, wideWindow.end, hasDv);
-  // DV360 per-creative rows (real — same source as Creative Analysis) for the
-  // PDF's Creative Performance table.
-  const { creatives: dv360CreativeRows } = useDV360Creatives("custom" as DateRange, wideWindow.start, wideWindow.end, hasDv);
+  const metaAge = useMetaBreakdown("age", dateRange, pickerCustomStart, pickerCustomEnd, hasMeta);
+  const metaGender = useMetaBreakdown("gender", dateRange, pickerCustomStart, pickerCustomEnd, hasMeta);
+  const dvAge = useDV360Breakdown("age", dateRange, pickerCustomStart, pickerCustomEnd, hasDv);
+  const dvGender = useDV360Breakdown("gender", dateRange, pickerCustomStart, pickerCustomEnd, hasDv);
+  // Daily delivery for the PDF's trend charts.
+  const metaDailyAgg = useMetaBreakdown("daily", dateRange, pickerCustomStart, pickerCustomEnd, hasMeta);
+  const dvDailyAgg = useDV360Breakdown("daily", dateRange, pickerCustomStart, pickerCustomEnd, hasDv);
+  // DV360 per-creative rows for the PDF's Creative Performance table.
+  const { creatives: dv360CreativeRows } = useDV360Creatives(dateRange, pickerCustomStart, pickerCustomEnd, hasDv);
 
   // ── Everything else saved on the Dashboard tab, read read-only so the PDF
   // can include ALL saved plans in one place: the hero KPI targets (top of
@@ -2508,10 +2534,10 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
   // Audience data (ad-set / line-item level). Meta ad sets are also needed
   // for the hierarchical Objective/Creative drill-down picker (to join ads → campaigns
   // via adSetId), so fetch them unconditionally.
-  const metaAdSets = useMetaAdSets("custom" as DateRange, wideWindow.start, wideWindow.end, hasMeta);
+  const metaAdSets = useMetaAdSets(dateRange, pickerCustomStart, pickerCustomEnd, hasMeta);
   // Fetch DV360 line items always (not gated to the Audience tab) so the
   // Audience hier tree has data ready the moment the user switches to it.
-  const dv360LineItems = useDV360LineItems("custom" as DateRange, wideWindow.start, wideWindow.end, hasDv);
+  const dv360LineItems = useDV360LineItems(dateRange, pickerCustomStart, pickerCustomEnd, hasDv);
   // Audience hier state — same shape as Channel/Objective/Creative pickers.
   // metaAudFilter/dv360AudFilter kept as derived string for the audience
   // detail table below (accepts a comma-joined dim list or "all").
@@ -2523,7 +2549,7 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
   // Saved audiences from the account — used for the audience dropdown.
   const { audiences: savedAudiences, audienceMap, adsets: insightAdSets } = useAdSetInsights(
     hasMeta ? "meta" : "dv360",
-    "custom" as DateRange, wideWindow.start, wideWindow.end
+    dateRange, pickerCustomStart, pickerCustomEnd,
   );
 
   // Build a map: saved audience name → set of ad set IDs + names that target it
@@ -2623,7 +2649,7 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
     setMetaAdInsightsError(null);
     fetch("/api/reporting/ad-insights/meta", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ accessToken: token, businessId: biz, startDate: wideWindow.start, endDate: wideWindow.end, limit: 200 }),
+      body: JSON.stringify({ accessToken: token, businessId: biz, startDate: pickerStartDate, endDate: pickerEndDate, limit: 200 }),
     })
       .then((r) => r.json())
       .then((d) => {
@@ -2653,7 +2679,7 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
       .finally(() => { if (!cancelled) setMetaFormatLoading(false); });
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasMeta, demoMode, metaAccessToken, metaBusinessId, wideWindow.start, wideWindow.end]);
+  }, [hasMeta, demoMode, metaAccessToken, metaBusinessId, pickerStartDate, pickerEndDate]);
 
   // Union of every ad-set we know about: from the ad-sets fetch AND from each
   // campaign's own .adSets list (the campaigns API returns them nested). The
