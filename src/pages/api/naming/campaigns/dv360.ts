@@ -579,7 +579,12 @@ export default async function handler(
       if (unresolvedIds.length > 0) {
         console.log(`[campaigns/dv360] targeted creative lookup for ${unresolvedIds.length} unresolved IDs`);
         try {
-          const fetched = await client.getCreativesByIds(unresolvedIds);
+          // Hard cap so a slow/throttled DV360 response can't block the whole
+          // request — creatives already have a "Creative {id}" fallback name,
+          // so timing out here just means slightly less-friendly labels, not
+          // missing data. getCreativesByIds itself now parallelizes its
+          // internal chunks (was fully sequential), so this should rarely hit.
+          const fetched = await withCap(client.getCreativesByIds(unresolvedIds), 45_000, [] as Awaited<ReturnType<typeof client.getCreativesByIds>>, "getCreativesByIds");
           for (const cr of fetched) {
             creativeNameById.set(String(cr.creativeId), cr.displayName);
             if (cr.creativeType) creativeTypeById.set(String(cr.creativeId), cr.creativeType);

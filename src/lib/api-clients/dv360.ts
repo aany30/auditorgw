@@ -447,25 +447,43 @@ export class DV360ApiClient {
   /**
    * Fetch a specific set of creatives by their IDs — much faster than listing
    * all creatives because the filter hits only what the BM report delivered.
-   * Batches in groups of 20 to stay within URL length limits.
+   * Batches in groups of 20 to stay within URL length limits, fired with a
+   * concurrency cap (not sequential — a large advertiser with 600+ unresolved
+   * creative IDs used to run ~34 chunks one-after-another, each up to the
+   * 20s per-request timeout, so a bad run could take 10+ minutes just here).
    */
   async getCreativesByIds(ids: string[]): Promise<Array<{ creativeId: string; displayName: string; creativeType?: string }>> {
-    if (ids.length === 0) return [];
+    // DV360's creativeId is always numeric — Bid Manager reports sometimes
+    // emit the literal string "Unknown" for a row it couldn't resolve, which
+    // the entity API's AIP-160 filter (creativeId=Unknown, unquoted numeric)
+    // rejects with a 400 and fails the WHOLE batch it's in. Filter those out
+    // up front so one bad id can't poison a chunk of 19 good ones.
+    const cleanIds = ids.filter((id) => /^\d+$/.test(id));
+    if (cleanIds.length === 0) return [];
+
     const BATCH = 20;
+    const CONCURRENCY = 5;
+    const chunks: string[][] = [];
+    for (let i = 0; i < cleanIds.length; i += BATCH) chunks.push(cleanIds.slice(i, i + BATCH));
+
     const results: Array<{ creativeId: string; displayName: string; creativeType?: string }> = [];
-    for (let i = 0; i < ids.length; i += BATCH) {
-      const chunk = ids.slice(i, i + BATCH);
-      // DV360 AIP-160: numeric fields use unquoted values (creativeId=123 not "123")
-      const filter = chunk.map((id) => `creativeId=${id}`).join(" OR ");
-      try {
-        const batch = await this.listAll<{ creativeId: string; displayName: string; creativeType?: string }>(
-          `advertisers/${this.creds.advertiserId}/creatives`,
-          "creatives",
-          { filter }
-        );
-        results.push(...batch);
-      } catch (e) {
-        console.warn(`[Creatives] getCreativesByIds chunk ${i}–${i + BATCH} failed:`, e instanceof Error ? e.message : e);
+    for (let i = 0; i < chunks.length; i += CONCURRENCY) {
+      const batchOfChunks = chunks.slice(i, i + CONCURRENCY);
+      const settled = await Promise.allSettled(
+        batchOfChunks.map((chunk) => {
+          // DV360 AIP-160: numeric fields use unquoted values (creativeId=123 not "123")
+          const filter = chunk.map((id) => `creativeId=${id}`).join(" OR ");
+          return this.listAll<{ creativeId: string; displayName: string; creativeType?: string }>(
+            `advertisers/${this.creds.advertiserId}/creatives`,
+            "creatives",
+            { filter }
+          );
+        }),
+      );
+      for (let j = 0; j < settled.length; j++) {
+        const r = settled[j];
+        if (r.status === "fulfilled") results.push(...r.value);
+        else console.warn(`[Creatives] getCreativesByIds chunk group ${i + j} failed:`, r.reason instanceof Error ? r.reason.message : r.reason);
       }
     }
     return results;
