@@ -125,10 +125,10 @@ export function useCampaigns(
     if (reloadTick > 0 && fetchInFlight.current) return;
     const fetchCampaigns = async () => {
       fetchInFlight.current = true;
-      // If we already have stale data from localStorage, don't flash a spinner.
-      // On re-poll ticks keep the (named) campaigns on screen — only the delivery
-      // numbers are still filling in — rather than flashing a spinner each poll.
-      setLoading(reloadTick === 0 && !swrSeeded.current);
+      // First tick without SWR cache → show spinner. Re-poll ticks and SWR-seeded
+      // renders leave loading unchanged (stays true while DV360 is pending, avoids
+      // a flash between polls).
+      if (reloadTick === 0 && !swrSeeded.current) setLoading(true);
       setError(null);
       setPlatformErrors({});
       const errs: { meta?: string; dv360?: string } = {};
@@ -195,7 +195,6 @@ export function useCampaigns(
           // Keep legacy `error` populated for existing consumers.
           const first = errs.meta || errs.dv360;
           if (first) setError(first);
-          setLoading(false);
           // Cache each platform's detected currency (sticky) so a later
           // rate-limited fetch that drops a platform still renders the right
           // symbol. Done here (not in a separate effect) to keep hook count fixed.
@@ -209,18 +208,22 @@ export function useCampaigns(
           // are often still generating on the first call — and unique reach lives in
           // a SEPARATE, slower REACH report. Keep asking until both the delivery
           // metrics AND reach have landed (or the poll budget runs out).
+          let willRepoll = false;
           if (!errs.dv360 && (platform === "dv360" || platform === "both") && !demoMode) {
             const dv = all.filter((c) => c.platform === "dv360");
             const dvDelivered = dv.reduce((s, c) => s + (c.spend || 0) + (c.impressions || 0), 0);
             const dvReach = dv.reduce((s, c) => s + (c.reach || 0), 0);
             const pending = dv.length > 0 && (dvDelivered === 0 || dvReach === 0);
             if (pending && dvRetries.current < MAX_DV360_RETRIES) {
+              willRepoll = true;
               dvRetries.current += 1;
-              // 3s gap between re-polls — the BM report itself has a 40s poll
-              // window, so the total budget is ~8 × (40+3) ≈ 5.5 min.
               retryTimer = setTimeout(() => { if (!cancelled) setReloadTick((t) => t + 1); }, 3000);
             }
           }
+          // Keep loading=true while DV360 delivery/reach data is still
+          // pending and re-polls will fire — the UI shows a loading state
+          // until all platforms have full data instead of flashing "—".
+          setLoading(willRepoll);
         }
       }
     };
