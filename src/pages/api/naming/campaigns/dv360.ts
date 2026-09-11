@@ -129,6 +129,66 @@ function indexReportRows(rows: Array<Record<string, string | number>>): Map<stri
   return byLi;
 }
 
+type BmRow = Record<string, string | number>;
+
+function resolveCol(row: BmRow, re: RegExp): string | undefined {
+  return Object.keys(row).find((k) => re.test(k));
+}
+
+function buildHierarchyFromBM(rows: BmRow[]): {
+  campaigns: import("@/lib/api-clients/dv360").DV360Campaign[];
+  insertionOrders: import("@/lib/api-clients/dv360").DV360InsertionOrder[];
+  lineItems: import("@/lib/api-clients/dv360").DV360LineItem[];
+} {
+  if (rows.length === 0) return { campaigns: [], insertionOrders: [], lineItems: [] };
+  const sample = rows[0];
+  console.log(`[campaigns/dv360] buildHierarchyFromBM: sample keys = ${JSON.stringify(Object.keys(sample))}`);
+  const campIdKey = resolveCol(sample, /(campaign|media.?plan).*id/i);
+  const campNameKey = resolveCol(sample, /^(campaign|media.?plan)$/i) ?? resolveCol(sample, /(campaign|media.?plan)(?!.*id)/i);
+  const ioIdKey = resolveCol(sample, /insertion.?order.*id/i);
+  const ioNameKey = resolveCol(sample, /^insertion.?order$/i) ?? resolveCol(sample, /insertion.?order(?!.*id)/i);
+  const liIdKey = resolveCol(sample, /line.?item.*id/i);
+  const liNameKey = resolveCol(sample, /^line.?item$/i) ?? resolveCol(sample, /line.?item(?!.*id)/i);
+  console.log(`[campaigns/dv360] buildHierarchyFromBM: resolved keys = campId=${campIdKey}, campName=${campNameKey}, ioId=${ioIdKey}, ioName=${ioNameKey}, liId=${liIdKey}, liName=${liNameKey}`);
+
+  const campMap = new Map<string, { id: string; name: string }>();
+  const ioMap = new Map<string, { id: string; campaignId: string; name: string }>();
+  const liMap = new Map<string, { id: string; ioId: string; campaignId: string; name: string }>();
+
+  for (const row of rows) {
+    const campId = campIdKey ? String(row[campIdKey] ?? "") : "";
+    const campName = campNameKey ? String(row[campNameKey] ?? "") : "";
+    const ioId = ioIdKey ? String(row[ioIdKey] ?? "") : "";
+    const ioName = ioNameKey ? String(row[ioNameKey] ?? "") : "";
+    const liId = liIdKey ? String(row[liIdKey] ?? "") : "";
+    const liName = liNameKey ? String(row[liNameKey] ?? "") : "";
+    if (campId && campId !== "0") campMap.set(campId, { id: campId, name: campName || `Campaign ${campId}` });
+    if (ioId && ioId !== "0") ioMap.set(ioId, { id: ioId, campaignId: campId, name: ioName || `IO ${ioId}` });
+    if (liId && liId !== "0") liMap.set(liId, { id: liId, ioId, campaignId: campId, name: liName || `Line Item ${liId}` });
+  }
+
+  return {
+    campaigns: Array.from(campMap.values()).map((c) => ({
+      campaignId: c.id,
+      displayName: c.name,
+      entityStatus: "ENTITY_STATUS_ACTIVE",
+    })),
+    insertionOrders: Array.from(ioMap.values()).map((io) => ({
+      insertionOrderId: io.id,
+      campaignId: io.campaignId,
+      displayName: io.name,
+      entityStatus: "ENTITY_STATUS_ACTIVE",
+    })),
+    lineItems: Array.from(liMap.values()).map((li) => ({
+      lineItemId: li.id,
+      insertionOrderId: li.ioId,
+      campaignId: li.campaignId,
+      displayName: li.name,
+      entityStatus: "ENTITY_STATUS_ACTIVE",
+    })),
+  };
+}
+
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse<CampaignData[] | { error: string }>
@@ -163,11 +223,14 @@ export default async function handler(
     // calls are only made once per warm server instance — subsequent requests
     // in the same window skip the ~3-8s entity round-trip entirely.
     const t0 = Date.now();
-    const withCap = <T,>(p: Promise<T>, ms: number, fallback: T, label: string): Promise<T> =>
-      Promise.race([
-        p.catch((e) => { console.warn(`[campaigns/dv360] ${label} failed:`, e instanceof Error ? e.message : e); return fallback; }),
-        new Promise<T>((res) => setTimeout(() => { console.warn(`[campaigns/dv360] ${label} timed out (${ms}ms) — using fallback`); res(fallback); }, ms)),
+    const withCap = <T,>(p: Promise<T>, ms: number, fallback: T, label: string): Promise<T> => {
+      let settled = false;
+      return Promise.race([
+        p.then((v) => { settled = true; return v; })
+         .catch((e) => { settled = true; console.warn(`[campaigns/dv360] ${label} failed:`, e instanceof Error ? e.message : e); return fallback; }),
+        new Promise<T>((res) => setTimeout(() => { if (!settled) { console.warn(`[campaigns/dv360] ${label} timed out (${ms}ms) — using fallback`); res(fallback); } }, ms)),
       ]);
+    };
 
     const cachedEntities = entityCache.get(advertiserId);
     const cachedCreativeEntities = creativeEntityCache.get(advertiserId);
@@ -206,8 +269,9 @@ export default async function handler(
         withCap(client.listAdGroups(), 20_000, [], "listAdGroups"),
         withCap(client.listAdGroupAds(), 20_000, [], "listAdGroupAds"),
       ]);
-      // Only cache when we got real entity data (don't cache empty fallbacks).
-      if (campaigns.length > 0 || lineItems.length > 0) {
+      // Only cache when we got a usable complete hierarchy (don't cache partial
+      // results where entity API timed out for IOs/LIs but campaigns succeeded).
+      if (campaigns.length > 0 && insertionOrders.length > 0 && lineItems.length > 0) {
         entityCache.set(advertiserId, { advertiser, campaigns, insertionOrders, lineItems, adGroups, adGroupAds });
       }
       console.log(`[campaigns/dv360] entities fetched in ${Date.now() - t0}ms · LIs=${lineItems.length}`);
@@ -400,39 +464,46 @@ export default async function handler(
     const liReachPromise = reachReport(["FILTER_LINE_ITEM"], "reach-li");
 
     let liMetrics = new Map<string, LiMetricRow>();
+    let bmRawRows: BmRow[] = [];
     if (startDate && endDate) {
-      const fetchWithMetrics = async (metrics: string[]): Promise<Map<string, LiMetricRow>> => {
+      const fetchWithMetrics = async (metrics: string[]): Promise<{ metrics: Map<string, LiMetricRow>; rawRows: BmRow[] }> => {
         const cacheKey = reportCacheKey({ advertiserId, startDate, endDate, dims: LI_DIMENSIONS, metrics });
         const cached = reportCache.get(cacheKey);
-        if (cached) return indexReportRows(cached);
+        if (cached) { console.log(`[campaigns/dv360] delivery report CACHE HIT · rows=${cached.length}`); return { metrics: indexReportRows(cached), rawRows: cached }; }
 
         let result: BMResult;
         const pendingIds = queryIdCache.get(cacheKey);
+        const t1 = Date.now();
         if (pendingIds) {
+          console.log(`[campaigns/dv360] delivery report RESUMING · queryId=${pendingIds.queryId}`);
           result = await client.resumeReport(pendingIds.queryId, pendingIds.reportId, 40_000);
         } else {
+          console.log(`[campaigns/dv360] delivery report CREATING NEW`);
           result = await client.runBidManagerReport(
             { dimensions: LI_DIMENSIONS, metrics, startDate, endDate },
             40_000
           );
         }
+        console.log(`[campaigns/dv360] delivery report ${result.status} in ${Date.now() - t1}ms · rows=${result.status === "done" ? result.rows.length : 0}`);
         if (result.status === "done") {
           reportCache.set(cacheKey, result.rows);
-          return indexReportRows(result.rows);
+          return { metrics: indexReportRows(result.rows), rawRows: result.rows };
         }
-        // Report still running — remember ids so the next request resumes it,
-        // and return the hierarchy with zeroed metrics rather than blocking.
         queryIdCache.set(cacheKey, { queryId: result.queryId, reportId: result.reportId });
-        return new Map<string, LiMetricRow>();
+        return { metrics: new Map<string, LiMetricRow>(), rawRows: [] };
       };
 
       try {
-        liMetrics = await fetchWithMetrics(RICH_METRICS);
+        const res = await fetchWithMetrics(RICH_METRICS);
+        liMetrics = res.metrics;
+        bmRawRows = res.rawRows;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         if (isMetricComboError(msg)) {
           console.warn("DV360 rich metrics rejected, retrying with core set:", msg.slice(0, 200));
-          liMetrics = await fetchWithMetrics(CORE_METRICS);
+          const res = await fetchWithMetrics(CORE_METRICS);
+          liMetrics = res.metrics;
+          bmRawRows = res.rawRows;
         } else {
           throw err;
         }
@@ -603,6 +674,28 @@ export default async function handler(
       }
     }
 
+    // 2d. BM-fallback hierarchy: when entity API timed out (IOs=0, LIs=0)
+    // but BM delivery data exists, build the entity hierarchy directly from
+    // BM report rows which contain Campaign/IO/LI IDs and names.
+    console.log(`[campaigns/dv360] PRE-FALLBACK: campaigns=${campaigns.length}, IOs=${insertionOrders.length}, LIs=${lineItems.length}, bmRawRows=${bmRawRows.length}, liMetrics=${liMetrics.size}`);
+    if (insertionOrders.length === 0 && lineItems.length === 0 && bmRawRows.length > 0) {
+      const synth = buildHierarchyFromBM(bmRawRows);
+      insertionOrders = synth.insertionOrders;
+      lineItems = synth.lineItems;
+      if (campaigns.length === 0) campaigns = synth.campaigns;
+      console.log(`[campaigns/dv360] BM FALLBACK: ${synth.campaigns.length} campaigns, ${synth.insertionOrders.length} IOs, ${synth.lineItems.length} LIs`);
+      // Log which entity-API objectives the BM campaigns map to
+      const bmCampIds = new Set(synth.campaigns.map((c) => c.campaignId));
+      const objCount = new Map<string, number>();
+      for (const c of campaigns) {
+        if (bmCampIds.has(String(c.campaignId))) {
+          const obj = c.campaignGoal?.campaignGoalType || "UNKNOWN";
+          objCount.set(obj, (objCount.get(obj) ?? 0) + 1);
+        }
+      }
+      console.log(`[campaigns/dv360] BM FALLBACK objectives: ${JSON.stringify(Object.fromEntries(objCount))}`);
+    }
+
     // 3. Assemble Campaign → IO → LI → Ad Group → Ad Group Ad with rollups.
 
     // 3a. Ad Group Ads → keyed by adGroupId
@@ -715,6 +808,15 @@ export default async function handler(
       if (ioBudget > 0) {
         budgetByCampaign.set(String(io.campaignId), (budgetByCampaign.get(String(io.campaignId)) ?? 0) + ioBudget);
       }
+    }
+
+    // Summary logging for diagnostics
+    {
+      let totalSpend = 0, totalImpr = 0, totalReach = 0;
+      for (const [, m] of liMetrics) { totalSpend += m.spend; totalImpr += m.impressions; }
+      for (const [, r] of reachByCampaign) totalReach += r.reach;
+      const atCount = allTimeByCampaign.size;
+      console.log(`[campaigns/dv360] SUMMARY · campaigns=${campaigns.length} · liMetrics=${liMetrics.size} entries (spend=${Math.round(totalSpend)}, impr=${totalImpr}) · reach=${totalReach} · allTime=${atCount} · reachPending=${reachPending} · strictWindow=${!!strictWindow} · elapsed=${Date.now() - t0}ms`);
     }
 
     const out: CampaignData[] = campaigns.map((c) => {

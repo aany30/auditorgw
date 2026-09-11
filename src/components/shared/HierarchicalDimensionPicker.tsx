@@ -10,13 +10,13 @@
  * `HierNodeSelection[]` roll-up rule declared in types/planning.ts.
  */
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useRef, startTransition, useEffect, useCallback } from "react";
 import { Plus, X, Search, Check, ChevronRight, ChevronDown } from "lucide-react";
 import type { HierNodeSelection } from "@/types/planning";
 
 export interface HierTreeAd { id: string; name: string }
 export interface HierTreeAdSet { id: string; name: string; ads: HierTreeAd[] }
-export interface HierTreeCampaign { id: string; name: string; adSets: HierTreeAdSet[] }
+export interface HierTreeCampaign { id: string; name: string; status?: string; adSets: HierTreeAdSet[] }
 export interface HierTreeNode { dimensionValue: string; campaigns: HierTreeCampaign[] }
 
 // Human-friendly summary of the current selection for the trigger button.
@@ -218,23 +218,64 @@ export default function HierarchicalDimensionPicker({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Close on click outside — more reliable than a fixed overlay div
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler, true);
+    return () => document.removeEventListener("mousedown", handler, true);
+  }, [open]);
+
+  // Close on Escape
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [open]);
+
+  // Optimistic local selection — updates instantly on click while the heavy
+  // parent re-render (useMemos over 1000+ campaigns) runs in a transition.
+  const [localSel, setLocalSel] = useState(selection);
+  const parentRef = useRef(selection);
+  useEffect(() => { parentRef.current = selection; setLocalSel(selection); }, [selection]);
+  const effectiveSel = localSel;
+  const fireChange = (next: HierNodeSelection[]) => {
+    setLocalSel(next);
+    startTransition(() => onChange(next));
+  };
+
+  const isActive = (s?: string) => !!s && /active/i.test(s);
+  const sortCampaigns = (camps: HierTreeCampaign[]) =>
+    [...camps].sort((a, b) => {
+      const aa = isActive(a.status) ? 0 : 1;
+      const ba = isActive(b.status) ? 0 : 1;
+      return aa - ba || a.name.localeCompare(b.name);
+    });
 
   const filteredTree = useMemo(() => {
-    if (!query.trim()) return tree;
+    const sortNode = (node: HierTreeNode): HierTreeNode => ({ ...node, campaigns: sortCampaigns(node.campaigns) });
+    if (!query.trim()) return tree.map(sortNode);
     const q = query.toLowerCase();
     return tree
       .map((node) => {
-        if (node.dimensionValue.toLowerCase().includes(q)) return node;
+        if (node.dimensionValue.toLowerCase().includes(q)) return sortNode(node);
         const campaigns = node.campaigns.filter((c) =>
           c.name.toLowerCase().includes(q) ||
           c.adSets.some((as) => as.name.toLowerCase().includes(q) || as.ads.some((a) => a.name.toLowerCase().includes(q)))
         );
-        return campaigns.length > 0 ? { ...node, campaigns } : null;
+        return campaigns.length > 0 ? sortNode({ ...node, campaigns }) : null;
       })
       .filter((n): n is HierTreeNode => n !== null);
   }, [tree, query]);
 
-  const label = summarize(selection, allLabelText);
+  const label = summarize(effectiveSel, allLabelText);
 
   const toggle = (id: string) => {
     setExpanded((prev) => {
@@ -245,7 +286,7 @@ export default function HierarchicalDimensionPicker({
   };
 
   return (
-    <div className="relative inline-flex items-center gap-2">
+    <div ref={containerRef} className="relative inline-flex items-center gap-2">
       <span className="text-xs italic text-gray-500">{label}</span>
       <button
         onClick={() => setOpen((v) => !v)}
@@ -253,9 +294,9 @@ export default function HierarchicalDimensionPicker({
       >
         <Plus className="w-3 h-3" /> Add
       </button>
-      {selection.length > 0 && (
+      {effectiveSel.length > 0 && (
         <button
-          onClick={() => onChange([])}
+          onClick={() => fireChange([])}
           className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] text-gray-500 hover:text-gray-700"
           title="Clear"
         >
@@ -264,8 +305,7 @@ export default function HierarchicalDimensionPicker({
       )}
       {open && (
         <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-full mt-1.5 z-50 w-[460px] max-w-[92vw] bg-white text-gray-800 rounded-xl shadow-xl border border-gray-200 overflow-hidden">
+          <div className="absolute right-0 top-full mt-1.5 z-50 w-[460px] max-w-[92vw] bg-white text-gray-800 rounded-xl shadow-xl border border-gray-200 overflow-hidden" style={{ maxWidth: "min(460px, calc(100vw - 32px))" }}>
             <div className="p-2 border-b border-gray-100">
               <div className="relative">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
@@ -303,19 +343,20 @@ export default function HierarchicalDimensionPicker({
               ) : filteredTree.map((node) => {
                 const dimKey = `dim:${node.dimensionValue}`;
                 const dimOpen = expanded.has(dimKey);
-                const dimChecked = isDimSelected(selection, node.dimensionValue);
-                const dimIndet = isDimIndeterminate(selection, node.dimensionValue);
+                const dimChecked = isDimSelected(effectiveSel, node.dimensionValue);
+                const dimIndet = isDimIndeterminate(effectiveSel, node.dimensionValue);
                 return (
                   <div key={node.dimensionValue} className="border-b border-gray-50 last:border-0">
                     <div className="flex items-center gap-1 px-2 py-1.5 hover:bg-blue-50">
-                      <button onClick={() => toggle(dimKey)} className="p-0.5 text-gray-400 hover:text-gray-700" aria-label={dimOpen ? "Collapse" : "Expand"}>
+                      <button onClick={() => toggle(dimKey)} className="p-1 -m-0.5 text-gray-400 hover:text-gray-700" aria-label={dimOpen ? "Collapse" : "Expand"}>
                         {dimOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
                       </button>
                       <button
-                        onClick={() => onChange(toggleDim(selection, node.dimensionValue))}
+                        onClick={() => fireChange(toggleDim(effectiveSel, node.dimensionValue))}
                         className="flex-1 text-left text-xs font-semibold flex items-center gap-2 py-0.5"
                       >
                         <CheckBox state={dimChecked ? "checked" : dimIndet ? "indeterminate" : "unchecked"} />
+                        {node.campaigns.length === 1 && isActive(node.campaigns[0].status) && <span className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" title="Active" />}
                         <span className="text-gray-800">{node.dimensionValue}</span>
                         <span className="text-[10px] text-gray-400 ml-auto">{node.campaigns.length} camp.</span>
                       </button>
@@ -323,19 +364,20 @@ export default function HierarchicalDimensionPicker({
                     {dimOpen && node.campaigns.map((c) => {
                       const campKey = `camp:${node.dimensionValue}:${c.id}`;
                       const campOpen = expanded.has(campKey);
-                      const cChecked = isCampaignSelected(selection, node.dimensionValue, c.id);
-                      const cIndet = isCampaignIndeterminate(selection, node.dimensionValue, c.id);
+                      const cChecked = isCampaignSelected(effectiveSel, node.dimensionValue, c.id);
+                      const cIndet = isCampaignIndeterminate(effectiveSel, node.dimensionValue, c.id);
                       return (
                         <div key={c.id}>
                           <div className="flex items-center gap-1 pl-6 pr-2 py-1 hover:bg-blue-50/50">
-                            <button onClick={() => toggle(campKey)} className="p-0.5 text-gray-400 hover:text-gray-700" aria-label={campOpen ? "Collapse" : "Expand"}>
+                            <button onClick={() => toggle(campKey)} className="p-1 -m-0.5 text-gray-400 hover:text-gray-700" aria-label={campOpen ? "Collapse" : "Expand"}>
                               {campOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
                             </button>
                             <button
-                              onClick={() => onChange(toggleCampaign(selection, node, c.id))}
+                              onClick={() => fireChange(toggleCampaign(effectiveSel, node, c.id))}
                               className="flex-1 text-left text-[11px] flex items-center gap-2 py-0.5 min-w-0"
                             >
                               <CheckBox state={cChecked ? "checked" : cIndet ? "indeterminate" : "unchecked"} />
+                              {isActive(c.status) && <span className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" title="Active" />}
                               <span className="truncate text-gray-700" title={c.name}>{c.name}</span>
                               <span className="text-[10px] text-gray-400 ml-auto shrink-0">{c.adSets.length}</span>
                             </button>
@@ -343,16 +385,16 @@ export default function HierarchicalDimensionPicker({
                           {campOpen && c.adSets.map((as) => {
                             const asKey = `as:${node.dimensionValue}:${c.id}:${as.id}`;
                             const asOpen = expanded.has(asKey);
-                            const aChecked = isAdSetSelected(selection, node.dimensionValue, c.id, as.id);
-                            const aIndet = isAdSetIndeterminate(selection, node.dimensionValue, c.id, as.id);
+                            const aChecked = isAdSetSelected(effectiveSel, node.dimensionValue, c.id, as.id);
+                            const aIndet = isAdSetIndeterminate(effectiveSel, node.dimensionValue, c.id, as.id);
                             return (
                               <div key={as.id}>
                                 <div className="flex items-center gap-1 pl-11 pr-2 py-1 hover:bg-blue-50/50">
-                                  <button onClick={() => toggle(asKey)} className="p-0.5 text-gray-400 hover:text-gray-700" aria-label={asOpen ? "Collapse" : "Expand"}>
+                                  <button onClick={() => toggle(asKey)} className="p-1 -m-0.5 text-gray-400 hover:text-gray-700" aria-label={asOpen ? "Collapse" : "Expand"}>
                                     {asOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
                                   </button>
                                   <button
-                                    onClick={() => onChange(toggleAdSet(selection, node, c.id, as.id))}
+                                    onClick={() => fireChange(toggleAdSet(effectiveSel, node, c.id, as.id))}
                                     className="flex-1 text-left text-[11px] flex items-center gap-2 py-0.5 min-w-0"
                                   >
                                     <CheckBox state={aChecked ? "checked" : aIndet ? "indeterminate" : "unchecked"} />
@@ -361,11 +403,11 @@ export default function HierarchicalDimensionPicker({
                                   </button>
                                 </div>
                                 {asOpen && as.ads.map((ad) => {
-                                  const adChecked = isAdSelected(selection, node.dimensionValue, c.id, as.id, ad.id);
+                                  const adChecked = isAdSelected(effectiveSel, node.dimensionValue, c.id, as.id, ad.id);
                                   return (
                                     <button
                                       key={ad.id}
-                                      onClick={() => onChange(toggleAd(selection, node, c.id, as.id, ad.id))}
+                                      onClick={() => fireChange(toggleAd(effectiveSel, node, c.id, as.id, ad.id))}
                                       className="w-full pl-16 pr-2 py-1 text-left text-[11px] flex items-center gap-2 hover:bg-blue-50/60"
                                     >
                                       <CheckBox state={adChecked ? "checked" : "unchecked"} />
@@ -385,12 +427,12 @@ export default function HierarchicalDimensionPicker({
             </div>
             <div className="px-3 py-2 border-t border-gray-100 flex items-center justify-between text-xs">
               <button
-                onClick={() => onChange(tree.map((n) => ({ dimensionValue: n.dimensionValue })))}
+                onClick={() => fireChange(tree.map((n) => ({ dimensionValue: n.dimensionValue })))}
                 className="font-semibold text-blue-600 hover:underline"
               >
                 Select all
               </button>
-              <button onClick={() => onChange([])} className="font-semibold text-gray-500 hover:text-gray-700">Clear</button>
+              <button onClick={() => fireChange([])} className="font-semibold text-gray-500 hover:text-gray-700">Clear</button>
             </div>
           </div>
         </>

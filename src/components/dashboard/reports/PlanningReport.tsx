@@ -2869,7 +2869,7 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
       return {
         dimensionValue: audName,
         campaigns: [...byCampaign.entries()].map(([id, c]) => ({
-          id, name: c.name,
+          id, name: c.name, status: metaCampaigns.find((mc) => mc.id === id)?.status,
           adSets: c.adSets.map((as) => ({
             id: as.id, name: as.name,
             ads: metaAdRowsFull.filter((ad) => ad.adSetId === as.id).map((ad) => ({ id: ad.id, name: ad.name })),
@@ -2897,7 +2897,7 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
       return {
         dimensionValue: audType,
         campaigns: [...byCampaign.entries()].map(([id, c]) => ({
-          id, name: c.name,
+          id, name: c.name, status: dv360Campaigns.find((dc) => dc.id === id)?.status,
           adSets: [...c.ios.entries()].map(([ioId, io]) => ({ id: ioId, name: io.name, ads: io.lis })),
         })),
       };
@@ -3000,9 +3000,10 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
     // LI ids per node, then sum).
     const out: AggTable[] = [];
     if (hasMeta) {
-      // Union of ad-set ids matching the hier selection (any narrowing honored).
+      // Union of ad-set ids + campaign ids matching the hier selection.
       const matchedAdSetIds = new Set<string>();
       const matchedAdIds = new Set<string>();
+      const matchedCampIds = new Set<string>();
       let anyAdNarrowed = false;
       if (metaAudienceHier.length === 0) {
         for (const as of metaAdSets.rows) matchedAdSetIds.add(as.id);
@@ -3012,6 +3013,7 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
           if (!treeNode) continue;
           for (const c of treeNode.campaigns) {
             if (node.campaignIds && !node.campaignIds.includes(c.id)) continue;
+            matchedCampIds.add(c.id);
             for (const as of c.adSets) {
               if (node.adSetIds && !node.adSetIds.includes(as.id)) continue;
               matchedAdSetIds.add(as.id);
@@ -3025,16 +3027,29 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
       }
       // If narrowed to specific ads, sum ad-level delivery; else sum ad-set.
       const filteredAdSets = metaAdSets.rows.filter((r) => matchedAdSetIds.has(r.id));
-      const d = anyAdNarrowed
-        ? deriveDelivered(metaAdRowsFull.filter((ad) => matchedAdIds.has(ad.id)).reduce((a, ad) => ({
+      let d: Delivered;
+      if (anyAdNarrowed) {
+        d = deriveDelivered(metaAdRowsFull.filter((ad) => matchedAdIds.has(ad.id)).reduce((a, ad) => ({
             spend: a.spend + ad.spend, impressions: a.impressions + ad.impressions, clicks: a.clicks + ad.clicks,
             reach: a.reach + ad.reach, videoViews: a.videoViews + ad.videoViews,
-          }), { spend: 0, impressions: 0, clicks: 0, reach: 0, videoViews: 0 }))
-        : filteredAdSets.length > 0
-          ? deriveDelivered(filteredAdSets.reduce((a, r) => ({ spend: a.spend + r.spend, impressions: a.impressions + r.impressions, clicks: a.clicks + r.clicks, reach: a.reach + r.reach, videoViews: a.videoViews + r.videoViews }), { spend: 0, impressions: 0, clicks: 0, reach: 0, videoViews: 0 }))
-          : metaAudienceHier.length === 0
-            ? deliveredOfGroup(metaCampaigns, strictWindow)
-            : deriveDelivered({ spend: 0, impressions: 0, clicks: 0, reach: 0, videoViews: 0 });
+          }), { spend: 0, impressions: 0, clicks: 0, reach: 0, videoViews: 0 }));
+      } else if (filteredAdSets.length > 0) {
+        const asAgg = filteredAdSets.reduce((a, r) => ({ spend: a.spend + r.spend, impressions: a.impressions + r.impressions, clicks: a.clicks + r.clicks, reach: a.reach + r.reach, videoViews: a.videoViews + r.videoViews }), { spend: 0, impressions: 0, clicks: 0, reach: 0, videoViews: 0 });
+        // When ad-set insights failed (all metrics zero), fall back to
+        // campaign-level delivery for the matched campaigns — real data.
+        if (asAgg.spend === 0 && asAgg.impressions === 0) {
+          const campList = metaAudienceHier.length === 0
+            ? metaCampaigns
+            : metaCampaigns.filter((c) => matchedCampIds.has(c.id));
+          d = deliveredOfGroup(campList, strictWindow);
+        } else {
+          d = deriveDelivered(asAgg);
+        }
+      } else {
+        d = metaAudienceHier.length === 0
+          ? deliveredOfGroup(metaCampaigns, strictWindow)
+          : deliveredOfGroup(metaCampaigns.filter((c) => matchedCampIds.has(c.id)), strictWindow);
+      }
       const subLabel = metaAdSets.loading
         ? "Loading ad sets…"
         : subLabelForHier(metaAudienceHier, `All ad sets (${filteredAdSets.length})`);
@@ -3065,11 +3080,20 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
         }
       }
       const filteredLi = dv360LineItems.rows.filter((r) => matchedLiIds.has(r.id));
-      const d = filteredLi.length > 0
-        ? deriveDelivered(filteredLi.reduce((a, r) => ({ spend: a.spend + r.spend, impressions: a.impressions + r.impressions, clicks: a.clicks + r.clicks, reach: 0, videoViews: a.videoViews + r.videoViews }), { spend: 0, impressions: 0, clicks: 0, reach: 0, videoViews: 0 }))
-        : dv360AudienceHier.length === 0
+      let d: Delivered;
+      if (filteredLi.length > 0 && dv360AudienceHier.length === 0) {
+        // "All line items" — use campaign-level delivery which has reach from
+        // the REACH report. LI-level data doesn't include reach.
+        d = deliveredOfGroup(dv360Campaigns, strictWindow);
+      } else if (filteredLi.length > 0) {
+        // Specific audience filter — sum LI metrics; reach unavailable at LI level.
+        const liAgg = filteredLi.reduce((a, r) => ({ spend: a.spend + r.spend, impressions: a.impressions + r.impressions, clicks: a.clicks + r.clicks, reach: 0, videoViews: a.videoViews + r.videoViews }), { spend: 0, impressions: 0, clicks: 0, reach: 0, videoViews: 0 });
+        d = deriveDelivered(liAgg);
+      } else {
+        d = dv360AudienceHier.length === 0
           ? deliveredOfGroup(dv360Campaigns, strictWindow)
           : deriveDelivered({ spend: 0, impressions: 0, clicks: 0, reach: 0, videoViews: 0 });
+      }
       const subLabel = dv360LineItems.loading
         ? "Loading line items…"
         : subLabelForHier(dv360AudienceHier, `All line items (${filteredLi.length})`);
@@ -3975,7 +3999,7 @@ ${deepDivePlanPagesAll}
     return [...byObj.entries()].map(([dim, camps]) => ({
       dimensionValue: dim,
       campaigns: [...camps.entries()].map(([id, c]) => ({
-        id, name: c.name,
+        id, name: c.name, status: metaCampaigns.find((mc) => mc.id === id)?.status,
         adSets: [...c.adSets.entries()].map(([asId, a]) => ({ id: asId, name: a.name, ads: a.ads })),
       })),
     })).sort((a, b) => a.dimensionValue.localeCompare(b.dimensionValue));
@@ -3999,7 +4023,7 @@ ${deepDivePlanPagesAll}
     return [...byFmt.entries()].map(([dim, camps]) => ({
       dimensionValue: dim,
       campaigns: [...camps.entries()].map(([id, c]) => ({
-        id, name: c.name,
+        id, name: c.name, status: metaCampaigns.find((mc) => mc.id === id)?.status,
         adSets: [...c.adSets.entries()].map(([asId, a]) => ({ id: asId, name: a.name, ads: a.ads })),
       })),
     })).sort((a, b) => a.dimensionValue.localeCompare(b.dimensionValue));
@@ -4020,7 +4044,7 @@ ${deepDivePlanPagesAll}
     return [...byObj.entries()].map(([dim, camps]) => ({
       dimensionValue: dim,
       campaigns: [...camps.entries()].map(([id, c]) => ({
-        id, name: c.name,
+        id, name: c.name, status: dv360Campaigns.find((dc) => dc.id === id)?.status,
         adSets: [...c.adSets.entries()].map(([asId, a]) => ({ id: asId, name: a.name, ads: a.ads })),
       })),
     })).sort((a, b) => a.dimensionValue.localeCompare(b.dimensionValue));
@@ -4050,7 +4074,7 @@ ${deepDivePlanPagesAll}
       return {
         dimensionValue: metaPubLabel(r.label),
         campaigns: filtered.map((c) => ({
-          id: c.id, name: c.name,
+          id: c.id, name: c.name, status: c.status,
           adSets: metaAdSets.rows.filter((as) => as.campaignId === c.id).map((as) => ({
             id: as.id, name: as.name,
             ads: metaAdRowsFull.filter((ad) => ad.adSetId === as.id).map((ad) => ({ id: ad.id, name: ad.name })),
@@ -4066,16 +4090,25 @@ ${deepDivePlanPagesAll}
   // campaigns directly at the top level and drill Campaign → IO → LI.
   // dimensionValue = campaign name so the picker still filters on selection.
   const dv360ChannelTree = useMemo<HierTreeNode[]>(() => {
+    const deliverySet = new Set(dv360Campaigns.filter((c) => (c.spend || 0) > 0 || (c.impressions || 0) > 0).map((c) => c.name));
     return dv360Campaigns.map((c) => ({
       dimensionValue: c.name,
       campaigns: [{
-        id: c.id, name: c.name,
+        id: c.id, name: c.name, status: c.status,
         adSets: (c.adSets ?? []).map((io) => ({
           id: io.id, name: io.name,
           ads: (io.ads ?? []).map((li) => ({ id: li.id, name: li.name })),
         })),
       }],
-    })).sort((a, b) => a.dimensionValue.localeCompare(b.dimensionValue));
+    })).sort((a, b) => {
+      // Campaigns with delivery first, then active status, then alphabetical
+      const aDel = deliverySet.has(a.dimensionValue) ? 0 : 1;
+      const bDel = deliverySet.has(b.dimensionValue) ? 0 : 1;
+      if (aDel !== bDel) return aDel - bDel;
+      const aAct = a.campaigns[0]?.status && /active/i.test(a.campaigns[0].status) ? 0 : 1;
+      const bAct = b.campaigns[0]?.status && /active/i.test(b.campaigns[0].status) ? 0 : 1;
+      return aAct - bAct || a.dimensionValue.localeCompare(b.dimensionValue);
+    });
   }, [dv360Campaigns]);
 
   // DV360 creative tree — real Bid Manager creative_type labels plus a
@@ -4088,7 +4121,7 @@ ${deepDivePlanPagesAll}
     const apiNodes: HierTreeNode[] = dvCreativeType.rows.map((r) => ({
       dimensionValue: r.label,
       campaigns: dv360Campaigns.map((c) => ({
-        id: c.id, name: c.name,
+        id: c.id, name: c.name, status: c.status,
         adSets: (c.adSets ?? []).map((io) => ({
           id: io.id, name: io.name,
           ads: (io.ads ?? []).map((li) => ({ id: li.id, name: li.name })),
@@ -4107,7 +4140,7 @@ ${deepDivePlanPagesAll}
     const nameNodes: HierTreeNode[] = [...byName.entries()].map(([label, camps]) => ({
       dimensionValue: label,
       campaigns: camps.map((c) => ({
-        id: c.id, name: c.name,
+        id: c.id, name: c.name, status: c.status,
         adSets: (c.adSets ?? []).map((io) => ({
           id: io.id, name: io.name,
           ads: (io.ads ?? []).map((li) => ({ id: li.id, name: li.name })),

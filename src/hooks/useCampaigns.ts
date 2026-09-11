@@ -88,8 +88,9 @@ export function useCampaigns(
   // metrics and resumes on the next call). Re-poll — like the breakdown hooks —
   // so the Delivered numbers fill in on their own instead of staying at zero.
   const dvRetries = useRef(0);
+  const fetchInFlight = useRef(false);
   const [reloadTick, setReloadTick] = useState(0);
-  const MAX_DV360_RETRIES = 12; // slow DV360 accounts: keep resuming the async reach/delivery reports across more cycles
+  const MAX_DV360_RETRIES = 8;
 
   const { startDate, endDate } = rangeToDates(dateRange, customStart, customEnd);
 
@@ -119,7 +120,11 @@ export function useCampaigns(
   useEffect(() => {
     let cancelled = false;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    // Prevent re-poll pileup: if a previous fetch is still in-flight (takes ~40s
+    // for BM report polling), skip this tick and let it complete first.
+    if (reloadTick > 0 && fetchInFlight.current) return;
     const fetchCampaigns = async () => {
+      fetchInFlight.current = true;
       // If we already have stale data from localStorage, don't flash a spinner.
       // On re-poll ticks keep the (named) campaigns on screen — only the delivery
       // numbers are still filling in — rather than flashing a spinner each poll.
@@ -199,11 +204,11 @@ export function useCampaigns(
           if (m) setMetaCurrency(m);
           if (d) setDv360Currency(d);
 
+          fetchInFlight.current = false;
           // DV360 re-poll: DV360 delivery comes from async Bid Manager reports that
           // are often still generating on the first call — and unique reach lives in
-          // a SEPARATE, slower REACH report. Keep asking every 5s until both the
-          // delivery metrics AND reach have landed (or the poll budget runs out).
-          // Genuine zero-delivery / no-reach accounts simply exhaust the retries.
+          // a SEPARATE, slower REACH report. Keep asking until both the delivery
+          // metrics AND reach have landed (or the poll budget runs out).
           if (!errs.dv360 && (platform === "dv360" || platform === "both") && !demoMode) {
             const dv = all.filter((c) => c.platform === "dv360");
             const dvDelivered = dv.reduce((s, c) => s + (c.spend || 0) + (c.impressions || 0), 0);
@@ -211,7 +216,9 @@ export function useCampaigns(
             const pending = dv.length > 0 && (dvDelivered === 0 || dvReach === 0);
             if (pending && dvRetries.current < MAX_DV360_RETRIES) {
               dvRetries.current += 1;
-              retryTimer = setTimeout(() => { if (!cancelled) setReloadTick((t) => t + 1); }, 5000);
+              // 3s gap between re-polls — the BM report itself has a 40s poll
+              // window, so the total budget is ~8 × (40+3) ≈ 5.5 min.
+              retryTimer = setTimeout(() => { if (!cancelled) setReloadTick((t) => t + 1); }, 3000);
             }
           }
         }
