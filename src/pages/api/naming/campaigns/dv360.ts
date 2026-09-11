@@ -23,7 +23,13 @@ import { isDemoCredential, getDemoDV360Campaigns } from "@/lib/demo-data";
 import { reportCache, queryIdCache, reportCacheKey, entityCache, creativeEntityCache } from "@/lib/report-cache";
 import type { CampaignData, AdSetData, AdData, AdGroupData, AdGroupAdData, CreativeData, DV360BidStrategy } from "@/types";
 
-export const config = { maxDuration: 60 };
+// Entity fetch and the BM delivery/reach reports now run in parallel (~40s
+// worst case) instead of sequentially (~75s), but the targeted creative-name
+// lookup still runs after that, sequentially, with its own 45s cap — so keep
+// some headroom above 60s for large accounts. Vercel plans that cap at 60s
+// (e.g. Hobby) simply clamp this back down; Pro/Enterprise honor the higher
+// value.
+export const config = { maxDuration: 90 };
 
 // FILTER_ADVERTISER_CURRENCY is REQUIRED whenever METRIC_REVENUE_ADVERTISER
 // (spend) is requested — Bid Manager 400s otherwise.
@@ -249,49 +255,52 @@ export default async function handler(
       ? Promise.resolve(cachedCreativeEntities)
       : withCap(client.listCreatives(), 35_000, [], "listCreatives");
 
-    if (cachedEntities) {
-      ({ advertiser, campaigns, insertionOrders, lineItems, adGroups, adGroupAds } =
-        cachedEntities as typeof cachedEntities & {
-          advertiser: typeof advertiser;
-          campaigns: typeof campaigns;
-          insertionOrders: typeof insertionOrders;
-          lineItems: typeof lineItems;
-          adGroups: typeof adGroups;
-          adGroupAds: typeof adGroupAds;
+    // Entity hierarchy fetch — kicked off now but deliberately NOT awaited
+    // here. It used to block before the BM delivery/reach reports further
+    // down (worst case ~35s entity + ~40s BM report, sequential = ~75s),
+    // which blew past Vercel's serverless function timeout and surfaced to
+    // the browser as a bare "HTTP 504" with campaigns missing entirely.
+    // Entities aren't actually read until the BM-fallback merge below, so
+    // both phases now run concurrently from t0 — worst case is max(~35s,
+    // ~40s) instead of their sum. `entitiesPromise` is awaited right before
+    // its first real use.
+    type EntityBundle = {
+      advertiser: typeof advertiser;
+      campaigns: typeof campaigns;
+      insertionOrders: typeof insertionOrders;
+      lineItems: typeof lineItems;
+      adGroups: typeof adGroups;
+      adGroupAds: typeof adGroupAds;
+    };
+    const entitiesPromise: Promise<EntityBundle> = cachedEntities
+      ? Promise.resolve(cachedEntities as EntityBundle).then((v) => {
+          console.log(`[campaigns/dv360] entity cache HIT (${advertiserId}) · LIs=${v.lineItems.length} · creatives=${cachedCreativeEntities ? cachedCreativeEntities.length : "fetching"}`);
+          return v;
+        })
+      : Promise.all([
+          withCap(client.getAdvertiser(), 15_000, null as Awaited<ReturnType<typeof client.getAdvertiser>> | null, "getAdvertiser"),
+          withCap(client.listCampaigns(), 30_000, [], "listCampaigns"),
+          withCap(client.listInsertionOrders(), 30_000, [], "listInsertionOrders"),
+          withCap(client.listLineItems(), 30_000, [], "listLineItems"),
+          withCap(client.listAdGroups(), 20_000, [], "listAdGroups"),
+          withCap(client.listAdGroupAds(), 20_000, [], "listAdGroupAds"),
+        ]).then(([ad, camp, io, li, ag, aga]) => {
+          // Only cache when we got a usable complete hierarchy (don't cache partial
+          // results where entity API timed out for IOs/LIs but campaigns succeeded).
+          if (camp.length > 0 && io.length > 0 && li.length > 0) {
+            entityCache.set(advertiserId, { advertiser: ad, campaigns: camp, insertionOrders: io, lineItems: li, adGroups: ag, adGroupAds: aga });
+          }
+          console.log(`[campaigns/dv360] entities fetched in ${Date.now() - t0}ms · LIs=${li.length}`);
+          return { advertiser: ad, campaigns: camp, insertionOrders: io, lineItems: li, adGroups: ag, adGroupAds: aga };
         });
-      console.log(`[campaigns/dv360] entity cache HIT (${advertiserId}) · LIs=${lineItems.length} · creatives=${cachedCreativeEntities ? cachedCreativeEntities.length : "fetching"}`);
-    } else {
-      [advertiser, campaigns, insertionOrders, lineItems, adGroups, adGroupAds] = await Promise.all([
-        withCap(client.getAdvertiser(), 15_000, null as Awaited<ReturnType<typeof client.getAdvertiser>> | null, "getAdvertiser"),
-        withCap(client.listCampaigns(), 30_000, [], "listCampaigns"),
-        withCap(client.listInsertionOrders(), 30_000, [], "listInsertionOrders"),
-        withCap(client.listLineItems(), 30_000, [], "listLineItems"),
-        withCap(client.listAdGroups(), 20_000, [], "listAdGroups"),
-        withCap(client.listAdGroupAds(), 20_000, [], "listAdGroupAds"),
-      ]);
-      // Only cache when we got a usable complete hierarchy (don't cache partial
-      // results where entity API timed out for IOs/LIs but campaigns succeeded).
-      if (campaigns.length > 0 && insertionOrders.length > 0 && lineItems.length > 0) {
-        entityCache.set(advertiserId, { advertiser, campaigns, insertionOrders, lineItems, adGroups, adGroupAds });
-      }
-      console.log(`[campaigns/dv360] entities fetched in ${Date.now() - t0}ms · LIs=${lineItems.length}`);
-    }
 
-    // Await creatives — either the cached result (instant) or the parallel fetch.
-    creativeEntities = await creativesPromise;
-    if (creativeEntities.length > 0 && !cachedCreativeEntities) {
-      creativeEntityCache.set(advertiserId, creativeEntities);
-      console.log(`[campaigns/dv360] creative entities cached · count=${creativeEntities.length}`);
-    } else if (creativeEntities.length === 0 && !cachedCreativeEntities) {
-      console.warn(`[campaigns/dv360] listCreatives() returned empty — names will fall back to BM report column`);
-    }
-    const currency = (advertiser as { generalConfig?: { currencyCode?: string } } | null)?.generalConfig?.currencyCode ?? "USD";
+    // `creativesPromise` (like `entitiesPromise`) is intentionally NOT awaited
+    // here — it's only needed once we build the name/type maps just before
+    // the targeted creative-name lookup further down, so it runs concurrently
+    // with the BM delivery/reach reports kicked off below instead of blocking
+    // in front of them.
     const creativeNameById = new Map<string, string>();
     const creativeTypeById = new Map<string, string>();
-    for (const cr of creativeEntities) {
-      creativeNameById.set(String(cr.creativeId), cr.displayName);
-      if (cr.creativeType) creativeTypeById.set(String(cr.creativeId), cr.creativeType);
-    }
 
     // 2. LI-grain metrics via Bid Manager (cached; resumes a pending query).
     // Try the rich metric set first; some advertisers reject TrueView/CM360
@@ -633,6 +642,21 @@ export default async function handler(
       }
     }
 
+    // Await the global creative-entity fetch — kicked off way back near t0, it
+    // has been running concurrently with the BM/reach reports above this
+    // whole time, so this is usually an instant resolve by now.
+    creativeEntities = await creativesPromise;
+    if (creativeEntities.length > 0 && !cachedCreativeEntities) {
+      creativeEntityCache.set(advertiserId, creativeEntities);
+      console.log(`[campaigns/dv360] creative entities cached · count=${creativeEntities.length}`);
+    } else if (creativeEntities.length === 0 && !cachedCreativeEntities) {
+      console.warn(`[campaigns/dv360] listCreatives() returned empty — names will fall back to BM report column`);
+    }
+    for (const cr of creativeEntities) {
+      creativeNameById.set(String(cr.creativeId), cr.displayName);
+      if (cr.creativeType) creativeTypeById.set(String(cr.creativeId), cr.creativeType);
+    }
+
     // 2c. Targeted creative name lookup — for any creative ID from the BM report
     // that the global listCreatives() didn't resolve, fetch just those IDs via
     // the entity API filter. This is O(delivered creatives) not O(all advertiser
@@ -673,6 +697,11 @@ export default async function handler(
         }
       }
     }
+
+    // Entities were kicked off in parallel with the BM/reach reports above —
+    // await them now, right before their first real use.
+    ({ advertiser, campaigns, insertionOrders, lineItems, adGroups, adGroupAds } = await entitiesPromise);
+    const currency = (advertiser as { generalConfig?: { currencyCode?: string } } | null)?.generalConfig?.currencyCode ?? "USD";
 
     // 2d. BM-fallback hierarchy: when entity API timed out (IOs=0, LIs=0)
     // but BM delivery data exists, build the entity hierarchy directly from
