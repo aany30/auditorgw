@@ -338,7 +338,7 @@ export default function DashboardReport({
           </span>
         </div>
 
-        {loading ? (
+        {loading && enrichedCampaigns.length === 0 ? (
           <div className="flex items-center justify-center py-20 text-gray-400">
             <div className="w-6 h-6 border-2 border-blue-400 border-t-transparent rounded-full animate-spin mr-3" />
             Loading campaign data…
