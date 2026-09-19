@@ -42,7 +42,8 @@ export function useMetaBreakdown(
     if (!enabled) { setRows([]); return; }
     const token = demoMode ? "demo-meta-token" : metaAccessToken;
     const biz   = demoMode ? "demo-business-123" : metaBusinessId;
-    if (!token || !biz) { setRows([]); return; }
+    const hasServerDefaults = !!process.env.NEXT_PUBLIC_HAS_DEFAULT_CREDS;
+    if (!hasServerDefaults && !token && !biz) { setRows([]); return; }
 
     let cancelled = false;
     setLoading(true);

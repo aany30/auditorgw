@@ -37,7 +37,8 @@ export function useAdSetInsights(
     }
     const effectiveToken = demoMode ? "demo-meta-token" : metaAccessToken;
     const effectiveBiz = demoMode ? "demo-business-123" : metaBusinessId;
-    if (!effectiveToken || !effectiveBiz) { setAdsets([]); setAudiences([]); return; }
+    const hasServerDefaults = !!process.env.NEXT_PUBLIC_HAS_DEFAULT_CREDS;
+    if (!hasServerDefaults && !effectiveToken && !effectiveBiz) { setAdsets([]); setAudiences([]); return; }
 
     let cancelled = false;
     setLoading(true);

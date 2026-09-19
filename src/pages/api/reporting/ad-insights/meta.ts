@@ -10,6 +10,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { MetaApiClient } from "@/lib/api-clients/meta";
 import { isDemoCredential } from "@/lib/demo-data";
 import { metaSafeCall, metaCache, cacheKey, chunk, withAbortTimeout, metaThrottle } from "@/lib/meta-request-utils";
+import { resolveMetaCreds } from "@/lib/default-credentials";
 
 // Same chunk-size rationale as /adsets/meta — some large accounts have
 // Meta silently returning 0 ads on account-level `/act_/insights?level=ad`
@@ -217,7 +218,10 @@ function sumActionValues(rows: Array<{ action_type: string; value: string }> | u
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") { res.status(405).json({ error: "Method not allowed" }); return; }
-  const { accessToken, businessId, startDate, endDate, limit } = req.body || {};
+  const meta = resolveMetaCreds(req.body || {});
+  const accessToken = meta?.accessToken;
+  const businessId = meta?.businessId;
+  const { startDate, endDate, limit } = req.body || {};
   if (!accessToken || !businessId) { res.status(400).json({ error: "Missing accessToken or businessId" }); return; }
 
   if (isDemoCredential(accessToken)) {

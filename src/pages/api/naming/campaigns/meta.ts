@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { MetaApiClient } from "@/lib/api-clients/meta";
 import { isDemoCredential, getDemoMetaCampaigns } from "@/lib/demo-data";
+import { resolveMetaCreds } from "@/lib/default-credentials";
 import type { CampaignData } from "@/types";
 
 export default async function handler(
@@ -12,7 +13,10 @@ export default async function handler(
     return;
   }
 
-  const { accessToken, businessId, startDate, endDate } = req.body;
+  const creds = resolveMetaCreds(req.body || {});
+  const { startDate, endDate } = req.body || {};
+  const accessToken = creds?.accessToken;
+  const businessId = creds?.businessId;
 
   if (!accessToken || !businessId) {
     res.status(400).json({ error: "Missing accessToken or businessId" });

@@ -27,7 +27,8 @@ export function useAnnualFrequency(platform: "meta" | "dv360" | "both"): AnnualF
     if (platform === "dv360") { setState(EMPTY); return; }
     const token = demoMode ? "demo-meta-token" : metaAccessToken;
     const biz   = demoMode ? "demo-business-123" : metaBusinessId;
-    if (!token || !biz) { setState(EMPTY); return; }
+    const hasServerDefaults = !!process.env.NEXT_PUBLIC_HAS_DEFAULT_CREDS;
+    if (!hasServerDefaults && !token && !biz) { setState(EMPTY); return; }
 
     let cancelled = false;
     setState((s) => ({ ...s, loading: true }));

@@ -26,7 +26,10 @@ export default function Landing() {
 
   useEffect(() => {
     setMounted(true);
-  }, []);
+    if (process.env.NEXT_PUBLIC_HAS_DEFAULT_CREDS) {
+      router.replace("/app/dashboard");
+    }
+  }, [router]);
 
   const connected = mounted && (isMetaConnected() || isDV360Connected());
   const oauthError = typeof router.query.error === "string" ? router.query.error : null;

@@ -22,6 +22,7 @@ import { DV360ApiClient, type BMResult } from "@/lib/api-clients/dv360";
 import { isDemoCredential, getDemoDV360Breakdown } from "@/lib/demo-data";
 import { reportCache, queryIdCache, reportCacheKey } from "@/lib/report-cache";
 import { geoName } from "@/lib/geo-names";
+import { resolveDV360Creds } from "@/lib/default-credentials";
 
 export const config = { maxDuration: 60 };
 
@@ -122,8 +123,10 @@ export default async function handler(
 ) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
-  const { clientId, clientSecret, refreshToken, advertiserId, partnerId, breakdown, startDate, endDate } =
-    req.body || {};
+  const dv = resolveDV360Creds(req.body || {});
+  const refreshToken = dv?.refreshToken; const advertiserId = dv?.advertiserId;
+  const clientId = dv?.clientId; const clientSecret = dv?.clientSecret; const partnerId = dv?.partnerId;
+  const { breakdown, startDate, endDate } = req.body || {};
 
   if (!refreshToken || !advertiserId) return res.status(400).json({ error: "Missing refreshToken or advertiserId" });
   const bm = BREAKDOWN_TO_BM[breakdown as string];

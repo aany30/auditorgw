@@ -2,6 +2,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { MetaApiClient, MetaPixelStats } from "@/lib/api-clients/meta";
 import { isDemoCredential, getDemoMetaAudit } from "@/lib/demo-data";
 import { analyzeMetaPixel, analyzeFunnel, rankRecommendations, Recommendation } from "@/lib/recommendations/engine";
+import { resolveMetaCreds } from "@/lib/default-credentials";
 
 export interface MetaAuditResponse {
   source: "live" | "demo" | "mixed";
@@ -20,7 +21,9 @@ export default async function handler(
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const { accessToken, pixelIds: rawPixelIds, businessId } = req.body || {};
+  const creds = resolveMetaCreds(req.body || {});
+  const accessToken = creds?.accessToken; const businessId = creds?.businessId;
+  const { pixelIds: rawPixelIds } = req.body || {};
 
   if (!accessToken) {
     return res.status(400).json({ error: "accessToken is required" });

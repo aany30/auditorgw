@@ -33,7 +33,8 @@ export function useDV360Attribution(enabled: boolean) {
 
   useEffect(() => {
     const effectiveRefresh = demoMode ? "demo-dv360-refresh" : dv360RefreshToken;
-    if (!enabled || (!demoMode && (!dv360RefreshToken || !dv360AdvertiserId))) { setState({ loading: false }); return; }
+    const hasServerDefaults = !!process.env.NEXT_PUBLIC_HAS_DEFAULT_CREDS;
+    if (!enabled || (!hasServerDefaults && !demoMode && (!dv360RefreshToken || !dv360AdvertiserId))) { setState({ loading: false }); return; }
     let cancelled = false;
     setState({ loading: true });
     fetch("/api/audit/dv360-attribution", {

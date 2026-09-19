@@ -19,6 +19,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { DV360ApiClient } from "@/lib/api-clients/dv360";
 import { isDemoCredential } from "@/lib/demo-data";
 import { reportCache, queryIdCache, reportCacheKey } from "@/lib/report-cache";
+import { resolveDV360Creds } from "@/lib/default-credentials";
 
 export const config = { maxDuration: 60 };
 
@@ -65,8 +66,11 @@ function pickWindow(startDate?: string, endDate?: string, flightStart?: string, 
 export default async function handler(req: NextApiRequest, res: NextApiResponse<DV360ReachResponse | { error: string }>) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
-  const { clientId, clientSecret, refreshToken, advertiserId, partnerId,
-          startDate, endDate, flightStart, flightEnd } = (req.body || {}) as Body;
+  const body = (req.body || {}) as Body;
+  const dv = resolveDV360Creds(body as Record<string, unknown>);
+  const refreshToken = dv?.refreshToken; const advertiserId = dv?.advertiserId;
+  const clientId = dv?.clientId; const clientSecret = dv?.clientSecret; const partnerId = dv?.partnerId;
+  const { startDate, endDate, flightStart, flightEnd } = body;
   if (!refreshToken || !advertiserId) return res.status(400).json({ error: "Missing refreshToken or advertiserId" });
 
   if (isDemoCredential(refreshToken)) {

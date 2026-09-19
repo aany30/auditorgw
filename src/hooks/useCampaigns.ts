@@ -133,16 +133,18 @@ export function useCampaigns(
       setPlatformErrors({});
       const errs: { meta?: string; dv360?: string } = {};
       const all: CampaignData[] = [];
+      const hasServerDefaults = !!process.env.NEXT_PUBLIC_HAS_DEFAULT_CREDS;
       try {
         const effectiveMetaToken = demoMode ? "demo-meta-token" : metaAccessToken;
         const effectiveMetaBiz = demoMode ? "demo-business-123" : metaBusinessId;
-        if ((platform === "meta" || platform === "both") && effectiveMetaToken && effectiveMetaBiz) {
+        const canFetchMeta = (platform === "meta" || platform === "both") && (effectiveMetaToken && effectiveMetaBiz || hasServerDefaults);
+        if (canFetchMeta) {
           const r = await fetch("/api/naming/campaigns/meta", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              accessToken: effectiveMetaToken,
-              businessId: effectiveMetaBiz,
+              accessToken: effectiveMetaToken || undefined,
+              businessId: effectiveMetaBiz || undefined,
               startDate,
               endDate,
             }),
@@ -155,19 +157,17 @@ export function useCampaigns(
           }
         }
         const effectiveDv360Refresh = demoMode ? "demo-dv360-refresh" : dv360RefreshToken;
-        if (
-          (platform === "dv360" || platform === "both") &&
-          effectiveDv360Refresh &&
-          (demoMode || (dv360ClientId && dv360ClientSecret && dv360AdvertiserId))
-        ) {
+        const canFetchDv = (platform === "dv360" || platform === "both") &&
+          (effectiveDv360Refresh && (demoMode || (dv360ClientId && dv360ClientSecret && dv360AdvertiserId)) || hasServerDefaults);
+        if (canFetchDv) {
           const r = await fetch("/api/naming/campaigns/dv360", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              clientId: demoMode ? "demo-client" : dv360ClientId,
-              clientSecret: demoMode ? "demo-secret" : dv360ClientSecret,
-              refreshToken: effectiveDv360Refresh,
-              advertiserId: demoMode ? "demo-advertiser-1" : dv360AdvertiserId,
+              clientId: demoMode ? "demo-client" : dv360ClientId || undefined,
+              clientSecret: demoMode ? "demo-secret" : dv360ClientSecret || undefined,
+              refreshToken: effectiveDv360Refresh || undefined,
+              advertiserId: demoMode ? "demo-advertiser-1" : dv360AdvertiserId || undefined,
               partnerId: dv360PartnerId || undefined,
               startDate,
               endDate,

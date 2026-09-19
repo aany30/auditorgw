@@ -11,6 +11,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { MetaApiClient } from "@/lib/api-clients/meta";
 import { isDemoCredential } from "@/lib/demo-data";
+import { resolveMetaCreds } from "@/lib/default-credentials";
 
 const DEMO_AUDIENCES = [
   { id: "d001", name: "TOF - Broad India",              size: 15000000 },
@@ -26,7 +27,9 @@ const DEMO_AUDIENCES = [
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
-  const { accessToken, businessId } = req.body || {};
+  const meta = resolveMetaCreds(req.body || {});
+  const accessToken = meta?.accessToken;
+  const businessId = meta?.businessId;
   if (!accessToken || !businessId) return res.status(400).json({ error: "Missing accessToken or businessId" });
 
   if (isDemoCredential(accessToken)) {
