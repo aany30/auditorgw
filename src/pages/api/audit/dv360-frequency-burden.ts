@@ -23,6 +23,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { DV360ApiClient, type BMResult } from "@/lib/api-clients/dv360";
 import { isDemoCredential, getDemoDV360FrequencyBurden } from "@/lib/demo-data";
 import { reportCache, queryIdCache, reportCacheKey } from "@/lib/report-cache";
+import { resolveDV360Creds } from "@/lib/default-credentials";
 
 export const config = { maxDuration: 60 };
 
@@ -79,7 +80,10 @@ function parseReachTotals(rows: Array<Record<string, string | number>> | null): 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
-  const { clientId, clientSecret, refreshToken, advertiserId, partnerId, startDate, endDate } = req.body || {};
+  const { startDate, endDate } = req.body || {};
+  const dv = resolveDV360Creds(req.body || {});
+  const refreshToken = dv?.refreshToken; const advertiserId = dv?.advertiserId;
+  const clientId = dv?.clientId; const clientSecret = dv?.clientSecret; const partnerId = dv?.partnerId;
   if (!refreshToken || !advertiserId || !startDate || !endDate) {
     return res.status(400).json({ error: "Missing refreshToken, advertiserId, startDate, or endDate" });
   }

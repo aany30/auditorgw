@@ -12,6 +12,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { DV360ApiClient } from "@/lib/api-clients/dv360";
 import { isDemoCredential } from "@/lib/demo-data";
+import { resolveDV360Creds } from "@/lib/default-credentials";
 
 interface RenameResponse {
   success: boolean;
@@ -28,10 +29,10 @@ export default async function handler(
     return;
   }
 
-  const {
-    clientId, clientSecret, refreshToken, advertiserId, partnerId,
-    entityId, newName, kind,
-  } = req.body || {};
+  const dv = resolveDV360Creds(req.body || {});
+  const refreshToken = dv?.refreshToken; const advertiserId = dv?.advertiserId;
+  const clientId = dv?.clientId; const clientSecret = dv?.clientSecret; const partnerId = dv?.partnerId;
+  const { entityId, newName, kind } = req.body || {};
 
   if (!refreshToken || !advertiserId || !entityId || !newName?.trim()) {
     res.status(400).json({ error: "refreshToken, advertiserId, entityId, and newName are required" });

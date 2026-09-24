@@ -15,6 +15,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { MetaApiClient } from "@/lib/api-clients/meta";
 import { isDemoCredential } from "@/lib/demo-data";
+import { resolveMetaCreds } from "@/lib/default-credentials";
 
 const DEMO_SIZES: Record<string, number> = {
   d001: 15000000,
@@ -40,7 +41,9 @@ function demoOverlap(aId: string, bId: string) {
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
-  const { accessToken, businessId, audienceAId, audienceBId } = req.body || {};
+  const creds = resolveMetaCreds(req.body || {});
+  const accessToken = creds?.accessToken; const businessId = creds?.businessId;
+  const { audienceAId, audienceBId } = req.body || {};
   if (!accessToken || !businessId || !audienceAId || !audienceBId) {
     return res.status(400).json({ error: "Missing required fields" });
   }

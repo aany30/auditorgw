@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { isDemoCredential } from "@/lib/demo-data";
+import { resolveMetaCreds } from "@/lib/default-credentials";
 
 const META_API_BASE = "https://graph.facebook.com/v18.0";
 
@@ -34,7 +35,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return;
   }
 
-  const { accessToken, businessId, campaignIds } = req.body || {};
+  const meta = resolveMetaCreds(req.body || {});
+  const accessToken = meta?.accessToken;
+  const businessId = meta?.businessId;
+  const { campaignIds } = req.body || {};
   if (!accessToken || !businessId || !Array.isArray(campaignIds) || campaignIds.length === 0) {
     res.status(400).json({ error: "Missing accessToken, businessId, or campaignIds" });
     return;

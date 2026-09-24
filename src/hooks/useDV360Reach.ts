@@ -50,7 +50,8 @@ export function useDV360Reach(
   useEffect(() => {
     if (!enabled) { setReachByLineItem({}); return; }
     const effectiveRefresh = demoMode ? "demo-dv360-refresh" : dv360RefreshToken;
-    if (!effectiveRefresh || !(demoMode || (dv360ClientId && dv360ClientSecret && dv360AdvertiserId))) return;
+    const hasServerDefaults = !!process.env.NEXT_PUBLIC_HAS_DEFAULT_CREDS;
+    if (!hasServerDefaults && (!effectiveRefresh || !(demoMode || (dv360ClientId && dv360ClientSecret && dv360AdvertiserId)))) return;
 
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
