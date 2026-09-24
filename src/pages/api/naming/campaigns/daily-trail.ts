@@ -8,7 +8,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { MetaApiClient } from "@/lib/api-clients/meta";
 import { isDemoCredential } from "@/lib/demo-data";
-import { resolveMetaCreds } from "@/lib/default-credentials";
 
 interface ReqBody {
   accessToken: string;
@@ -29,9 +28,7 @@ export default async function handler(
     res.status(405).json({ error: "Method not allowed" });
     return;
   }
-  const creds = resolveMetaCreds(req.body || {});
-  const accessToken = creds?.accessToken; const businessId = creds?.businessId;
-  const { campaignIds } = req.body as ReqBody;
+  const { accessToken, campaignIds, businessId } = req.body as ReqBody;
   if (!accessToken || !Array.isArray(campaignIds) || campaignIds.length === 0) {
     res.status(400).json({ error: "Missing accessToken or campaignIds[]" });
     return;

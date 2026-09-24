@@ -318,11 +318,9 @@ export default function Dashboard() {
   }, [router.isReady, router.query.demo, demoMode, enterDemoMode]);
 
   // Route guard — block /app/dashboard for unconnected, non-demo visitors.
-  const hasServerDefaults = !!process.env.NEXT_PUBLIC_HAS_DEFAULT_CREDS;
   useEffect(() => {
     if (!mounted || !router.isReady || !hydrated) return;
     if (router.query.demo === "1") return; // grace period while demoMode hydrates
-    if (hasServerDefaults) return; // server-side env vars handle auth
     // A DV360 refresh token present but no advertiser yet = mid-connection
     // (OAuth found no advertisers, user must paste the ID). Don't bounce them
     // back to landing — let the "Paste your Advertiser ID" prompt show.
@@ -330,7 +328,7 @@ export default function Dashboard() {
     if (!isMetaConnected() && !isDV360Connected() && !dv360Pending && !demoMode) {
       router.replace("/");
     }
-  }, [mounted, hydrated, router.isReady, router.query.demo, isMetaConnected, isDV360Connected, dv360RefreshToken, demoMode, router, hasServerDefaults]);
+  }, [mounted, hydrated, router.isReady, router.query.demo, isMetaConnected, isDV360Connected, dv360RefreshToken, demoMode, router]);
 
   const handleLogout = () => {
     clearAllCredentials();

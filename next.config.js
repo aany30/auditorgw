@@ -2,10 +2,6 @@
 const webpack = require("webpack");
 
 const nextConfig = {
-  env: {
-    NEXT_PUBLIC_HAS_DEFAULT_CREDS:
-      process.env.DEFAULT_META_ACCESS_TOKEN || process.env.DEFAULT_DV360_REFRESH_TOKEN ? "1" : "",
-  },
   typescript: {
     ignoreBuildErrors: false,
   },

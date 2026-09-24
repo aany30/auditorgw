@@ -94,8 +94,7 @@ export function useMetaDailyVsPrev(
     const fetchMetaDaily = (s: string, e: string) => {
       const token = demoMode ? "demo-meta-token" : metaAccessToken;
       const biz   = demoMode ? "demo-business-123" : metaBusinessId;
-      const hasServerDefaults = !!process.env.NEXT_PUBLIC_HAS_DEFAULT_CREDS;
-      if (!hasServerDefaults && !token && !biz) return Promise.resolve([] as DailyPoint[]);
+      if (!token || !biz) return Promise.resolve([] as DailyPoint[]);
       return fetch("/api/reporting/breakdown/meta", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -107,8 +106,7 @@ export function useMetaDailyVsPrev(
 
     const fetchDv360Daily = (s: string, e: string): Promise<DailyPoint[]> => {
       const effectiveRefresh = demoMode ? "demo-dv360-refresh" : dv360RefreshToken;
-      const hasServerDefaults2 = !!process.env.NEXT_PUBLIC_HAS_DEFAULT_CREDS;
-      if (!hasServerDefaults2 && (!effectiveRefresh || (!demoMode && (!dv360ClientId || !dv360ClientSecret || !dv360AdvertiserId))))
+      if (!effectiveRefresh || (!demoMode && (!dv360ClientId || !dv360ClientSecret || !dv360AdvertiserId)))
         return Promise.resolve([]);
 
       return new Promise((resolve) => {

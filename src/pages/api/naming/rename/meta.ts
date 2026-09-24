@@ -12,7 +12,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { MetaApiClient } from "@/lib/api-clients/meta";
 import { isDemoCredential } from "@/lib/demo-data";
-import { resolveMetaCreds } from "@/lib/default-credentials";
 
 interface RenameRequest {
   accessToken: string;
@@ -38,9 +37,7 @@ export default async function handler(
     return;
   }
 
-  const creds = resolveMetaCreds(req.body || {});
-  const accessToken = creds?.accessToken;
-  const { newName } = req.body as RenameRequest;
+  const { accessToken, newName } = req.body as RenameRequest;
   const id = (req.body as RenameRequest).nodeId || (req.body as RenameRequest).campaignId;
   if (!accessToken || !id || !newName?.trim()) {
     res.status(400).json({ error: "accessToken, nodeId, and newName are required" });

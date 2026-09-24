@@ -31,7 +31,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { isDemoCredential } from "@/lib/demo-data";
 import { metaSafeCall, metaCache, cacheKey, chunk, withAbortTimeout, metaThrottle } from "@/lib/meta-request-utils";
-import { resolveMetaCreds } from "@/lib/default-credentials";
 
 const META_API_BASE = "https://graph.facebook.com/v18.0";
 // Chunk size chosen empirically for Meta's per-response aggregation cap.
@@ -399,10 +398,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return;
   }
 
-  const meta = resolveMetaCreds(req.body || {});
-  const accessToken = meta?.accessToken;
-  const businessId = meta?.businessId;
-  const { startDate, endDate } = req.body || {};
+  const { accessToken, businessId, startDate, endDate } = req.body || {};
   if (!accessToken || !businessId) {
     res.status(400).json({ error: "Missing accessToken or businessId" });
     return;

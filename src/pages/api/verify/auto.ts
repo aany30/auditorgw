@@ -15,7 +15,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { MetaApiClient, META_ATTRIBUTION_WINDOW } from "@/lib/api-clients/meta";
 import { isDemoCredential } from "@/lib/demo-data";
-import { resolveMetaCreds } from "@/lib/default-credentials";
 
 interface ReqBody {
   accessToken: string;
@@ -61,9 +60,7 @@ export default async function handler(
     return;
   }
 
-  const creds = resolveMetaCreds(req.body || {});
-  const accessToken = creds?.accessToken; const businessId = creds?.businessId;
-  const { startDate, endDate, ourCampaignSpend, attributionWindows } = req.body as ReqBody;
+  const { accessToken, businessId, startDate, endDate, ourCampaignSpend, attributionWindows } = req.body as ReqBody;
   if (!accessToken || !businessId || !ourCampaignSpend) {
     res.status(400).json({ error: "Missing accessToken, businessId, or ourCampaignSpend" });
     return;

@@ -21,7 +21,6 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { DV360ApiClient, rawDateToIso, type BMResult } from "@/lib/api-clients/dv360";
 import { isDemoCredential, getDemoDV360Campaigns } from "@/lib/demo-data";
 import { reportCache, queryIdCache, reportCacheKey, entityCache, creativeEntityCache } from "@/lib/report-cache";
-import { resolveDV360Creds } from "@/lib/default-credentials";
 import type { CampaignData, AdSetData, AdData, AdGroupData, AdGroupAdData, CreativeData, DV360BidStrategy } from "@/types";
 
 // Entity fetch and the BM delivery/reach reports now run in parallel (~40s
@@ -205,13 +204,7 @@ export default async function handler(
     return;
   }
 
-  const { startDate, endDate, strictWindow } = req.body || {};
-  const dv = resolveDV360Creds(req.body || {});
-  const clientId = dv?.clientId;
-  const clientSecret = dv?.clientSecret;
-  const refreshToken = dv?.refreshToken;
-  const advertiserId = dv?.advertiserId;
-  const partnerId = dv?.partnerId;
+  const { clientId, clientSecret, refreshToken, advertiserId, partnerId, startDate, endDate, strictWindow } = req.body || {};
 
   if (!refreshToken || !advertiserId) {
     res.status(400).json({ error: "Missing refreshToken or advertiserId" });

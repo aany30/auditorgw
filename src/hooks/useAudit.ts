@@ -59,8 +59,7 @@ export function useAudit(
     let metaData: MetaAuditResponse | null = null;
     let fetchError: string | null = null;
 
-    const hasServerDefaults = !!process.env.NEXT_PUBLIC_HAS_DEFAULT_CREDS;
-    if ((platform === "meta" || platform === "both") && (hasServerDefaults || (effectiveMetaConnected && effectiveMetaToken))) {
+    if ((platform === "meta" || platform === "both") && effectiveMetaConnected && effectiveMetaToken) {
       try {
         const r = await fetch("/api/audit/meta", {
           method: "POST",

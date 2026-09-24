@@ -12,7 +12,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { MetaApiClient } from "@/lib/api-clients/meta";
 import { isDemoCredential } from "@/lib/demo-data";
-import { resolveMetaCreds } from "@/lib/default-credentials";
 
 interface ReqBody {
   accessToken: string;
@@ -34,9 +33,7 @@ export default async function handler(
     res.status(405).json({ error: "Method not allowed" });
     return;
   }
-  const creds = resolveMetaCreds(req.body || {});
-  const accessToken = creds?.accessToken; const businessId = creds?.businessId;
-  const { pixelIds } = req.body as ReqBody;
+  const { accessToken, businessId, pixelIds } = req.body as ReqBody;
   if (!accessToken) {
     res.status(400).json({ error: "Missing accessToken" });
     return;

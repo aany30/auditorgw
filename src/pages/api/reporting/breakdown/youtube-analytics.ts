@@ -20,7 +20,6 @@
 
 import type { NextApiRequest, NextApiResponse } from "next";
 import { isDemoCredential, getDemoDV360Breakdown } from "@/lib/demo-data";
-import { resolveDV360Creds } from "@/lib/default-credentials";
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const YT_ANALYTICS_BASE = "https://youtubeanalytics.googleapis.com/v2";
@@ -106,10 +105,8 @@ export default async function handler(
 ) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
-  const dv = resolveDV360Creds(req.body || {});
-  const refreshToken = dv?.refreshToken;
-  const clientId = dv?.clientId; const clientSecret = dv?.clientSecret;
-  const { channelId: explicitChannelId, breakdown, startDate, endDate } = req.body || {};
+  const { clientId, clientSecret, refreshToken, channelId: explicitChannelId, breakdown, startDate, endDate } =
+    req.body || {};
 
   if (!refreshToken) return res.status(400).json({ error: "Missing refreshToken" });
   if (!["age", "gender"].includes(breakdown)) {

@@ -20,7 +20,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { DV360ApiClient } from "@/lib/api-clients/dv360";
 import { isDemoCredential, getDemoFloodlight } from "@/lib/demo-data";
-import { resolveDV360Creds } from "@/lib/default-credentials";
 
 export const config = { maxDuration: 60 };
 
@@ -29,9 +28,7 @@ const DAY_MS = 86_400_000;
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
-  const dv = resolveDV360Creds(req.body || {});
-  const refreshToken = dv?.refreshToken; const advertiserId = dv?.advertiserId;
-  const clientId = dv?.clientId; const clientSecret = dv?.clientSecret; const partnerId = dv?.partnerId;
+  const { clientId, clientSecret, refreshToken, advertiserId, partnerId } = req.body || {};
 
   if (!refreshToken || !advertiserId) return res.status(400).json({ error: "Missing refreshToken or advertiserId" });
 

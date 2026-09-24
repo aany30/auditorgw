@@ -37,8 +37,7 @@ export function useDV360FrequencyBurden(
   useEffect(() => {
     if (!enabled) { setData(EMPTY); return; }
     const effectiveRefresh = demoMode ? "demo-dv360-refresh" : dv360RefreshToken;
-    const hasServerDefaults = !!process.env.NEXT_PUBLIC_HAS_DEFAULT_CREDS;
-    if (!hasServerDefaults && (!effectiveRefresh || (!demoMode && (!dv360ClientId || !dv360ClientSecret || !dv360AdvertiserId)))) {
+    if (!effectiveRefresh || (!demoMode && (!dv360ClientId || !dv360ClientSecret || !dv360AdvertiserId))) {
       setData(EMPTY);
       return;
     }
