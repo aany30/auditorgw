@@ -25,6 +25,7 @@ import ExportReport from "@/components/dashboard/reports/ExportReport";
 import GenerateReport from "@/components/dashboard/reports/GenerateReport";
 import DashboardReport from "@/components/dashboard/reports/DashboardReport";
 import AskAITab from "@/components/dashboard/tabs/AskAITab";
+import MediaAdsLibraryTab from "@/components/dashboard/MediaAdsLibraryTab";
 import AccountSelector from "@/components/dashboard/AccountSelector";
 import MetaQuotaChip from "@/components/shared/MetaQuotaChip";
 import CampaignObjectiveFilter from "@/components/dashboard/CampaignObjectiveFilter";
@@ -61,6 +62,7 @@ import {
   LineChart,
   Briefcase,
   Flame,
+  BookOpen,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -121,6 +123,7 @@ const NAV: NavGroup[] = [
       { id: "rep-attribution", label: "Attribution Report",  Icon: GitBranch,  platforms: ["meta"] },
       // Planning merged into Dashboard
       { id: "rep-generate",    label: "Generate Report",     Icon: Download  },
+      { id: "media-ads-lib",   label: "Media Ads Library",   Icon: BookOpen  },
     ],
   },
   {
@@ -404,6 +407,8 @@ export default function Dashboard() {
         return <ExportReport {...props} />;
       case "rep-generate":
         return <GenerateReport {...props} />;
+      case "media-ads-lib":
+        return <MediaAdsLibraryTab />;
       // Insights
       case "recommendations":
         return <RecommendationsTab {...props} />;

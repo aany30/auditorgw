@@ -1,6 +1,118 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ─── Media Analyser design tokens ───────────────────────── */
+:root {
+  --ma-bg: #ffffff;
+  --ma-surface: #fbfbfd;
+  --ma-surface-2: #f3f4f8;
+  --ma-line: #e6e8f0;
+  --ma-line-soft: #eef0f4;
+  --ma-fg: #14171f;
+  --ma-fg-dim: #4b5163;
+  --ma-fg-mute: #6e7488;
+  --ma-accent: #3d63dd;
+  --ma-accent-soft: #ebf0fe;
+  --ma-accent-dim: #b9c7f4;
+  --ma-accent-2: #e08a00;
+  --ma-accent-2-soft: #fcf0dc;
+  --ma-accent-2-dim: #f0d49a;
+  --ma-success: #0ea872;
+  --ma-success-soft: #e7f8f1;
+  --ma-alert: #dc2626;
+  --ma-alert-soft: rgba(220, 38, 38, 0.10);
+  --ma-ring: rgba(61, 99, 221, 0.40);
+  --ma-radius: 0.875rem;
+  --ma-radius-sm: 0.625rem;
+  --ma-shadow-sm: 0 1px 2px 0 rgb(20 23 31 / 0.03), 0 1px 3px 0 rgb(20 23 31 / 0.03);
+  --ma-shadow-md: 0 4px 14px -2px rgb(20 23 31 / 0.07), 0 2px 6px -2px rgb(20 23 31 / 0.05);
+  --ma-shadow-lg: 0 16px 40px -8px rgb(20 23 31 / 0.12);
+}
+
+/* ─── Media Analyser shared primitives ───────────────────── */
+.ma-wrapper .card,
+.ma-card {
+  background: var(--ma-surface);
+  border: 1px solid var(--ma-line);
+  border-radius: var(--ma-radius);
+  box-shadow: var(--ma-shadow-sm);
+}
+.ma-wrapper .card-hover {
+  transition: box-shadow 0.18s ease, transform 0.18s ease, border-color 0.18s ease;
+}
+.ma-wrapper .card-hover:hover { box-shadow: var(--ma-shadow-md); border-color: var(--ma-accent); }
+
+.ma-wrapper .eyebrow {
+  font-family: "Inter", system-ui, sans-serif;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ma-accent);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.625rem;
+}
+.ma-wrapper .eyebrow::before {
+  content: "";
+  width: 1.25rem;
+  height: 1px;
+  background: var(--ma-accent);
+}
+
+.ma-wrapper .data {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ma-fg-mute);
+}
+
+.ma-wrapper .btn, .ma-wrapper .btn-brand {
+  background: var(--ma-accent);
+  color: var(--ma-bg);
+  font-weight: 600;
+  border-radius: var(--ma-radius-sm);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+}
+.ma-wrapper .btn:hover, .ma-wrapper .btn-brand:hover { transform: translateY(-1px); box-shadow: var(--ma-shadow-md); }
+
+.ma-wrapper .blip { animation: blip 2.4s ease-in-out infinite; }
+@keyframes blip { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+@keyframes dash-rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.ma-wrapper .animate-rise { animation: dash-rise 0.28s ease both; }
+
+/* Prose in Media Analyser context */
+.ma-wrapper .prose { color: var(--ma-fg); }
+.ma-wrapper .prose h1, .ma-wrapper .prose h2, .ma-wrapper .prose h3, .ma-wrapper .prose h4 {
+  color: var(--ma-fg);
+  font-family: "Space Grotesk", sans-serif;
+}
+.ma-wrapper .prose p, .ma-wrapper .prose li { color: var(--ma-fg-dim); }
+.ma-wrapper .prose strong { color: var(--ma-fg); }
+.ma-wrapper .prose a { color: var(--ma-accent); }
+.ma-wrapper .prose code {
+  color: var(--ma-fg);
+  background: var(--ma-surface-2);
+  padding: 0.125rem 0.375rem;
+  border-radius: var(--ma-radius-sm);
+  font-size: 0.85em;
+}
+.ma-wrapper .prose table { border-collapse: collapse; width: 100%; }
+.ma-wrapper .prose thead tr { background: var(--ma-surface-2); border-bottom: 2px solid var(--ma-line); }
+.ma-wrapper .prose th {
+  color: var(--ma-fg); font-weight: 600; padding: 0.625rem 0.875rem; text-align: left;
+  font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.75rem;
+}
+.ma-wrapper .prose td { color: var(--ma-fg-dim); padding: 0.5rem 0.875rem; border-bottom: 1px solid var(--ma-line-soft); }
 
 * {
   @apply m-0 p-0 box-border;
