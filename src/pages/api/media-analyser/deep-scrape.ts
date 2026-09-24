@@ -4,7 +4,7 @@ import { enrichPaidAd } from "@/lib/media-analyser/paid-ad-buckets";
 import { fetchScanById, updateScanBrief } from "@/lib/media-analyser/supabase";
 import type { SocialPaidAd } from "@/lib/media-analyser/types";
 
-export const config = { maxDuration: 800 };
+export const config = { maxDuration: 300 };
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return res.status(405).end();

@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { fetchEcomAudit, healthCheck, EcomScraperError, EcomScraperUnavailable } from "@/lib/media-analyser/ecom-client";
 
-export const config = { maxDuration: 800 };
+export const config = { maxDuration: 300 };
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return res.status(405).end();

@@ -3,7 +3,7 @@ import { runProductAnalysisStream, type SocialSource, type ManualCompetitor } fr
 import type { StreamUpdate } from "@/lib/media-analyser/pipeline";
 import { cleanUserError } from "@/lib/media-analyser/user-errors";
 
-export const config = { maxDuration: 800 };
+export const config = { maxDuration: 300 };
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return res.status(405).end();

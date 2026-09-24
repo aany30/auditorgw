@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { deepClassifyAdVideos, type DeepAdVerdict } from "@/lib/media-analyser/meta-social";
 import type { SocialPaidAd } from "@/lib/media-analyser/types";
 
-export const config = { maxDuration: 800 };
+export const config = { maxDuration: 300 };
 
 export interface DeepScanUpdate {
   phase: "scanning" | "done" | "error";
