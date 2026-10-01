@@ -27,6 +27,26 @@ import DashboardReport from "@/components/dashboard/reports/DashboardReport";
 import AskAITab from "@/components/dashboard/tabs/AskAITab";
 import MediaAdsLibraryTab from "@/components/dashboard/MediaAdsLibraryTab";
 import ScanHistoryTab from "@/components/dashboard/ScanHistoryTab";
+import {
+  ResearchChatTab,
+  AgentReadyTab,
+  AplusContentTab,
+  InstaGridTab,
+  VibeCloneTab,
+  VibeMatchTab,
+  PersonasTab,
+  UGCAdsTab,
+  UGCNewTab,
+  UGCPlaygroundTab,
+  MicroDramaTab,
+  VideoAdsTab,
+  LuxeAdsTab,
+  VibeCloneUGCTab,
+  TalkingAvatarTab,
+  CharacterReelTab,
+  VoiceCloneTab,
+  CreativesHistoryTab,
+} from "@/components/dashboard/AdLibraryTabs";
 import AccountSelector from "@/components/dashboard/AccountSelector";
 import MetaQuotaChip from "@/components/shared/MetaQuotaChip";
 import CampaignObjectiveFilter from "@/components/dashboard/CampaignObjectiveFilter";
@@ -65,6 +85,21 @@ import {
   Flame,
   BookOpen,
   History,
+  Grid3x3,
+  Copy,
+  Palette,
+  Clapperboard,
+  Film,
+  Wand2,
+  Speech,
+  Gem,
+  Mic,
+  Drama,
+  LayoutPanelTop,
+  UserSquare,
+  FlaskConical,
+  MessagesSquare,
+  Images,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -132,8 +167,26 @@ const NAV: NavGroup[] = [
     label: "Ad Library",
     Icon: BookOpen,
     children: [
-      { id: "media-ads-lib", label: "Product Intelligence", Icon: Search },
-      { id: "scan-history",  label: "Scan History",         Icon: History },
+      { id: "media-ads-lib",    label: "Product Intelligence", Icon: Search },
+      { id: "research-chat",    label: "Research Chat",        Icon: MessagesSquare },
+      { id: "agent-ready",      label: "Agent Ready",          Icon: Bot },
+      { id: "aplus-content",    label: "A+ Content",           Icon: LayoutPanelTop },
+      { id: "insta-grid",       label: "Insta Grid",           Icon: Grid3x3 },
+      { id: "vibe-clone",       label: "Vibe Clone",           Icon: Copy },
+      { id: "vibe-match",       label: "Vibe Match",           Icon: Palette },
+      { id: "personas",         label: "Personas",             Icon: Users },
+      { id: "ugc-ads",          label: "UGC Ads",              Icon: Clapperboard },
+      { id: "ugc-new",          label: "UGC New",              Icon: Sparkles },
+      { id: "ugc-playground",   label: "UGC Playground",       Icon: FlaskConical },
+      { id: "micro-drama",      label: "Micro Drama",          Icon: Drama },
+      { id: "video-ads",        label: "Video Ads",            Icon: Film },
+      { id: "luxe-ads",         label: "Luxe Ads",             Icon: Gem },
+      { id: "vibe-clone-ugc",   label: "Vibe Clone UGC",       Icon: Wand2 },
+      { id: "talking-avatar",   label: "Talking Avatar",       Icon: Speech },
+      { id: "character-reel",   label: "Character Reel",       Icon: UserSquare },
+      { id: "voice-clone",      label: "Voice Clone",          Icon: Mic },
+      { id: "scan-history",     label: "Scan History",         Icon: History },
+      { id: "creatives-history", label: "Creatives",           Icon: Images },
     ],
   },
   {
@@ -419,8 +472,44 @@ export default function Dashboard() {
         return <GenerateReport {...props} />;
       case "media-ads-lib":
         return <MediaAdsLibraryTab />;
+      case "research-chat":
+        return <ResearchChatTab />;
+      case "agent-ready":
+        return <AgentReadyTab />;
+      case "aplus-content":
+        return <AplusContentTab />;
+      case "insta-grid":
+        return <InstaGridTab />;
+      case "vibe-clone":
+        return <VibeCloneTab />;
+      case "vibe-match":
+        return <VibeMatchTab />;
+      case "personas":
+        return <PersonasTab />;
+      case "ugc-ads":
+        return <UGCAdsTab />;
+      case "ugc-new":
+        return <UGCNewTab />;
+      case "ugc-playground":
+        return <UGCPlaygroundTab />;
+      case "micro-drama":
+        return <MicroDramaTab />;
+      case "video-ads":
+        return <VideoAdsTab />;
+      case "luxe-ads":
+        return <LuxeAdsTab />;
+      case "vibe-clone-ugc":
+        return <VibeCloneUGCTab />;
+      case "talking-avatar":
+        return <TalkingAvatarTab />;
+      case "character-reel":
+        return <CharacterReelTab />;
+      case "voice-clone":
+        return <VoiceCloneTab />;
       case "scan-history":
         return <ScanHistoryTab />;
+      case "creatives-history":
+        return <CreativesHistoryTab />;
       // Insights
       case "recommendations":
         return <RecommendationsTab {...props} />;

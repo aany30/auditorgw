@@ -226,3 +226,99 @@ export async function saveGenerationBatch(
     return { ok: false, error };
   }
 }
+
+// ── UGC personas (saved, reusable characters) ─────────────────────────────────
+//
+// A saved character/persona the user can reuse across many reels. `images` holds
+// compressed JPEG data URLs (anchor first, then any on-demand angle shots), so a
+// small library is a handful of MB of base64 — acceptable inline in a jsonb column.
+// Requires a `ugc_personas` table:
+//   create table ugc_personas (
+//     id uuid primary key default gen_random_uuid(),
+//     name text, style text, animated_style text, archetype text, source text,
+//     traits jsonb, details text, product_context jsonb, images jsonb,
+//     created_at timestamptz default now()
+//   );
+
+export interface PersonaRecord {
+  id: string;
+  name: string;
+  style: string;                 // "real" | "animated"
+  animated_style?: string | null;
+  archetype?: string | null;
+  source?: string | null;        // "create" | "upload" | "reference"
+  traits?: Record<string, unknown> | null;
+  details?: string | null;
+  product_context?: Record<string, unknown> | null;
+  images: string[];              // data URLs — anchor first
+  created_at?: string;
+}
+
+/** True when Supabase persistence is configured (drives the localStorage fallback). */
+export function supabaseConfigured(): boolean {
+  return getSupabaseConfig() !== null;
+}
+
+export async function fetchPersonas(limit = 60): Promise<PersonaRecord[]> {
+  try {
+    const cols = "id,name,style,animated_style,archetype,source,traits,details,product_context,images,created_at";
+    const result = await supabaseRest(
+      "ugc_personas",
+      "GET",
+      `?select=${cols}&order=created_at.desc&limit=${limit}`,
+      undefined,
+      15000, // images are inline base64 — give the read room
+    );
+    return (Array.isArray(result) ? result : []) as PersonaRecord[];
+  } catch (e) {
+    console.error("[supabase] fetchPersonas failed:", String(e));
+    return [];
+  }
+}
+
+export async function savePersona(
+  persona: Omit<PersonaRecord, "id" | "created_at"> & { id?: string },
+): Promise<{ ok: boolean; persona?: PersonaRecord; error?: string }> {
+  const config = getSupabaseConfig();
+  if (!config) return { ok: false, error: "Supabase not configured" };
+  try {
+    const rows = await supabaseRest("ugc_personas", "POST", "", persona, 20000);
+    const row = Array.isArray(rows) ? rows[0] : rows;
+    return { ok: true, persona: (row ?? undefined) as PersonaRecord | undefined };
+  } catch (e) {
+    const error = String(e);
+    console.error("[supabase] savePersona failed:", error);
+    return { ok: false, error };
+  }
+}
+
+/** Patch a persona's mutable fields (name / images). Used by rename + add-angles. */
+export async function updatePersona(
+  id: string,
+  patch: Partial<Pick<PersonaRecord, "name" | "images">>,
+): Promise<{ ok: boolean; persona?: PersonaRecord; error?: string }> {
+  const config = getSupabaseConfig();
+  if (!config) return { ok: false, error: "Supabase not configured" };
+  try {
+    const rows = await supabaseRest("ugc_personas", "PATCH", `?id=eq.${encodeURIComponent(id)}`, patch, 20000);
+    const row = Array.isArray(rows) ? rows[0] : rows;
+    return { ok: true, persona: (row ?? undefined) as PersonaRecord | undefined };
+  } catch (e) {
+    const error = String(e);
+    console.error("[supabase] updatePersona failed:", error);
+    return { ok: false, error };
+  }
+}
+
+export async function deletePersona(id: string): Promise<{ ok: boolean; error?: string }> {
+  const config = getSupabaseConfig();
+  if (!config) return { ok: false, error: "Supabase not configured" };
+  try {
+    await supabaseRest("ugc_personas", "DELETE", `?id=eq.${encodeURIComponent(id)}`);
+    return { ok: true };
+  } catch (e) {
+    const error = String(e);
+    console.error("[supabase] deletePersona failed:", error);
+    return { ok: false, error };
+  }
+}

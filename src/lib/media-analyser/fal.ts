@@ -28,7 +28,7 @@ export function arkTaskIdFromHandle(url: string): string {
  *  ARK equivalent and stay on FAL). A per-request `provider` overrides the env default:
  *  "fal" forces FAL, "ark" forces ARK (when a key is configured), "auto"/undefined defers
  *  to the SEEDANCE_PROVIDER env default. */
-function shouldRenderOnArk(model?: VideoModelId, provider?: SeedanceProvider): boolean {
+export function shouldRenderOnArk(model?: VideoModelId, provider?: SeedanceProvider): boolean {
   if (normalizeVideoModel(model).id !== "seedance-2") return false;
   if (provider === "fal") return false;
   if (provider === "ark") return arkConfigured();
@@ -238,6 +238,35 @@ export async function generateElevenLabsSpeech(
 }
 
 /**
+ * Indian-voice TTS via FAL Kokoro (Hindi pack). ElevenLabs on FAL only exposes US/UK/AU
+ * premade voices, so for a genuine Indian voice we use Kokoro's Hindi voices
+ * (hf_alpha / hf_beta = female, hm_omega / hm_psi = male). Reads the text and returns the audio URL.
+ * VERIFY: https://fal.ai/models/fal-ai/kokoro/hindi
+ */
+export async function generateKokoroSpeech(
+  apiKey: string,
+  opts: { text: string; voice: string },
+): Promise<FalAudio> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 120_000);
+  try {
+    const res = await fetch(`${FAL_BASE}/fal-ai/kokoro/hindi`, {
+      method: "POST",
+      headers: { Authorization: `Key ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: opts.text, voice: opts.voice }),
+      signal: ctrl.signal,
+    });
+    if (!res.ok) {
+      const err = await res.text().catch(() => "");
+      throw new Error(`FAL Kokoro TTS HTTP ${res.status}: ${err.slice(0, 200)}`);
+    }
+    return extractFalAudio(await res.json() as Record<string, unknown>);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * Zero-shot VOICE CLONE via FAL F5-TTS: speak `text` in the voice of a reference audio sample —
  * one call, reuses FAL_KEY (no ElevenLabs account). ref_text is auto-transcribed when omitted.
  * Returns the generated speech URL. `refAudioUrl` must be HTTP (upload data: URLs to FAL first).
@@ -267,16 +296,19 @@ export async function cloneVoiceWithF5TTS(
 export async function transcribeAudioWithFal(
   apiKey: string,
   audioUrl: string,
+  language?: string,   // ISO-639-1 hint (e.g. "hi") — without it Whisper auto-detects and often garbles Hindi
 ): Promise<{ text: string; cues: { text: string; start: number; end: number }[] }> {
   // Both models are Whisper v3. Prefer fal-ai/whisper with WORD-level timestamps (tight
   // caption sync); if it errors, fall back to wizper (fal's optimized Whisper, segment-only).
   // The cue builder below normalises whichever granularity comes back, so sync stays good.
+  const lang = language ? { language } : {};
   let data: Record<string, unknown>;
   try {
     data = await runFalQueueModel(apiKey, "fal-ai/whisper", {
       audio_url: audioUrl,
       task: "transcribe",
       chunk_level: "word",
+      ...lang,
     }, { timeoutMs: 180_000 });
   } catch (e) {
     console.warn(`[transcribe] fal-ai/whisper word-level failed, falling back to wizper segment: ${e instanceof Error ? e.message : e}`);
@@ -284,6 +316,7 @@ export async function transcribeAudioWithFal(
       audio_url: audioUrl,
       task: "transcribe",
       chunk_level: "segment",
+      ...lang,
     }, { timeoutMs: 180_000 });
   }
 
@@ -575,7 +608,7 @@ export async function generateImageWithNanoBananaPro(
   }
 }
 
-export type FalAspect = "1:1" | "4:5" | "9:16" | "16:9" | "auto";
+export type FalAspect = "1:1" | "4:5" | "9:16" | "16:9" | "21:9" | "auto";
 
 /**
  * Seedream v5 image_size. For 2K/4K we pass FAL's documented `auto_2K` / `auto_4K`

@@ -24,18 +24,28 @@
 import type { FalAspect, FalQueueStatus, FalVideo } from "./fal";
 
 const DEFAULT_BASE = "https://ark.ap-southeast.bytepluses.com/api/v3";
-const DEFAULT_MODEL = "dreamina-seedance-2-0-260128";
+const DEFAULT_MODEL = "dreamina-seedance-2-0-260128";        // Seedance 2.0 (r2v ≤15s)
+const DEFAULT_SEEDANCE_25 = "dreamina-seedance-2-5-260628";  // Seedance 2.5 (r2v ≤30s, tolerates AI faces)
 // BytePlus Seedream 5.0 Pro (flagship unified text-to-image + up to 10-ref editing),
 // per docs.byteplus.com/en/docs/ModelArk. Override with ARK_SEEDREAM_MODEL if needed.
 // The account must ACTIVATE this model in the Ark console (else ARK 404s → FAL fallback).
-const DEFAULT_SEEDREAM_MODEL = "seedream-5-0-pro";
+const DEFAULT_SEEDREAM_MODEL = "dola-seedream-5-0-pro-260628";
 
 export function arkBaseUrl(): string {
   return (process.env.ARK_BASE_URL || DEFAULT_BASE).replace(/\/$/, "");
 }
 
-export function arkSeedanceModel(): string {
-  return process.env.ARK_SEEDANCE_MODEL || DEFAULT_MODEL;
+/**
+ * Resolve the ARK Seedance model id for a requested video-model id ("seedance-2-5" /
+ * "seedance-2"). The per-request choice wins over the ARK_SEEDANCE_MODEL env default so
+ * the UI's video-model dropdown actually controls which Seedance version renders — the
+ * env default only applies to 2.0 / unknown ids. (Both models are activated on the
+ * account; verified live via GET /models.)
+ */
+export function arkSeedanceModel(videoModelId?: string): string {
+  const id = (videoModelId ?? "").trim().toLowerCase().replace(/[.\s]+/g, "-");
+  if (id === "seedance-2-5") return (process.env.ARK_SEEDANCE_MODEL_25 || DEFAULT_SEEDANCE_25).trim();
+  return (process.env.ARK_SEEDANCE_MODEL || DEFAULT_MODEL).trim();
 }
 
 export function arkSeedreamModel(): string {
@@ -79,6 +89,8 @@ export type ArkImageRole = "first_frame" | "last_frame" | "reference_image";
 
 export interface ArkSeedanceOpts {
   task: "i2v" | "ref";
+  /** Requested video-model id ("seedance-2-5" | "seedance-2") → selects the ARK model. */
+  videoModelId?: string;
   prompt: string;
   imageUrl?: string;             // i2v start frame
   endImageUrl?: string | null;   // i2v end frame
@@ -118,7 +130,7 @@ function arkKey(): string {
 /** Create a Seedance generation task on ARK — returns the task id (does not wait). */
 export async function submitArkSeedanceTask(opts: ArkSeedanceOpts): Promise<string> {
   const body = {
-    model: arkSeedanceModel(),
+    model: arkSeedanceModel(opts.videoModelId),
     content: buildArkContent(opts),
     ratio: mapArkRatio(opts.aspect),
     resolution: opts.resolution ?? "720p",
@@ -232,7 +244,7 @@ export async function renderArkSeedance(
   const deadline = Date.now() + timeoutMs;
 
   const taskId = await submitArkSeedanceTask(opts);
-  console.log(`[ark-seedance] submitted task=${taskId} model=${arkSeedanceModel()} timeoutMs=${timeoutMs}`);
+  console.log(`[ark-seedance] submitted task=${taskId} model=${arkSeedanceModel(opts.videoModelId)} timeoutMs=${timeoutMs}`);
 
   let lastStatus = "";
   while (Date.now() < deadline) {

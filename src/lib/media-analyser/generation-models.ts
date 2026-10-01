@@ -241,3 +241,34 @@ export function resolveElevenVoice(language: string, voiceCharacteristics: strin
     ELEVENLABS_VOICES[0]
   ).id;
 }
+
+// ─── Unified TTS voice picker (ElevenLabs premade + Kokoro Indian) ───────────
+// ElevenLabs on FAL only has US/UK/AU premade voices, so genuine Indian voices come
+// from Kokoro's Hindi pack (fal-ai/kokoro/hindi). A surface picks a voice by id; the
+// route routes to the right provider.
+export interface TtsVoiceEntry {
+  id: string;
+  label: string;
+  provider: "eleven" | "kokoro";
+  /** ElevenLabs voice name, or Kokoro voice code (hf_alpha …). */
+  ref: string;
+  gender: "female" | "male";
+}
+
+export const TTS_VOICES: TtsVoiceEntry[] = [
+  { id: "in-f-warm", label: "Indian · Female — warm", provider: "kokoro", ref: "hf_alpha", gender: "female" },
+  { id: "in-f-bright", label: "Indian · Female — bright", provider: "kokoro", ref: "hf_beta", gender: "female" },
+  { id: "in-m-1", label: "Indian · Male", provider: "kokoro", ref: "hm_omega", gender: "male" },
+  { id: "in-m-2", label: "Indian · Male — deep", provider: "kokoro", ref: "hm_psi", gender: "male" },
+  { id: "us-f-sarah", label: "US · Female — Sarah", provider: "eleven", ref: "Sarah", gender: "female" },
+  { id: "us-f-aria", label: "US · Female — Aria", provider: "eleven", ref: "Aria", gender: "female" },
+  { id: "uk-f-alice", label: "UK · Female — Alice", provider: "eleven", ref: "Alice", gender: "female" },
+  { id: "us-m-adam", label: "US · Male — Adam", provider: "eleven", ref: "Adam", gender: "male" },
+  { id: "uk-m-george", label: "UK · Male — George", provider: "eleven", ref: "George", gender: "male" },
+];
+
+export const DEFAULT_TTS_VOICE = "in-f-warm";
+
+export function resolveTtsVoice(id: string | undefined | null): TtsVoiceEntry {
+  return TTS_VOICES.find(v => v.id === id) ?? TTS_VOICES[0];
+}

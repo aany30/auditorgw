@@ -12,6 +12,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.98.0",
     "@google/generative-ai": "^0.24.1",
+    "@neondatabase/serverless": "^1.1.0",
     "@react-pdf/renderer": "^4.9.0",
     "@supabase/supabase-js": "^2.109.0",
     "@trpc/client": "^11.0.0",
