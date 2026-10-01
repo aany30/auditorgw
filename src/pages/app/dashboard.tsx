@@ -26,6 +26,7 @@ import GenerateReport from "@/components/dashboard/reports/GenerateReport";
 import DashboardReport from "@/components/dashboard/reports/DashboardReport";
 import AskAITab from "@/components/dashboard/tabs/AskAITab";
 import MediaAdsLibraryTab from "@/components/dashboard/MediaAdsLibraryTab";
+import ScanHistoryTab from "@/components/dashboard/ScanHistoryTab";
 import AccountSelector from "@/components/dashboard/AccountSelector";
 import MetaQuotaChip from "@/components/shared/MetaQuotaChip";
 import CampaignObjectiveFilter from "@/components/dashboard/CampaignObjectiveFilter";
@@ -63,6 +64,7 @@ import {
   Briefcase,
   Flame,
   BookOpen,
+  History,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -123,7 +125,15 @@ const NAV: NavGroup[] = [
       { id: "rep-attribution", label: "Attribution Report",  Icon: GitBranch,  platforms: ["meta"] },
       // Planning merged into Dashboard
       { id: "rep-generate",    label: "Generate Report",     Icon: Download  },
-      { id: "media-ads-lib",   label: "Media Ads Library",   Icon: BookOpen  },
+    ],
+  },
+  {
+    id: "ad-library",
+    label: "Ad Library",
+    Icon: BookOpen,
+    children: [
+      { id: "media-ads-lib", label: "Product Intelligence", Icon: Search },
+      { id: "scan-history",  label: "Scan History",         Icon: History },
     ],
   },
   {
@@ -176,7 +186,7 @@ export default function Dashboard() {
   const [customStart, setCustomStart] = useState<string | undefined>();
   const [customEnd, setCustomEnd] = useState<string | undefined>();
   const [selectedObjectives, setSelectedObjectives] = useState<Set<string>>(new Set());
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(["audit", "tracking", "reporting", "insights"]));
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(["audit", "tracking", "reporting", "ad-library", "insights"]));
   const [mounted, setMounted] = useState(false);
   const [dv360AdvOptions, setDv360AdvOptions] = useState<{ id: string; name: string }[] | null>(null);
   const [dv360NeedsAdvertiser, setDv360NeedsAdvertiser] = useState(false);
@@ -409,6 +419,8 @@ export default function Dashboard() {
         return <GenerateReport {...props} />;
       case "media-ads-lib":
         return <MediaAdsLibraryTab />;
+      case "scan-history":
+        return <ScanHistoryTab />;
       // Insights
       case "recommendations":
         return <RecommendationsTab {...props} />;
