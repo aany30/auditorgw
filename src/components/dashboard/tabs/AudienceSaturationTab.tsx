@@ -22,6 +22,8 @@ import { useSort } from "@/hooks/useSort";
 import { ColumnPickerButton, ALL_STANDARD_KPIS, type ColDef } from "@/components/shared/ColumnPicker";
 import { formatStandardKpi, FETCHABLE_KPIS } from "@/lib/standard-kpis";
 import { usePersistentColumns } from "@/hooks/useColumnPrefs";
+import ApplyActionButton from "@/components/apply/ApplyActionButton";
+import type { SetFrequencyCapAction } from "@/lib/apply/types";
 
 interface Props {
   platform: "meta" | "dv360" | "both";
@@ -189,7 +191,7 @@ function SaturationAnalysis({ adsets, loading, currency }: { adsets: ReturnType<
                   <td className="px-4 py-2.5 text-center">
                     <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${color}`}>{label}</span>
                     {label !== "Healthy" && (
-                      <div className="mt-1">
+                      <div className="mt-1 space-y-1">
                         <AIRecommendationButton
                           metric={`Audience fatigue — ${a.name}`}
                           value={a.frequency}
@@ -197,6 +199,20 @@ function SaturationAnalysis({ adsets, loading, currency }: { adsets: ReturnType<
                           platform="meta"
                           auditContext={{ module: "Audience Saturation", siblingMetrics: { frequency: a.frequency, ctr: +a.ctr.toFixed(2), cpm: +a.cpm.toFixed(2) } }}
                         />
+                        {label === "Critical" && (() => {
+                          const action: SetFrequencyCapAction = {
+                            id: `freqcap-meta-${a.id}`,
+                            platform: "meta",
+                            entityType: "adset",
+                            entityId: a.id,
+                            entityName: a.name,
+                            kind: "set_frequency_cap",
+                            from: null,
+                            to: { impressions: 3, days: 7 },
+                            reason: `Fatigue critical: frequency ${a.frequency.toFixed(1)}×, CTR ${a.ctr.toFixed(2)}% — cap to 3 impressions / 7 days to reduce exposure.`,
+                          };
+                          return <ApplyActionButton action={action} compact />;
+                        })()}
                       </div>
                     )}
                   </td>

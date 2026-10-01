@@ -27,6 +27,7 @@ import DashboardReport from "@/components/dashboard/reports/DashboardReport";
 import AskAITab from "@/components/dashboard/tabs/AskAITab";
 import MediaAdsLibraryTab from "@/components/dashboard/MediaAdsLibraryTab";
 import ScanHistoryTab from "@/components/dashboard/ScanHistoryTab";
+import ChangeLogPanel from "@/components/apply/ChangeLogPanel";
 import {
   ResearchChatTab,
   AgentReadyTab,
@@ -196,6 +197,7 @@ const NAV: NavGroup[] = [
     children: [
       { id: "recommendations", label: "AI Recommendations", Icon: Bot },
       { id: "ask-ai",          label: "Ask AI",             Icon: Sparkles  },
+      { id: "change-log",      label: "Change Log",         Icon: History   },
     ],
   },
 ];
@@ -515,6 +517,8 @@ export default function Dashboard() {
         return <RecommendationsTab {...props} />;
       case "ask-ai":
         return <AskAITab {...props} />;
+      case "change-log":
+        return <ChangeLogPanel />;
       default:
         return <PixelHealthTab {...props} />;
     }

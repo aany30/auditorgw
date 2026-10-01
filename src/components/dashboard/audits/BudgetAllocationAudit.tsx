@@ -10,6 +10,8 @@ import { currencyFor, formatMoney } from "@/lib/currency";
 import { TrendingUp, TrendingDown, AlertCircle, CheckCircle2, Sparkles, Loader2 } from "lucide-react";
 import { toDisplayCredits } from "@/lib/ai-cost";
 import { isDemoCredential } from "@/lib/demo-data";
+import ApplyActionButton from "@/components/apply/ApplyActionButton";
+import type { ApplyAction } from "@/lib/apply/types";
 
 function fmtInt(n: number | undefined): string {
   if (n === undefined || n === null || isNaN(n)) return "—";
@@ -227,7 +229,80 @@ function computeDV360Tip(c: CampaignData, currency: string, win?: { startDate: s
   return { kind: "adSetLevel", severity: "info", label: "IO-level budget", detail: `Spend managed at insertion-order level. Total: ${formatMoney(spend, currency, 0)} in window.`, isSpike: false, sevRank: 1 };
 }
 
-function TipCell({ tip, campaignContext, isDemo, platform }: { tip: Tip; campaignContext: Record<string, unknown>; isDemo: boolean; platform: string }) {
+function buildApplyActionForTip(
+  tip: Tip,
+  c: CampaignData,
+  currency: string,
+  budget: number,
+  budgetType: string,
+): ApplyAction | null {
+  // Only Meta campaign/adset-level budget mutations are supported here right now.
+  // (DV360 needs lineItem/IO ids which the row-level campaign doesn't expose.)
+  if (c.platform !== "meta") return null;
+  const entityType = "campaign" as const;
+  const base = {
+    id: `apply-${c.platform}-${c.id}-${tip.kind}`,
+    platform: "meta" as const,
+    entityType,
+    entityId: c.id,
+    entityName: c.name,
+    reason: `${tip.label}: ${tip.detail}`,
+  };
+
+  if (tip.kind === "spike" || tip.kind === "overPacing") {
+    // Over-pacing / spike → suggest lowering the budget by ~15%.
+    if (!budget || budgetType === "none") return null;
+    const to = Math.max(1, Math.round(budget * 0.85));
+    if (to === Math.round(budget)) return null;
+    return {
+      ...base,
+      kind: "set_budget",
+      budgetType: budgetType === "lifetime" ? "lifetime" : "daily",
+      from: Math.round(budget * 100), // minor units
+      to: to * 100,
+      currency,
+    };
+  }
+
+  if (tip.kind === "underPacing") {
+    // Under-pacing → suggest lowering budget by ~20% to match actual delivery.
+    if (!budget || budgetType === "none") return null;
+    const to = Math.max(1, Math.round(budget * 0.80));
+    if (to === Math.round(budget)) return null;
+    return {
+      ...base,
+      kind: "set_budget",
+      budgetType: budgetType === "lifetime" ? "lifetime" : "daily",
+      from: Math.round(budget * 100),
+      to: to * 100,
+      currency,
+    };
+  }
+
+  if (tip.kind === "noDelivery") {
+    // Zero delivery despite ACTIVE → recommend pausing until investigated.
+    return {
+      ...base,
+      kind: "set_status",
+      from: "ACTIVE",
+      to: "PAUSED",
+    };
+  }
+
+  return null;
+}
+
+function TipCell({ tip, campaignContext, isDemo, platform, campaign, currency, budget, budgetType }: {
+  tip: Tip;
+  campaignContext: Record<string, unknown>;
+  isDemo: boolean;
+  platform: string;
+  campaign: CampaignData;
+  currency: string;
+  budget: number;
+  budgetType: string;
+}) {
+  const applyAction = isDemo ? null : buildApplyActionForTip(tip, campaign, currency, budget, budgetType);
   const styles = {
     high:   { ring: "ring-red-200 bg-red-50",       pill: "bg-red-100 text-red-700",       Icon: AlertCircle,   iconClass: "text-red-600" },
     medium: { ring: "ring-yellow-200 bg-yellow-50", pill: "bg-yellow-100 text-yellow-700", Icon: tip.kind === "overPacing" ? TrendingUp : TrendingDown, iconClass: "text-yellow-600" },
@@ -245,6 +320,11 @@ function TipCell({ tip, campaignContext, isDemo, platform }: { tip: Tip; campaig
         <div className="text-[11px] text-gray-600 leading-snug mt-1">{tip.detail}</div>
         {tip.severity !== "info" && (
           <RowAiReco isDemo={isDemo} findingLabel={tip.label} findingDetail={tip.detail} campaignContext={campaignContext} platform={platform} />
+        )}
+        {applyAction && (
+          <div className="mt-2">
+            <ApplyActionButton action={applyAction} compact />
+          </div>
         )}
       </div>
     </div>
@@ -339,6 +419,10 @@ function SpendTable({ rows, currency, totalSpend, totalImpressions, totalClicks,
                     tip={r.tip}
                     isDemo={isDemo}
                     platform={platform}
+                    campaign={r.c}
+                    currency={currency}
+                    budget={r.budget}
+                    budgetType={r.budgetType}
                     campaignContext={{
                       name: r.name, status: r.status, objective: r.objective,
                       dailyBudget: r.budget, budgetType: r.budgetType,

@@ -1,3 +1,4 @@
+import { AlertTriangle, ShieldCheck } from "lucide-react";
 import CredentialInput from "@/components/forms/CredentialInput";
 import GuideSection, { GuideLink, GuideButton, GuideCode } from "./GuideSection";
 
@@ -99,6 +100,70 @@ export default function MetaGuide({ onClose }: Props) {
 
       <GuideSection
         number={2}
+        title="Enable write access (required for Apply)"
+        summary="Grants ads_management scope so the dashboard can apply AI recommendations"
+        yieldsLabel="Write scope"
+        subSteps={[
+          {
+            heading: ((
+              <span className="inline-flex items-start gap-2 text-amber-900 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-1.5 w-full">
+                <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
+                <span>
+                  <strong>This step changes permission scope.</strong> The dashboard&apos;s new &quot;Apply AI Recommendation&quot; feature writes changes back to Meta Ads Manager (change budgets, pause campaigns, update frequency caps). Read-only tokens can&apos;t do this — grant <GuideCode>ads_management</GuideCode> scope below.
+                </span>
+              </span>
+            ) as unknown) as string,
+            steps: [],
+          },
+          {
+            heading: "Option A — If you're using a System User token (from Section 1)",
+            steps: [
+              <>
+                Open <GuideLink href="https://business.facebook.com/settings">Meta Business Suite → Business Settings</GuideLink> → <GuideButton>System Users</GuideButton> → select your system user.
+              </>,
+              <>
+                Click <GuideButton>Add Assets</GuideButton> → <GuideButton>Pixels</GuideButton> (and <GuideButton>Ad Accounts</GuideButton> if not already added) → select each → set permission level to <strong>&quot;Manage&quot;</strong> (NOT &quot;View Only&quot;). <strong>&quot;Manage&quot; grants write access.</strong>
+              </>,
+              <>
+                Click <GuideButton>Generate New Token</GuideButton> for that system user. Under <strong>Available Permissions</strong> check <strong>both</strong>: <GuideCode>ads_read</GuideCode> (lets us read data) and <GuideCode>ads_management</GuideCode> (lets us apply recommended changes — this is the write scope).
+              </>,
+              <>
+                Copy the new token and replace the one you pasted earlier in the Manual Token tab (Section 5 below).
+              </>,
+              <>
+                The dashboard will auto-detect the new scope. If <GuideButton>Apply</GuideButton> buttons are still greyed out after reconnecting, log out and log back in.
+              </>,
+            ],
+          },
+          {
+            heading: "Option B — If you're using the OAuth \"Connect with Meta\" button",
+            steps: [
+              <>
+                When you click <GuideButton>Connect with Meta</GuideButton>, the consent screen will ask for <strong>&quot;Manage ads&quot;</strong> — approve it.
+              </>,
+              <>
+                If you previously granted read-only access, go to <GuideLink href="https://www.facebook.com/settings?tab=business_tools">Meta → Settings → Business Integrations</GuideLink> → <strong>auditor</strong> → <GuideButton>Edit Settings</GuideButton> → turn on <strong>&quot;Manage ads and ad campaigns&quot;</strong> → <GuideButton>Save</GuideButton>.
+              </>,
+            ],
+          },
+          {
+            heading: ((
+              <span className="inline-flex items-center gap-2 text-emerald-900">
+                <ShieldCheck className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                <span>Safety &amp; reversibility</span>
+              </span>
+            ) as unknown) as string,
+            steps: [
+              <>
+                You can revoke write access at any time from <strong>Meta Business Suite → Business Integrations</strong> without disconnecting the read access. All applied changes are logged in the dashboard&apos;s <strong>Change Log</strong> tab and can be undone within 5 minutes.
+              </>,
+            ],
+          },
+        ]}
+      />
+
+      <GuideSection
+        number={3}
         title="Find your Ad Account ID"
         summary="The unique ID for your Meta Ads account (not your Business Manager ID)"
         yieldsLabel="Ad Account ID"
@@ -124,7 +189,7 @@ export default function MetaGuide({ onClose }: Props) {
       />
 
       <GuideSection
-        number={3}
+        number={4}
         title="Find your Pixel ID(s)"
         summary="One or more pixels you want to audit"
         yieldsLabel="Pixel ID"
@@ -149,7 +214,7 @@ export default function MetaGuide({ onClose }: Props) {
       />
 
       <GuideSection
-        number={4}
+        number={5}
         title="CAPI (Conversion API) — what you need to know"
         summary="Auditing CAPI needs nothing extra. Implementation is separate."
         yieldsLabel="No extra setup"
@@ -187,7 +252,7 @@ export default function MetaGuide({ onClose }: Props) {
 
       {/* Inline credential form */}
       <div className="border-t-2 border-gray-200 pt-5 mt-6">
-        <h4 className="text-lg font-bold text-gray-900 mb-1">5 · Paste & Verify</h4>
+        <h4 className="text-lg font-bold text-gray-900 mb-1">6 · Paste & Verify</h4>
         <p className="text-sm text-gray-600 mb-4">
           Paste the Access Token, Business ID, and Pixel ID(s) you collected above.
         </p>

@@ -1,3 +1,4 @@
+import { AlertTriangle, ShieldCheck } from "lucide-react";
 import CredentialInput from "@/components/forms/CredentialInput";
 import GuideSection, { GuideLink, GuideButton, GuideCode } from "./GuideSection";
 
@@ -67,6 +68,67 @@ export default function DV360Guide({ onClose }: Props) {
 
       <GuideSection
         number={2}
+        title="Enable DV360 write access (required for Apply)"
+        summary="Grants the full display-video scope so the dashboard can apply AI recommendations"
+        yieldsLabel="Write scope"
+        subSteps={[
+          {
+            heading: ((
+              <span className="inline-flex items-start gap-2 text-amber-900 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-1.5 w-full">
+                <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
+                <span>
+                  <strong>This step changes permission scope.</strong> The dashboard&apos;s new &quot;Apply AI Recommendation&quot; feature writes changes back to DV360 (change budgets, pause line items, update frequency caps). Read-only tokens can&apos;t do this — grant the full <GuideCode>display-video</GuideCode> scope below.
+                </span>
+              </span>
+            ) as unknown) as string,
+            steps: [],
+          },
+          {
+            heading: "Step 2.1 — Upgrade the OAuth scope from readonly to full",
+            steps: [
+              <>
+                The dashboard&apos;s <GuideButton>Connect DV360</GuideButton> OAuth flow uses <GuideCode>https://www.googleapis.com/auth/display-video.readonly</GuideCode> by default (read only). To enable <strong>Apply</strong>, we need the full scope <GuideCode>https://www.googleapis.com/auth/display-video</GuideCode>.
+              </>,
+              <>
+                If you previously connected with read-only, click <GuideButton>Disconnect DV360</GuideButton> from the Logout menu, then reconnect — the consent screen now requests the write scope.
+              </>,
+              <>
+                On the Google consent screen, make sure the checkbox for <strong>&quot;View and manage Display &amp; Video 360 entities&quot;</strong> is checked (not just &quot;View&quot;).
+              </>,
+            ],
+          },
+          {
+            heading: "Step 2.2 — Confirm your DV360 user role",
+            steps: [
+              <>
+                In DV360 itself, your user needs the <strong>Admin</strong> or <strong>Standard</strong> role on the advertiser — <strong>&quot;Reporting Only&quot;</strong> or <strong>&quot;Read Only&quot;</strong> roles cannot write via API even with the scope granted.
+              </>,
+              <>
+                To check: <GuideLink href="https://displayvideo.google.com">DV360</GuideLink> → <GuideButton>Advertiser Settings</GuideButton> → <GuideButton>Users</GuideButton> → find your user → confirm role is <strong>Admin</strong> or <strong>Standard</strong>.
+              </>,
+              <>
+                If <GuideButton>Apply</GuideButton> buttons stay greyed out after reconnecting, confirm your DV360 user role and reconnect once more.
+              </>,
+            ],
+          },
+          {
+            heading: ((
+              <span className="inline-flex items-center gap-2 text-emerald-900">
+                <ShieldCheck className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                <span>Safety &amp; reversibility</span>
+              </span>
+            ) as unknown) as string,
+            steps: [
+              <>
+                Revoke anytime at <GuideLink href="https://myaccount.google.com/permissions">myaccount.google.com → Security → Third-party apps</GuideLink> → <strong>auditor</strong>. All applied changes are logged in the <strong>Change Log</strong> tab and can be undone within 5 minutes.
+              </>,
+            ],
+          },
+        ]}
+      />
+
+      <GuideSection
+        number={3}
         title="Enable the two APIs in Google Cloud"
         summary="Display & Video 360 API + DoubleClick Bid Manager API — one-time"
         yieldsLabel="APIs enabled"
@@ -88,7 +150,7 @@ export default function DV360Guide({ onClose }: Props) {
       />
 
       <GuideSection
-        number={3}
+        number={4}
         title="Create an OAuth client"
         summary="Web-application client with the OAuth Playground as redirect URI"
         yieldsLabel="Client ID + Secret"
@@ -122,7 +184,7 @@ export default function DV360Guide({ onClose }: Props) {
       />
 
       <GuideSection
-        number={4}
+        number={5}
         title="Mint the Refresh Token in OAuth Playground"
         summary="Authorize the display-video + doubleclickbidmanager scopes once"
         yieldsLabel="Refresh Token"
@@ -147,7 +209,7 @@ export default function DV360Guide({ onClose }: Props) {
       />
 
       <GuideSection
-        number={5}
+        number={6}
         title="Find your Advertiser ID (and Partner ID)"
         summary="Both are right in the DV360 URL"
         yieldsLabel="Advertiser ID"
