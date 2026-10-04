@@ -323,7 +323,10 @@ function whyStuck(
 // ─── component ──────────────────────────────────────────────────────────────
 
 export default function LearningPhaseAudit({ campaigns }: AuditProps) {
-  const { metaAccessToken } = useAuthStore();
+  const { metaAccessToken, dv360RefreshToken } = useAuthStore();
+  const isDemo =
+    (!metaAccessToken || isDemoCredential(metaAccessToken)) &&
+    (!dv360RefreshToken || isDemoCredential(dv360RefreshToken));
   const currency = currencyFor(campaigns, "meta");
 
   // Active-only filter (client pointer #9).
@@ -513,6 +516,44 @@ export default function LearningPhaseAudit({ campaigns }: AuditProps) {
                 </tr>
               ) : (
                 sortedRows.slice(0, 50).map(({ campaign: c, phase, phaseSource, structure, daysSinceEdit, daysActive, conv7d, optGoal, reasons }) => {
+                  const isCampActive = /ACTIVE|ENABLED/i.test(c.status || "");
+                  // Build a budget-raise Apply action when learning is limited
+                  // specifically because budget is below the 50-events need.
+                  const _cpa = (c.conversions ?? 0) > 0 ? (c.spend ?? 0) / (c.conversions ?? 1) : null;
+                  const _reqWeekly = _cpa !== null ? _cpa * 50 : null;
+                  const _needDaily = _reqWeekly !== null ? Math.ceil(_reqWeekly / 7) : null;
+                  const limitedApply: SetBudgetAction | null =
+                    !isDemo && isCampActive && c.platform === "meta" && phase === "Limited"
+                    && c.dailyBudget && c.dailyBudget > 0 && _needDaily && _needDaily > c.dailyBudget * 1.05
+                    ? {
+                        id: `apply-meta-campaign-${c.id}-learning-budget`,
+                        kind: "set_budget",
+                        platform: "meta",
+                        entityType: "campaign",
+                        entityId: c.id,
+                        entityName: c.name,
+                        reason: `Learning limited — needs ~${_needDaily}/day to reach 50 events/week at current CPA`,
+                        budgetType: "daily",
+                        from: Math.round(c.dailyBudget * 100),
+                        to: Math.round(_needDaily * 100),
+                        currency,
+                      }
+                    : null;
+                  // ExitedLowSignal → suggest a Pause.
+                  const exitedLowPause =
+                    !isDemo && isCampActive && c.platform === "meta" && phase === "ExitedLowSignal"
+                    ? {
+                        id: `apply-meta-campaign-${c.id}-exited-pause`,
+                        kind: "set_status" as const,
+                        platform: "meta" as const,
+                        entityType: "campaign" as const,
+                        entityId: c.id,
+                        entityName: c.name,
+                        reason: "Exited learning without hitting 50 events — unlikely to stabilise",
+                        from: "ACTIVE" as const,
+                        to: "PAUSED" as const,
+                      }
+                    : null;
                   // 50-event progress bar
                   const conv = conv7d ?? 0;
                   const progressPct = Math.min(100, Math.round((conv / 50) * 100));
@@ -645,6 +686,16 @@ export default function LearningPhaseAudit({ campaigns }: AuditProps) {
                               </li>
                             ))}
                           </ul>
+                        )}
+                        {limitedApply && (
+                          <div className="mt-2">
+                            <ApplyActionButton action={limitedApply} compact />
+                          </div>
+                        )}
+                        {exitedLowPause && (
+                          <div className="mt-2">
+                            <ApplyActionButton action={exitedLowPause} compact />
+                          </div>
                         )}
                       </td>
                     </tr>

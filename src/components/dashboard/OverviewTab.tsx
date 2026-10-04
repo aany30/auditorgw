@@ -6,6 +6,9 @@ import { useAudit } from "@/hooks/useAudit";
 import type { DateRange } from "@/components/shared/DateRangePicker";
 import SourceBadge from "@/components/shared/SourceBadge";
 import AIRecommendationButton from "@/components/shared/AIRecommendationButton";
+import ApplyActionButton from "@/components/apply/ApplyActionButton";
+import { useAuthStore } from "@/store/auth";
+import { isDemoCredential } from "@/lib/demo-data";
 import { CheckCircle2, AlertCircle, Activity, RefreshCw, TrendingDown, TrendingUp } from "lucide-react";
 import LoadingState from "@/components/shared/LoadingState";
 import TabSummaryFooter from "@/components/shared/TabSummaryFooter";
@@ -35,6 +38,10 @@ const priorityColor = (p: string) =>
 
 export default function OverviewTab({ platform, dateRange, customStart, customEnd, setActiveTab }: OverviewTabProps) {
   const { meta, loading, source, refresh } = useAudit(platform, dateRange, customStart, customEnd);
+  const { metaAccessToken, dv360RefreshToken } = useAuthStore();
+  const isDemo =
+    (!metaAccessToken || isDemoCredential(metaAccessToken)) &&
+    (!dv360RefreshToken || isDemoCredential(dv360RefreshToken));
 
   if (loading) {
     return <LoadingState message="Loading audit data…" />;
@@ -171,6 +178,9 @@ export default function OverviewTab({ platform, dateRange, customStart, customEn
                             auditContext={{ module: "Overview", siblingMetrics: { priority: r.priority, confidence: r.confidence, impact: r.impact } }}
                             compact
                           />
+                        )}
+                        {r.applyAction && !isDemo && (
+                          <ApplyActionButton action={r.applyAction} compact />
                         )}
                       </div>
                     </td>

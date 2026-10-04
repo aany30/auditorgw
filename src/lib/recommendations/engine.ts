@@ -7,6 +7,7 @@
  */
 
 import type { MetaPixelStats } from "../api-clients/meta";
+import type { ApplyAction } from "../apply/types";
 
 export interface Recommendation {
   id: string;
@@ -23,6 +24,11 @@ export interface Recommendation {
   effort: "Quick" | "Medium" | "High";
   confidence: number;
   estimatedDataLoss?: number;
+  /** Opt-in: a concrete, one-click apply-able action tied to a SPECIFIC
+   *  entity (campaign/adset/lineitem/IO). Only populate when the rule
+   *  function knows the real entity id + current state — never fabricate.
+   *  Aggregate recs ("across all campaigns…") must omit this. */
+  applyAction?: ApplyAction;
 }
 
 // Benchmarks (from official Meta + Google docs)

@@ -3,6 +3,7 @@ import { TermText } from "@/components/shared/Term";
 import FixRecommendation from "@/components/shared/FixRecommendation";
 import type { CampaignData } from "@/types";
 import type { AccountContext } from "./types";
+import type { ApplyContext } from "@/lib/apply/apply-context";
 
 export interface FixContext {
   /** Stable metric ID (e.g. "budget_overspending", "emq_low"). */
@@ -18,6 +19,10 @@ export interface FixContext {
     module: string;
     siblingMetrics?: Record<string, string | number>;
   };
+  /** Opt-in: when the AI's reply parses into a budget/pause/resume/freq-cap
+   *  action, render the Apply button inside the fix panel using this entity's
+   *  details. Only populate when a real entity id + current state is known. */
+  applyContext?: ApplyContext;
 }
 
 interface KpiCardProps {
@@ -53,6 +58,7 @@ export function KpiCard({ label, value, subLabel, tone = "default", fixContext }
           campaignContext={fixContext!.campaignContext}
           accountContext={fixContext!.accountContext}
           auditContext={fixContext!.auditContext}
+          applyContext={fixContext!.applyContext}
         />
       )}
     </div>

@@ -6,6 +6,10 @@ import { useDV360Attribution, type DV360AttributionState } from "@/hooks/useDV36
 import { useState, useMemo } from "react";
 import type { DateRange } from "@/components/shared/DateRangePicker";
 import type { Recommendation } from "@/lib/recommendations/engine";
+import type { ApplyAction } from "@/lib/apply/types";
+import ApplyActionButton from "@/components/apply/ApplyActionButton";
+import { useAuthStore } from "@/store/auth";
+import { isDemoCredential } from "@/lib/demo-data";
 import { RefreshCw, Bot, Filter, TrendingUp, Users, Image as ImageIcon, BarChart2, Target } from "lucide-react";
 import LoadingState from "@/components/shared/LoadingState";
 import AnimatedNumber from "@/components/shared/AnimatedNumber";
@@ -172,27 +176,62 @@ function campaignRecs(campaigns: any[]): Recommendation[] {
     });
   }
 
-  // Zero-conversion campaigns with significant spend
+  // Zero-conversion campaigns with significant spend — emit per-campaign recs
+  // with a one-click Pause apply-action when the campaign is Meta and active.
   const zeroCvCamps = campaigns.filter(c => (c.conversions || 0) === 0 && (c.spend || 0) > totalSpend * 0.05);
-  if (zeroCvCamps.length > 0) {
+  for (const c of zeroCvCamps) {
+    const isMeta = c.platform === "meta";
+    const isActive = /ACTIVE|ENABLED/i.test(c.status || "");
+    const applyAction: ApplyAction | undefined = (isMeta && isActive && c.id && c.name) ? {
+      id: `apply-meta-campaign-${c.id}-pause`,
+      kind: "set_status",
+      platform: "meta",
+      entityType: "campaign",
+      entityId: c.id,
+      entityName: c.name,
+      reason: `Zero conversions on ₹${Math.round(c.spend).toLocaleString("en-IN")} spend`,
+      from: "ACTIVE",
+      to: "PAUSED",
+    } : undefined;
     recs.push({
-      id: `camp-zero-conversions`, priority: "High", platform: "Meta", category: "Funnel",
-      issue: `${zeroCvCamps.length} campaign(s) spending with zero conversions`,
-      details: `Campaigns with no conversions: ${zeroCvCamps.slice(0, 3).map(c => `"${c.name}"`).join(", ")}${zeroCvCamps.length > 3 ? ` +${zeroCvCamps.length - 3} more` : ""}. These account for ${((zeroCvCamps.reduce((s, c) => s + c.spend, 0) / totalSpend) * 100).toFixed(0)}% of total spend.`,
-      action: "Review conversion tracking for these campaigns. If tracking is correct, pause and reallocate budget to converting campaigns.",
+      id: `camp-zero-conv-${c.id}`, priority: "High", platform: "Meta", category: "Funnel",
+      issue: `"${c.name}" spending with zero conversions`,
+      details: `${((c.spend / totalSpend) * 100).toFixed(0)}% of total spend on this campaign has produced no conversions. Likely a tracking break or genuine under-performance.`,
+      action: "Review conversion tracking; if correct, pause and reallocate.",
       impact: 5, effort: "Quick", confidence: 85,
+      ...(applyAction ? { applyAction } : {}),
     });
   }
 
-  // High-ROAS campaigns that are budget-constrained (low spend share but top roas)
+  // High-ROAS campaigns that are budget-constrained — emit per-campaign recs
+  // with a +25% budget-raise Apply when the campaign is Meta, active, and has
+  // a known daily budget.
   const highRoas = campaigns.filter(c => c.spend > 0 && c.conversionValue > 0 && (c.conversionValue / c.spend) > avgRoas * 1.8 && c.spend / totalSpend < 0.1);
-  if (highRoas.length > 0) {
+  for (const c of highRoas) {
+    const roas = c.conversionValue / c.spend;
+    const budget = c.dailyBudget;
+    const isMeta = c.platform === "meta";
+    const isActive = /ACTIVE|ENABLED/i.test(c.status || "");
+    const applyAction: ApplyAction | undefined = (isMeta && isActive && budget && budget > 0 && c.id && c.name) ? {
+      id: `apply-meta-campaign-${c.id}-budget-up`,
+      kind: "set_budget",
+      platform: "meta",
+      entityType: "campaign",
+      entityId: c.id,
+      entityName: c.name,
+      reason: `High ROAS (${roas.toFixed(2)}×) but under-funded`,
+      budgetType: "daily",
+      from: Math.round(budget * 100),
+      to: Math.round(budget * 1.25) * 100,
+      currency: c.currency || "INR",
+    } : undefined;
     recs.push({
-      id: `camp-high-roas-underfunded`, priority: "High", platform: "Meta", category: "Attribution",
-      issue: `${highRoas.length} high-ROAS campaign(s) receiving too little budget`,
-      details: `${highRoas.slice(0, 2).map(c => `"${c.name}" (${(c.conversionValue / c.spend).toFixed(2)}× ROAS)`).join(", ")} each deliver ${Math.round(1.8)}× the account ROAS but get less than 10% of budget combined.`,
-      action: "Scale budget on these campaigns by 20-30% weekly while monitoring performance. Use Campaign Budget Optimization (CBO) to let Meta auto-allocate.",
+      id: `camp-high-roas-${c.id}`, priority: "High", platform: "Meta", category: "Attribution",
+      issue: `"${c.name}" delivers ${roas.toFixed(2)}× ROAS but gets <10% of budget`,
+      details: `This campaign out-performs the account average (${avgRoas.toFixed(2)}×) by 1.8×+ but receives ${((c.spend / totalSpend) * 100).toFixed(1)}% of total spend. Scaling likely improves overall ROAS.`,
+      action: "Scale budget 20–30% weekly, monitor efficiency curve.",
       impact: 5.5, effort: "Quick", confidence: 82,
+      ...(applyAction ? { applyAction } : {}),
     });
   }
 
@@ -347,15 +386,29 @@ function dv360CampaignRecs(campaigns: any[]): Recommendation[] {
     });
   }
 
-  // Zero-conversion campaigns with significant spend
+  // Zero-conversion DV360 campaigns with significant spend — emit per-campaign
+  // recs with a Pause apply-action when the campaign is active.
   const zeroCvCamps = dv.filter(c => (c.conversions || 0) === 0 && (c.spend || 0) > totalSpend * 0.05);
-  if (zeroCvCamps.length > 0) {
+  for (const c of zeroCvCamps) {
+    const isActive = /ACTIVE|ENABLED/i.test(c.status || "");
+    const applyAction: ApplyAction | undefined = (isActive && c.id && c.name) ? {
+      id: `apply-dv360-campaign-${c.id}-pause`,
+      kind: "set_status",
+      platform: "dv360",
+      entityType: "campaign",
+      entityId: c.id,
+      entityName: c.name,
+      reason: `Zero Floodlight conversions on ₹${Math.round(c.spend).toLocaleString("en-IN")} spend`,
+      from: "ACTIVE",
+      to: "PAUSED",
+    } : undefined;
     recs.push({
-      id: "dv360-camp-zero-conversions", priority: "High", platform: "DV360", category: "Floodlight",
-      issue: `${zeroCvCamps.length} DV360 campaign(s) spending with zero Floodlight conversions`,
-      details: `Campaigns recording no conversions: ${zeroCvCamps.slice(0, 3).map(c => `"${c.name}"`).join(", ")}${zeroCvCamps.length > 3 ? ` +${zeroCvCamps.length - 3} more` : ""}. These account for ${((zeroCvCamps.reduce((s, c) => s + (c.spend || 0), 0) / totalSpend) * 100).toFixed(0)}% of DV360 spend.`,
-      action: "Verify Floodlight tags fire on conversion pages in these campaigns. Check that line items have Floodlight activities assigned in DV360.",
+      id: `dv360-camp-zero-conv-${c.id}`, priority: "High", platform: "DV360", category: "Floodlight",
+      issue: `DV360 campaign "${c.name}" has zero Floodlight conversions`,
+      details: `${((c.spend / totalSpend) * 100).toFixed(0)}% of DV360 spend on this campaign recorded no conversions. Either Floodlight is broken for this campaign's placements, or performance is genuinely poor.`,
+      action: "Verify Floodlight tags fire for this campaign's inventory; otherwise pause and reallocate.",
       impact: 5, effort: "Quick", confidence: 83,
+      ...(applyAction ? { applyAction } : {}),
     });
   }
 
@@ -487,6 +540,10 @@ const CATEGORY_GROUPS: { label: string; icon: any; cats: string[] }[] = [
 
 export default function RecommendationsTab({ platform = "both", dateRange = "30d", customStart, customEnd }: Props) {
   const { meta, loading: auditLoading } = useAudit(platform, dateRange, customStart, customEnd);
+  const { metaAccessToken, dv360RefreshToken } = useAuthStore();
+  const isDemo =
+    (!metaAccessToken || isDemoCredential(metaAccessToken)) &&
+    (!dv360RefreshToken || isDemoCredential(dv360RefreshToken));
   const isMetaEnabled = platform !== "dv360";
   const isDvEnabled = platform === "dv360" || platform === "both";
   const { campaigns, loading: campsLoading } = useCampaigns(platform, dateRange, customStart, customEnd);
@@ -692,6 +749,11 @@ export default function RecommendationsTab({ platform = "both", dateRange = "30d
                     <div className="font-semibold text-gray-900 text-sm">{r.issue}</div>
                     <div className="text-xs text-gray-500 mt-1 leading-relaxed">{r.details}</div>
                     <div className="text-xs text-blue-600 mt-1.5 font-medium">→ {r.action}</div>
+                    {r.applyAction && !isDemo && (
+                      <div className="mt-2">
+                        <ApplyActionButton action={r.applyAction} compact />
+                      </div>
+                    )}
                   </td>
                   <td className="px-5 py-4">
                     <span className={`px-2 py-0.5 rounded text-xs font-semibold ${groupColor[groupOf(r.category)] || "bg-gray-100 text-gray-700"}`}>
