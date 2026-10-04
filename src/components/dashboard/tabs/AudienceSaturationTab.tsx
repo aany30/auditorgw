@@ -198,6 +198,17 @@ function SaturationAnalysis({ adsets, loading, currency }: { adsets: ReturnType<
                           status={label === "Critical" ? "critical" : "warn"}
                           platform="meta"
                           auditContext={{ module: "Audience Saturation", siblingMetrics: { frequency: a.frequency, ctr: +a.ctr.toFixed(2), cpm: +a.cpm.toFixed(2) } }}
+                          applyContext={{
+                            platform: "meta",
+                            entityType: "adset",
+                            entityId: a.id,
+                            entityName: a.name,
+                            // Rows with impressions > 0 are serving — treat as ACTIVE
+                            // so an AI "pause this" rec gets a working Apply button.
+                            currentStatus: "ACTIVE",
+                            currency,
+                            reasonPrefix: `Audience fatigue: frequency ${a.frequency.toFixed(1)}×, CTR ${a.ctr.toFixed(2)}%`,
+                          }}
                         />
                         {label === "Critical" && (() => {
                           const action: SetFrequencyCapAction = {
@@ -360,6 +371,15 @@ function ExpansionOpportunity({ adsets, loading, currency }: { adsets: ReturnTyp
                           status={label === "Reduce" ? "critical" : "warn"}
                           platform="meta"
                           auditContext={{ module: "Expansion Opportunity", siblingMetrics: { roas: +a.roas.toFixed(2), spendSharePct: +a.spendPct.toFixed(1), revSharePct: +a.revPct.toFixed(1) } }}
+                          applyContext={{
+                            platform: "meta",
+                            entityType: "adset",
+                            entityId: a.id,
+                            entityName: a.name,
+                            currentStatus: "ACTIVE",
+                            currency,
+                            reasonPrefix: `Expansion ${label}: ROAS ${a.roas.toFixed(2)}× at ${a.spendPct.toFixed(1)}% spend share`,
+                          }}
                         />
                       </div>
                     )}
@@ -531,14 +551,37 @@ function Dv360SaturationView({ rows, reachAvailable, loading, pending, currency 
                         <td className="px-4 py-2.5 text-center">
                           <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${fat.color}`}>{fat.label}</span>
                           {fat.label !== "Healthy" && (
-                            <div className="mt-1">
+                            <div className="mt-1 space-y-1">
                               <AIRecommendationButton
                                 metric={`Line-item saturation — ${r.name}`}
                                 value={r.frequency}
                                 status={fat.label === "Critical" ? "critical" : "warn"}
                                 platform="dv360"
                                 auditContext={{ module: "DV360 Saturation", siblingMetrics: { frequency: r.frequency, reach: r.reach, ctr: +r.ctr.toFixed(2), cpm: +r.cpm.toFixed(2) } }}
+                                applyContext={r.lineItemId ? {
+                                  platform: "dv360",
+                                  entityType: "lineitem",
+                                  entityId: r.lineItemId,
+                                  entityName: r.name,
+                                  currentStatus: "ACTIVE",
+                                  currency,
+                                  reasonPrefix: `DV360 line-item saturation: frequency ${r.frequency.toFixed(1)}×`,
+                                } : undefined}
                               />
+                              {fat.label === "Critical" && r.lineItemId && (() => {
+                                const action: SetFrequencyCapAction = {
+                                  id: `freqcap-dv360-${r.lineItemId}`,
+                                  platform: "dv360",
+                                  entityType: "lineitem",
+                                  entityId: r.lineItemId,
+                                  entityName: r.name,
+                                  kind: "set_frequency_cap",
+                                  from: null,
+                                  to: { impressions: 3, days: 7 },
+                                  reason: `DV360 line-item fatigue critical: frequency ${r.frequency.toFixed(1)}× — cap to 3 impressions / 7 days.`,
+                                };
+                                return <ApplyActionButton action={action} compact />;
+                              })()}
                             </div>
                           )}
                         </td>
@@ -655,6 +698,15 @@ function Dv360ExpansionView({ rows, revenueAvailable, loading, pending, currency
                               status={rec.label === "Reduce" ? "warn" : "moderate"}
                               platform="dv360"
                               auditContext={{ module: "DV360 Expansion Opportunity", siblingMetrics: { action: rec.label, spendSharePct: +r.spendPct.toFixed(1), cpa: r.cpa, roas: +r.roas.toFixed(2), conversions: r.conversions, spend: r.spend } }}
+                              applyContext={r.lineItemId ? {
+                                platform: "dv360",
+                                entityType: "lineitem",
+                                entityId: r.lineItemId,
+                                entityName: r.name,
+                                currentStatus: "ACTIVE",
+                                currency,
+                                reasonPrefix: `DV360 ${rec.label}: ${rec.reason}`,
+                              } : undefined}
                             />
                           </div>
                         )}

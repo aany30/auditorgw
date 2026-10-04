@@ -4,6 +4,9 @@ import type { CampaignData } from "@/types";
 import type { AccountContext } from "@/components/dashboard/audits/types";
 import { useAuthStore } from "@/store/auth";
 import { isDemoCredential } from "@/lib/demo-data";
+import { parseSuggestedAction } from "@/lib/apply/suggest-from-text";
+import { buildApplyFromAi, type ApplyContext } from "@/lib/apply/apply-context";
+import ApplyActionButton from "@/components/apply/ApplyActionButton";
 
 interface FixStep {
   action: string;
@@ -32,6 +35,9 @@ interface Props {
     module: string;
     siblingMetrics?: Record<string, string | number>;
   };
+  /** Opt-in: when the AI reply parses to an apply-able action, render an
+   *  ApplyActionButton inside the panel using this entity's details. */
+  applyContext?: ApplyContext;
 }
 
 /**
@@ -63,6 +69,7 @@ export default function FixRecommendation({
   campaignContext,
   accountContext,
   auditContext,
+  applyContext,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -126,6 +133,17 @@ export default function FixRecommendation({
     }
   }, [cacheKey, metric, value, status, platform, threshold, campaignContext, accountContext, auditContext, isDemo]);
 
+  // Parse AI steps for an apply-able recommendation and build the full
+  // ApplyAction when the caller passed an applyContext. Null for text-only
+  // advisory replies or callers that opted out of Apply.
+  const applyAction = useMemo(() => {
+    if (!data || !applyContext) return null;
+    const combined = [data.title, ...data.steps.map((s) => s.action)].join("\n");
+    const suggested = parseSuggestedAction(combined);
+    if (!suggested) return null;
+    return buildApplyFromAi(suggested, applyContext);
+  }, [data, applyContext]);
+
   const handleToggle = () => {
     const next = !open;
     setOpen(next);
@@ -186,6 +204,11 @@ export default function FixRecommendation({
                   </li>
                 ))}
               </ol>
+              {applyAction && (
+                <div className="pt-2 border-t border-gray-100">
+                  <ApplyActionButton action={applyAction} compact />
+                </div>
+              )}
               <div className="text-[10px] text-gray-400 italic flex items-center gap-1 pt-2 border-t border-gray-100">
                 {data.source === "ai" ? (
                   <>

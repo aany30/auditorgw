@@ -7,6 +7,9 @@ import { useAuthStore } from "@/store/auth";
 import { useSort } from "@/hooks/useSort";
 import SortTh from "@/components/shared/SortTh";
 import { currencyFor, formatMoney } from "@/lib/currency";
+import { isDemoCredential } from "@/lib/demo-data";
+import ApplyActionButton from "@/components/apply/ApplyActionButton";
+import type { SetBudgetAction } from "@/lib/apply/types";
 
 // ─── date + formatting helpers ──────────────────────────────────────────────
 

@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, Fragment } from "react";
 import type { AuditProps } from "./types";
 import type { CampaignData } from "@/types";
 import { useAuthStore } from "@/store/auth";
@@ -7,11 +7,14 @@ import AttributionInfo from "@/components/shared/AttributionInfo";
 import { useSort } from "@/hooks/useSort";
 import SortTh from "@/components/shared/SortTh";
 import { currencyFor, formatMoney } from "@/lib/currency";
-import { TrendingUp, TrendingDown, AlertCircle, CheckCircle2, Sparkles, Loader2 } from "lucide-react";
+import { TrendingUp, TrendingDown, AlertCircle, CheckCircle2, Sparkles, Loader2, ChevronRight, ChevronDown } from "lucide-react";
+import { useDV360Entities, type DV360IoRaw, type DV360LiRaw } from "@/hooks/useDV360Entities";
 import { toDisplayCredits } from "@/lib/ai-cost";
 import { isDemoCredential } from "@/lib/demo-data";
 import ApplyActionButton from "@/components/apply/ApplyActionButton";
 import type { ApplyAction } from "@/lib/apply/types";
+import { parseSuggestedAction, type AiSuggestedAction } from "@/lib/apply/suggest-from-text";
+export { parseSuggestedAction, type AiSuggestedAction };
 
 function fmtInt(n: number | undefined): string {
   if (n === undefined || n === null || isNaN(n)) return "—";
@@ -53,7 +56,14 @@ interface RowAiRecoProps {
   platform: string;
 }
 
-function RowAiReco({ campaignContext, findingLabel, findingDetail, isDemo, platform }: RowAiRecoProps) {
+interface RowAiRecoPropsExt extends RowAiRecoProps {
+  /** Called with the parsed AI-suggested action (budget / pause / resume /
+   *  frequency cap) so the parent can wire the Apply button to the AI's
+   *  exact recommendation instead of a heuristic. */
+  onAiSuggestedAction?: (action: AiSuggestedAction) => void;
+}
+
+function RowAiReco({ campaignContext, findingLabel, findingDetail, isDemo, platform, onAiSuggestedAction }: RowAiRecoPropsExt) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [answer, setAnswer] = useState<string | null>(null);
@@ -66,7 +76,16 @@ function RowAiReco({ campaignContext, findingLabel, findingDetail, isDemo, platf
     setLoading(true);
     setError(null);
     try {
-      const question = `Finding: ${findingLabel} — ${findingDetail}\n\nGive me 2–4 specific next steps for THIS campaign only. Reference the campaign's actual numbers. Each step on its own line starting with "•". Skip generic advice.`;
+      const question = `Finding: ${findingLabel} — ${findingDetail}
+
+Give me 2–4 specific next steps for THIS campaign only. Reference the campaign's actual numbers. Each step on its own line starting with "•". Skip generic advice.
+
+APPLY-ABLE RECOMMENDATION: if ANY of your advice can be executed via the Meta/DV360 API (budget change, pause, resume, frequency cap), state it EXPLICITLY in the FIRST bullet using one of these exact phrasings so the dashboard can wire a one-click Apply button:
+- Budget: "Reduce daily budget to ₹<number>" or "Increase daily budget to ₹<number>" or "Set daily budget to ₹<number>"
+- Pause: "Pause this campaign" or "Turn this off"
+- Resume: "Resume this campaign" or "Reactivate this campaign"
+- Frequency cap (ad set): "Cap frequency to <X> impressions per <Y> days"
+Only include an apply-able phrase when you are confident it's the right action — do not force it.`;
       const res = await fetch("/api/ai/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -77,7 +96,12 @@ function RowAiReco({ campaignContext, findingLabel, findingDetail, isDemo, platf
         throw new Error(errBody?.error || `HTTP ${res.status}`);
       }
       const json = await res.json();
-      setAnswer(json.answer || "(no response)");
+      const text = json.answer || "(no response)";
+      setAnswer(text);
+      // Parse the AI's reply for any apply-able action and tell the parent so
+      // the Apply button can be wired to the AI's exact recommendation.
+      const suggested = parseSuggestedAction(text);
+      if (suggested && onAiSuggestedAction) onAiSuggestedAction(suggested);
       if (json.creditsUsedUsd) addAiCredits(json.creditsUsedUsd);
     } catch (e) {
       setError(e instanceof Error ? e.message : "AI request failed");
@@ -235,22 +259,58 @@ function buildApplyActionForTip(
   currency: string,
   budget: number,
   budgetType: string,
+  aiSuggested: AiSuggestedAction | null,
 ): ApplyAction | null {
-  // Only Meta campaign/adset-level budget mutations are supported here right now.
+  // Only Meta campaign/adset-level mutations are supported here right now.
   // (DV360 needs lineItem/IO ids which the row-level campaign doesn't expose.)
   if (c.platform !== "meta") return null;
   const entityType = "campaign" as const;
   const base = {
-    id: `apply-${c.platform}-${c.id}-${tip.kind}`,
+    id: `apply-${c.platform}-${c.id}-${aiSuggested?.kind ?? tip.kind}`,
     platform: "meta" as const,
     entityType,
     entityId: c.id,
     entityName: c.name,
-    reason: `${tip.label}: ${tip.detail}`,
+    reason: aiSuggested
+      ? `AI recommendation (${tip.label}): ${tip.detail}`
+      : `${tip.label}: ${tip.detail}`,
   };
 
+  // Prefer AI's explicit recommendation when available — it's grounded in the
+  // specific campaign data, not a blanket heuristic.
+  if (aiSuggested) {
+    if (aiSuggested.kind === "set_budget") {
+      if (!budget || budgetType === "none") return null;
+      const to = Math.max(1, Math.round(aiSuggested.to));
+      if (to === Math.round(budget)) return null;
+      return {
+        ...base,
+        kind: "set_budget",
+        budgetType: budgetType === "lifetime" ? "lifetime" : "daily",
+        from: Math.round(budget * 100),
+        to: to * 100,
+        currency,
+      };
+    }
+    if (aiSuggested.kind === "set_status") {
+      const currentActive = isActive(c);
+      // Don't bother returning an action that's a no-op.
+      if (aiSuggested.to === "PAUSED" && !currentActive) return null;
+      if (aiSuggested.to === "ACTIVE" && currentActive) return null;
+      return {
+        ...base,
+        kind: "set_status",
+        from: currentActive ? "ACTIVE" : "PAUSED",
+        to: aiSuggested.to,
+      };
+    }
+    // Frequency cap at campaign level is a no-op on Meta (freq caps live on
+    // ad sets). Fall through to heuristic in case the tip itself warrants one.
+  }
+
+  // Fall-back heuristics driven by the tip kind — used when AI hasn't yet
+  // responded or didn't surface an apply-able recommendation.
   if (tip.kind === "spike" || tip.kind === "overPacing") {
-    // Over-pacing / spike → suggest lowering the budget by ~15%.
     if (!budget || budgetType === "none") return null;
     const to = Math.max(1, Math.round(budget * 0.85));
     if (to === Math.round(budget)) return null;
@@ -258,14 +318,13 @@ function buildApplyActionForTip(
       ...base,
       kind: "set_budget",
       budgetType: budgetType === "lifetime" ? "lifetime" : "daily",
-      from: Math.round(budget * 100), // minor units
+      from: Math.round(budget * 100),
       to: to * 100,
       currency,
     };
   }
 
   if (tip.kind === "underPacing") {
-    // Under-pacing → suggest lowering budget by ~20% to match actual delivery.
     if (!budget || budgetType === "none") return null;
     const to = Math.max(1, Math.round(budget * 0.80));
     if (to === Math.round(budget)) return null;
@@ -280,7 +339,6 @@ function buildApplyActionForTip(
   }
 
   if (tip.kind === "noDelivery") {
-    // Zero delivery despite ACTIVE → recommend pausing until investigated.
     return {
       ...base,
       kind: "set_status",
@@ -302,7 +360,14 @@ function TipCell({ tip, campaignContext, isDemo, platform, campaign, currency, b
   budget: number;
   budgetType: string;
 }) {
-  const applyAction = isDemo ? null : buildApplyActionForTip(tip, campaign, currency, budget, budgetType);
+  // State: an AI-suggested action parsed from the "Ask AI" response. When
+  // populated, buildApplyActionForTip prefers it over the heuristic — so the
+  // "Set budget" button applies the AI's exact ₹ number (not a ±15% guess),
+  // and a pause/resume rec gets wired to its matching Apply.
+  const [aiSuggested, setAiSuggested] = useState<AiSuggestedAction | null>(null);
+  const applyAction = isDemo
+    ? null
+    : buildApplyActionForTip(tip, campaign, currency, budget, budgetType, aiSuggested);
   const styles = {
     high:   { ring: "ring-red-200 bg-red-50",       pill: "bg-red-100 text-red-700",       Icon: AlertCircle,   iconClass: "text-red-600" },
     medium: { ring: "ring-yellow-200 bg-yellow-50", pill: "bg-yellow-100 text-yellow-700", Icon: tip.kind === "overPacing" ? TrendingUp : TrendingDown, iconClass: "text-yellow-600" },
@@ -319,7 +384,14 @@ function TipCell({ tip, campaignContext, isDemo, platform, campaign, currency, b
         </span>
         <div className="text-[11px] text-gray-600 leading-snug mt-1">{tip.detail}</div>
         {tip.severity !== "info" && (
-          <RowAiReco isDemo={isDemo} findingLabel={tip.label} findingDetail={tip.detail} campaignContext={campaignContext} platform={platform} />
+          <RowAiReco
+            isDemo={isDemo}
+            findingLabel={tip.label}
+            findingDetail={tip.detail}
+            campaignContext={campaignContext}
+            platform={platform}
+            onAiSuggestedAction={setAiSuggested}
+          />
         )}
         {applyAction && (
           <div className="mt-2">
@@ -358,9 +430,12 @@ interface SpendTableProps {
   platform: string;
   spikeNotice?: string | null;
   subtitle: string;
+  /** When provided, each row gets a chevron that toggles a full-width panel
+   *  rendered under the row. Used for DV360 to drill into IOs → LIs. */
+  renderDrill?: (c: CampaignData) => React.ReactNode;
 }
 
-function SpendTable({ rows, currency, totalSpend, totalImpressions, totalClicks, totalCount, isDemo, platform, spikeNotice, subtitle }: SpendTableProps) {
+function SpendTable({ rows, currency, totalSpend, totalImpressions, totalClicks, totalCount, isDemo, platform, spikeNotice, subtitle, renderDrill }: SpendTableProps) {
   const { sorted, sort, toggle } = useSort(rows, "statusOrder", "asc");
   const finalSorted = useMemo(() => {
     if (sort.col !== "statusOrder") return sorted;
@@ -372,6 +447,12 @@ function SpendTable({ rows, currency, totalSpend, totalImpressions, totalClicks,
   }, [sorted, rows, sort.col, sort.dir]);
 
   const cur = (n: number) => formatMoney(n, currency, 0);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggleExpand = (id: string) => setExpanded((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 shadow-sm">
@@ -398,11 +479,13 @@ function SpendTable({ rows, currency, totalSpend, totalImpressions, totalClicks,
               <SortTh col="impressions" sort={sort} onToggle={toggle} className="px-4 py-2" align="right">Impressions</SortTh>
               <SortTh col="clicks" sort={sort} onToggle={toggle} className="px-4 py-2" align="right">Clicks</SortTh>
               <SortTh col="tipSeverity" sort={sort} onToggle={toggle} className="px-4 py-2 min-w-[300px]">Recommend</SortTh>
+              {renderDrill && <th className="px-2 py-2 w-8"></th>}
             </tr>
           </thead>
           <tbody>
             {finalSorted.map((r) => (
-              <tr key={`${r.c.platform}-${r.c.id}`} className="border-b border-gray-100 hover:bg-gray-50 align-top">
+              <Fragment key={`${r.c.platform}-${r.c.id}`}>
+              <tr className="border-b border-gray-100 hover:bg-gray-50 align-top">
                 <td className="px-4 py-2.5 font-mono text-gray-900 break-words max-w-[280px]" title={r.name}>{r.name}</td>
                 <td className="px-4 py-2.5 text-center">{statusBadge(r.status)}</td>
                 <td className="px-4 py-2.5 text-gray-700 text-xs">{r.objective}</td>
@@ -449,7 +532,28 @@ function SpendTable({ rows, currency, totalSpend, totalImpressions, totalClicks,
                     }}
                   />
                 </td>
+                {renderDrill && (
+                  <td className="px-2 py-2.5 text-center">
+                    <button
+                      onClick={() => toggleExpand(r.c.id)}
+                      className="p-1 rounded hover:bg-gray-100 text-gray-500"
+                      title={expanded.has(r.c.id) ? "Collapse" : "Expand insertion orders"}
+                    >
+                      {expanded.has(r.c.id)
+                        ? <ChevronDown className="w-4 h-4" />
+                        : <ChevronRight className="w-4 h-4" />}
+                    </button>
+                  </td>
+                )}
               </tr>
+              {renderDrill && expanded.has(r.c.id) && (
+                <tr className="bg-gray-50/60 border-b border-gray-100">
+                  <td colSpan={9} className="px-6 py-3">
+                    {renderDrill(r.c)}
+                  </td>
+                </tr>
+              )}
+              </Fragment>
             ))}
           </tbody>
           <tfoot className="bg-gray-50 border-t-2 border-gray-200">
@@ -459,6 +563,7 @@ function SpendTable({ rows, currency, totalSpend, totalImpressions, totalClicks,
               <td className="px-4 py-2.5 text-right whitespace-nowrap">{fmtInt(totalImpressions)}</td>
               <td className="px-4 py-2.5 text-right whitespace-nowrap">{fmtInt(totalClicks)}</td>
               <td className="px-4 py-2.5"></td>
+              {renderDrill && <td></td>}
             </tr>
           </tfoot>
         </table>
@@ -801,6 +906,358 @@ function resolveDvWindow(range?: string, customStart?: string, customEnd?: strin
   return { startDate: start.toISOString().slice(0, 10), endDate: today.toISOString().slice(0, 10) };
 }
 
+// ── DV360 drill helpers (IO / LI tips + apply actions) ───────────────────────
+const DV_ACTIVE = (s: string) => (s || "").toUpperCase() === "ENTITY_STATUS_ACTIVE";
+
+function dateObjToIso(d?: { year?: number; month?: number; day?: number }): string | undefined {
+  if (!d?.year || !d?.month || !d?.day) return undefined;
+  return `${d.year}-${String(d.month).padStart(2, "0")}-${String(d.day).padStart(2, "0")}`;
+}
+
+/** Return currently-active budget segment for an IO, else the first one. */
+function activeIoSegment(io: DV360IoRaw): { amount: number; index: number; totalSegments: number } | null {
+  const segs = io.budget?.budgetSegments ?? [];
+  if (segs.length === 0) return null;
+  const today = Date.now();
+  let idx = segs.findIndex((s) => {
+    const start = s.dateRange?.startDate;
+    const end = s.dateRange?.endDate;
+    if (!start?.year || !end?.year) return false;
+    const sMs = new Date(start.year, (start.month ?? 1) - 1, start.day ?? 1).getTime();
+    const eMs = new Date(end.year, (end.month ?? 1) - 1, end.day ?? 1).getTime();
+    return sMs <= today && today <= eMs;
+  });
+  if (idx < 0) idx = 0;
+  const micros = Number(segs[idx].budgetAmountMicros ?? "0");
+  return { amount: micros / 1_000_000, index: idx, totalSegments: segs.length };
+}
+
+/** Compute a tip for an IO row from status + budget + spend window. */
+function computeIoTip(io: DV360IoRaw, budget: number, spend: number): Tip {
+  if (!DV_ACTIVE(io.entityStatus)) {
+    return { kind: "paused", severity: "info", label: "Paused", detail: "Insertion order is not currently delivering.", isSpike: false, sevRank: 1 };
+  }
+  if (spend === 0 && budget > 0) {
+    return { kind: "noDelivery", severity: "high", label: "No delivery", detail: "Active IO with budget but zero spend in the window. Check line-item status, flight dates, or creative approvals.", isSpike: false, sevRank: 3 };
+  }
+  if (budget > 0 && spend > budget * 1.10) {
+    const pct = ((spend - budget) / budget) * 100;
+    return { kind: "overPacing", severity: "medium", label: "Over-pacing", detail: `Spent past budget by ${Math.round(pct)}% in this window.`, isSpike: false, sevRank: 2 };
+  }
+  if (budget > 0 && spend > 0 && spend < budget * 0.70) {
+    const pct = (spend / budget) * 100;
+    return { kind: "underPacing", severity: "medium", label: "Under-pacing", detail: `Only ${Math.round(pct)}% of segment budget used.`, isSpike: false, sevRank: 2 };
+  }
+  return { kind: "healthy", severity: "good", label: "On pace", detail: budget > 0 ? "Within segment budget tolerance." : "Delivering — no segment budget cap defined.", isSpike: false, sevRank: 0 };
+}
+
+function buildIoApplyAction(
+  io: DV360IoRaw,
+  currency: string,
+  reasonLabel: string,
+  reasonDetail: string,
+  aiSuggested: AiSuggestedAction | null,
+): ApplyAction | null {
+  const base = {
+    id: `apply-dv360-io-${io.insertionOrderId}-${aiSuggested?.kind ?? "default"}`,
+    platform: "dv360" as const,
+    entityType: "insertion_order" as const,
+    entityId: io.insertionOrderId,
+    entityName: io.displayName,
+    reason: aiSuggested
+      ? `AI recommendation (${reasonLabel}): ${reasonDetail}`
+      : `${reasonLabel}: ${reasonDetail}`,
+  };
+  const seg = activeIoSegment(io);
+  if (aiSuggested) {
+    if (aiSuggested.kind === "set_budget") {
+      if (!seg) return null;
+      const to = Math.max(1, Math.round(aiSuggested.to));
+      if (to === Math.round(seg.amount)) return null;
+      return {
+        ...base,
+        kind: "set_budget",
+        budgetType: "lifetime",
+        from: Math.round(seg.amount * 100),
+        to: to * 100,
+        currency,
+      };
+    }
+    if (aiSuggested.kind === "set_status") {
+      const currentActive = DV_ACTIVE(io.entityStatus);
+      if (aiSuggested.to === "PAUSED" && !currentActive) return null;
+      if (aiSuggested.to === "ACTIVE" && currentActive) return null;
+      return {
+        ...base,
+        kind: "set_status",
+        from: currentActive ? "ACTIVE" : "PAUSED",
+        to: aiSuggested.to,
+      };
+    }
+    // Frequency cap: IO level isn't supported — fall through.
+    return null;
+  }
+  return null;
+}
+
+function buildLiApplyActions(
+  li: DV360LiRaw,
+  currency: string,
+  reasonLabel: string,
+  reasonDetail: string,
+  aiSuggested: AiSuggestedAction | null,
+): ApplyAction[] {
+  const base = {
+    platform: "dv360" as const,
+    entityType: "lineitem" as const,
+    entityId: li.lineItemId,
+    entityName: li.displayName,
+    reason: aiSuggested
+      ? `AI recommendation (${reasonLabel}): ${reasonDetail}`
+      : `${reasonLabel}: ${reasonDetail}`,
+  };
+  const out: ApplyAction[] = [];
+  if (aiSuggested?.kind === "set_status") {
+    const currentActive = DV_ACTIVE(li.entityStatus);
+    if (!(aiSuggested.to === "PAUSED" && !currentActive) &&
+        !(aiSuggested.to === "ACTIVE" && currentActive)) {
+      out.push({
+        ...base,
+        id: `apply-dv360-li-${li.lineItemId}-status`,
+        kind: "set_status",
+        from: currentActive ? "ACTIVE" : "PAUSED",
+        to: aiSuggested.to,
+      });
+    }
+  }
+  if (aiSuggested?.kind === "set_frequency_cap") {
+    const current = li.frequencyCap?.unlimited
+      ? null
+      : li.frequencyCap?.maxImpressions && li.frequencyCap?.timeUnitCount
+      ? { impressions: li.frequencyCap.maxImpressions, days: li.frequencyCap.timeUnitCount }
+      : null;
+    out.push({
+      ...base,
+      id: `apply-dv360-li-${li.lineItemId}-freq`,
+      kind: "set_frequency_cap",
+      from: current,
+      to: { impressions: aiSuggested.impressions, days: aiSuggested.days },
+    });
+  }
+  if (aiSuggested?.kind === "set_budget") {
+    const currentMicros = Number(li.budget?.budgetAmountMicros ?? li.budget?.maxAmount ?? "0");
+    const currentMajor = currentMicros / 1_000_000;
+    const to = Math.max(1, Math.round(aiSuggested.to));
+    if (to !== Math.round(currentMajor)) {
+      out.push({
+        ...base,
+        id: `apply-dv360-li-${li.lineItemId}-budget`,
+        kind: "set_budget",
+        budgetType: "lifetime",
+        from: Math.round(currentMajor * 100),
+        to: to * 100,
+        currency,
+      });
+    }
+  }
+  return out;
+}
+
+function fmtDvDate(d?: { year?: number; month?: number; day?: number }): string {
+  const iso = dateObjToIso(d);
+  if (!iso) return "—";
+  try { return new Date(`${iso}T00:00:00`).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }); }
+  catch { return iso; }
+}
+
+function liTypeLabel(t?: string): string {
+  if (!t) return "—";
+  return t.replace("LINE_ITEM_TYPE_", "").replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function bidStrategyLabel(bs?: Record<string, unknown>): string {
+  if (!bs) return "—";
+  if (bs.fixedBid) return "Fixed CPM";
+  if (bs.maximizeSpendAutoBid) return "Maximize spend";
+  if (bs.performanceGoalAutoBid) return "Performance goal";
+  if (bs.youtubeAndPartnersBid) return "YouTube bid";
+  return "—";
+}
+
+function DV360LiRow({ li, currency, isDemo }: { li: DV360LiRaw; currency: string; isDemo: boolean }) {
+  const [aiSuggested, setAiSuggested] = useState<AiSuggestedAction | null>(null);
+  const active = DV_ACTIVE(li.entityStatus);
+  const freq = li.frequencyCap;
+  const freqLabel = freq?.unlimited
+    ? "Unlimited"
+    : freq?.maxImpressions && freq?.timeUnitCount
+    ? `${freq.maxImpressions} / ${freq.timeUnitCount} ${(freq.timeUnit ?? "TIME_UNIT_DAYS").replace("TIME_UNIT_", "").toLowerCase()}`
+    : "—";
+  const tip: Tip = active
+    ? { kind: "healthy", severity: "info", label: liTypeLabel(li.lineItemType), detail: `Bid: ${bidStrategyLabel(li.bidStrategy)} · Freq cap: ${freqLabel}`, isSpike: false, sevRank: 0 }
+    : { kind: "paused", severity: "info", label: "Paused", detail: "Line item is not delivering.", isSpike: false, sevRank: 1 };
+
+  const applyActions = isDemo ? [] : buildLiApplyActions(li, currency, tip.label, tip.detail, aiSuggested);
+
+  return (
+    <tr className="border-b border-gray-100 hover:bg-white align-top">
+      <td className="pl-10 pr-3 py-2 font-mono text-[12px] text-gray-800 max-w-[280px] break-words" title={li.displayName}>{li.displayName}</td>
+      <td className="px-3 py-2 text-center">{statusBadge(li.entityStatus)}</td>
+      <td className="px-3 py-2 text-[11px] text-gray-700 whitespace-nowrap">{liTypeLabel(li.lineItemType)}</td>
+      <td className="px-3 py-2 text-[11px] text-gray-700 whitespace-nowrap">{bidStrategyLabel(li.bidStrategy)}</td>
+      <td className="px-3 py-2 text-[11px] text-gray-700 whitespace-nowrap">
+        {fmtDvDate(li.flight?.dateRange?.startDate)} → {fmtDvDate(li.flight?.dateRange?.endDate)}
+      </td>
+      <td className="px-3 py-2 text-[11px] text-gray-700 whitespace-nowrap">{freqLabel}</td>
+      <td className="px-3 py-2">
+        <div className="space-y-1.5">
+          <RowAiReco
+            isDemo={isDemo}
+            findingLabel={`DV360 Line Item — ${li.displayName}`}
+            findingDetail={`Status ${li.entityStatus}. Line item type: ${liTypeLabel(li.lineItemType)}. Bid strategy: ${bidStrategyLabel(li.bidStrategy)}. Frequency cap: ${freqLabel}. For DV360 Line Items the applyable actions are: pause/resume, set a frequency cap (e.g. "Cap frequency to 3 impressions per 7 days"), or adjust the Line Item budget. Use DV360-native terminology — "Line Item", "Frequency Cap", "Bid Strategy" — NOT Meta terms.`}
+            campaignContext={{
+              platform: "dv360", entityType: "lineitem",
+              name: li.displayName, status: li.entityStatus,
+              lineItemType: li.lineItemType, bidStrategy: bidStrategyLabel(li.bidStrategy),
+              flightStart: dateObjToIso(li.flight?.dateRange?.startDate),
+              flightEnd: dateObjToIso(li.flight?.dateRange?.endDate),
+              frequencyCap: freqLabel,
+              currency,
+            }}
+            platform="dv360"
+            onAiSuggestedAction={setAiSuggested}
+          />
+          {applyActions.map((a) => (
+            <div key={a.id}><ApplyActionButton action={a} compact /></div>
+          ))}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+function DV360IoDrill({ io, currency, isDemo, lis }: { io: DV360IoRaw; currency: string; isDemo: boolean; lis: DV360LiRaw[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const [aiSuggested, setAiSuggested] = useState<AiSuggestedAction | null>(null);
+  const seg = activeIoSegment(io);
+  const budget = seg?.amount ?? 0;
+  const spend = 0; // Entity endpoint doesn't return spend; see known gaps below.
+  const tip = computeIoTip(io, budget, spend);
+  const action = isDemo
+    ? null
+    : buildIoApplyAction(io, currency, tip.label, tip.detail, aiSuggested);
+
+  return (
+    <>
+      <tr className="border-b border-gray-100 hover:bg-white align-top">
+        <td className="pl-4 pr-3 py-2 font-mono text-[12px] text-gray-900 max-w-[280px] break-words" title={io.displayName}>
+          <div className="flex items-start gap-2">
+            <button onClick={() => setExpanded((v) => !v)} className="p-0.5 rounded hover:bg-gray-100 text-gray-500 mt-0.5">
+              {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+            </button>
+            <span>{io.displayName}</span>
+          </div>
+        </td>
+        <td className="px-3 py-2 text-center">{statusBadge(io.entityStatus)}</td>
+        <td className="px-3 py-2 text-right text-[11px] text-gray-700 whitespace-nowrap">
+          {budget > 0 ? formatMoney(budget, currency, 0) : <span className="text-gray-400">—</span>}
+          {seg && seg.totalSegments > 1 && <div className="text-[10px] text-gray-400">seg {seg.index + 1} of {seg.totalSegments}</div>}
+        </td>
+        <td className="px-3 py-2 text-right text-[11px] text-gray-700 whitespace-nowrap">
+          <span className="text-gray-400">—</span>
+        </td>
+        <td className="px-3 py-2 text-[11px] text-gray-700 whitespace-nowrap">
+          {lis.length} line item{lis.length === 1 ? "" : "s"}
+        </td>
+        <td className="px-3 py-2">
+          <div className="space-y-1.5">
+            <RowAiReco
+              isDemo={isDemo}
+              findingLabel={`DV360 Insertion Order — ${io.displayName}`}
+              findingDetail={`Status ${io.entityStatus}. Current active budget segment: ${budget > 0 ? formatMoney(budget, currency, 0) : "none"}. Applyable actions on an IO: change the current budget-segment amount, pause, or resume. Frequency caps are set at the Line Item level, not the IO level. Use DV360 UI terminology — "Insertion Order", "budget segment" — NOT Meta terms.`}
+              campaignContext={{
+                platform: "dv360", entityType: "insertion_order",
+                name: io.displayName, status: io.entityStatus,
+                currentSegmentBudget: budget, segments: io.budget?.budgetSegments?.length ?? 0,
+                lineItemCount: lis.length, currency,
+              }}
+              platform="dv360"
+              onAiSuggestedAction={setAiSuggested}
+            />
+            {action && <ApplyActionButton action={action} compact />}
+          </div>
+        </td>
+      </tr>
+      {expanded && lis.length > 0 && (
+        <tr className="bg-white border-b border-gray-100">
+          <td colSpan={6} className="p-0">
+            <table className="w-full text-[12px]">
+              <thead className="bg-gray-100/60 text-[10px] uppercase text-gray-500">
+                <tr>
+                  <th className="pl-10 pr-3 py-1.5 text-left">Line Item</th>
+                  <th className="px-3 py-1.5 text-center">Status</th>
+                  <th className="px-3 py-1.5 text-left">Type</th>
+                  <th className="px-3 py-1.5 text-left">Bid strategy</th>
+                  <th className="px-3 py-1.5 text-left">Flight</th>
+                  <th className="px-3 py-1.5 text-left">Freq cap</th>
+                  <th className="px-3 py-1.5 text-left">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lis.map((li) => <DV360LiRow key={li.lineItemId} li={li} currency={currency} isDemo={isDemo} />)}
+              </tbody>
+            </table>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+function DV360CampaignDrill({ campaign, currency, isDemo }: { campaign: CampaignData; currency: string; isDemo: boolean }) {
+  const { ios, lis, loading, error, iosForCampaign, lisForIo } = useDV360Entities();
+  if (isDemo) {
+    return <div className="text-[11px] text-gray-500 italic">Insertion-order drill is only available with a live DV360 connection.</div>;
+  }
+  if (loading && !ios) {
+    return <div className="flex items-center gap-2 text-[11px] text-gray-500"><Loader2 className="w-3 h-3 animate-spin" /> Loading insertion orders & line items…</div>;
+  }
+  if (error) {
+    return <div className="text-[11px] text-red-700">Couldn&apos;t load DV360 entities: {error}</div>;
+  }
+  const campaignIos = iosForCampaign(campaign.id);
+  if (campaignIos.length === 0) {
+    return <div className="text-[11px] text-gray-500 italic">No insertion orders returned for this campaign{lis ? "" : " (data still loading)"}.</div>;
+  }
+  return (
+    <div className="bg-white rounded-md border border-gray-200 overflow-hidden">
+      <table className="w-full text-[12px]">
+        <thead className="bg-gray-100 text-[10px] uppercase text-gray-500">
+          <tr>
+            <th className="pl-4 pr-3 py-2 text-left">Insertion Order</th>
+            <th className="px-3 py-2 text-center">Status</th>
+            <th className="px-3 py-2 text-right">Active segment budget</th>
+            <th className="px-3 py-2 text-right">Spend</th>
+            <th className="px-3 py-2 text-left">Line items</th>
+            <th className="px-3 py-2 text-left">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {campaignIos.map((io) => (
+            <DV360IoDrill
+              key={io.insertionOrderId}
+              io={io}
+              currency={currency}
+              isDemo={isDemo}
+              lis={lisForIo(io.insertionOrderId)}
+            />
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function DV360BudgetSection({ campaigns, currency, dateRange, customStart, customEnd }: { campaigns: CampaignData[]; currency: string; dateRange?: string; customStart?: string; customEnd?: string }) {
   const { dv360RefreshToken } = useAuthStore();
   const isDemo = !dv360RefreshToken || isDemoCredential(dv360RefreshToken);
@@ -895,7 +1352,8 @@ function DV360BudgetSection({ campaigns, currency, dateRange, customStart, custo
         totalCount={visible.length}
         isDemo={isDemo}
         platform="dv360"
-        subtitle="Real per-campaign delivery from Bid Manager for the selected window."
+        subtitle="Real per-campaign delivery from Bid Manager for the selected window. Expand a row to drill into insertion orders and line items."
+        renderDrill={(c) => <DV360CampaignDrill campaign={c} currency={currency} isDemo={isDemo} />}
       />
 
       {/* Drill tree */}

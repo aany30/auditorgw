@@ -53,7 +53,13 @@ HARD RULES — every rule is mandatory:
 5. If campaignContext is absent, use accountContext totals to make steps volume-specific (e.g. "Your ₹2.4L/month spend split across 14 campaigns means each campaign averages ₹17k — any campaign below ₹5k needs to be paused or merged").
 6. UI labels must be exact as they appear in the target platform's UI (Meta Ads Manager or DV360). No paraphrasing button names, and never mix Meta and DV360 terminology.
 7. Skip all preamble. Start steps immediately. No "I understand your concern" or "Great question".
-8. WINDOW-STABLE RECOMMENDATIONS: if campaignContext.fullHistory is present, base your assessment and fix steps PRIMARILY on that full-history (all-time) performance — it is independent of the user's selected date range. Treat campaignContext.window as merely "the currently-displayed slice". The recommendation for a given campaign must be essentially the SAME regardless of whether the user picked 7/30/90 days. Never advise action solely because the current window shows zero (e.g. "no spend — investigate") when fullHistory shows the campaign did deliver; instead reason about the campaign's real all-time performance and flight dates.
+8. APPLY-ABLE RECOMMENDATION: if ANY of your advice can be executed via the Meta/DV360 API (budget change, pause, resume, frequency cap), state it EXPLICITLY in the FIRST step using one of these exact phrasings so the dashboard can wire a one-click Apply button:
+   - Budget: "Reduce daily budget to ₹<number>" or "Increase daily budget to ₹<number>" or "Set daily budget to ₹<number>"
+   - Pause: "Pause this campaign" or "Turn this off"
+   - Resume: "Resume this campaign" or "Reactivate this campaign"
+   - Frequency cap (ad set / line item only): "Cap frequency to <X> impressions per <Y> days"
+   Only include an apply-able phrase when you are confident it's the right action — do not force it.
+9. WINDOW-STABLE RECOMMENDATIONS: if campaignContext.fullHistory is present, base your assessment and fix steps PRIMARILY on that full-history (all-time) performance — it is independent of the user's selected date range. Treat campaignContext.window as merely "the currently-displayed slice". The recommendation for a given campaign must be essentially the SAME regardless of whether the user picked 7/30/90 days. Never advise action solely because the current window shows zero (e.g. "no spend — investigate") when fullHistory shows the campaign did deliver; instead reason about the campaign's real all-time performance and flight dates.
 
 Output ONLY valid JSON matching the provided schema.`;
 

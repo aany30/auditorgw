@@ -8,6 +8,9 @@ import { useState, useCallback, useMemo } from "react";
 import { Sparkles, ChevronDown, ChevronUp, ExternalLink, Loader2, BookOpen } from "lucide-react";
 import { useAuthStore } from "@/store/auth";
 import { isDemoCredential } from "@/lib/demo-data";
+import { parseSuggestedAction } from "@/lib/apply/suggest-from-text";
+import { buildApplyFromAi, type ApplyContext } from "@/lib/apply/apply-context";
+import ApplyActionButton from "@/components/apply/ApplyActionButton";
 
 interface FixStep {
   action: string;
@@ -36,13 +39,16 @@ export interface AIRecommendationButtonProps {
   accountContext?: Record<string, unknown>;
   /** Compact inline mode — smaller button, no outer margin. Default false. */
   compact?: boolean;
+  /** Opt-in: when the AI reply parses to an apply-able action, render an
+   *  ApplyActionButton inside the panel using this entity's details. */
+  applyContext?: ApplyContext;
 }
 
 const SESSION_CACHE = new Map<string, FixApiResponse>();
 
 export default function AIRecommendationButton({
   metric, value, status, platform, threshold,
-  auditContext, campaignContext, accountContext, compact = false,
+  auditContext, campaignContext, accountContext, compact = false, applyContext,
 }: AIRecommendationButtonProps) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -95,6 +101,18 @@ export default function AIRecommendationButton({
     }
   }, [cacheKey, metric, value, status, platform, threshold, campaignContext, accountContext, auditContext, isDemo, addAiCredits]);
 
+  // Parse the AI's step actions for an apply-able recommendation (budget /
+  // pause / resume / frequency cap) and build a concrete ApplyAction when
+  // the caller passed an applyContext. Null when the AI's reply is text-only
+  // advisory or when the caller opted out of Apply.
+  const applyAction = useMemo(() => {
+    if (!data || !applyContext) return null;
+    const combined = [data.title, ...data.steps.map((s) => s.action)].join("\n");
+    const suggested = parseSuggestedAction(combined);
+    if (!suggested) return null;
+    return buildApplyFromAi(suggested, applyContext);
+  }, [data, applyContext]);
+
   const handleToggle = () => {
     const next = !open;
     setOpen(next);
@@ -146,6 +164,11 @@ export default function AIRecommendationButton({
                   </li>
                 ))}
               </ol>
+              {applyAction && (
+                <div className="pt-2 border-t border-gray-100">
+                  <ApplyActionButton action={applyAction} compact />
+                </div>
+              )}
               <div className="text-[10px] text-gray-400 italic flex items-center gap-1 pt-2 border-t border-gray-100">
                 {data.source === "ai"
                   ? <><Sparkles className="w-3 h-3" />AI-generated from your data</>
