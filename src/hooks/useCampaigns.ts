@@ -18,8 +18,17 @@ import type { DateRange } from "@/components/shared/DateRangePicker";
 // Keyed by advertiserId + date range so different windows never cross-pollinate.
 const DV360_SWR_TTL_MS = 5 * 60 * 1000;
 
+/** Max dv360_campaigns:* entries to keep. Each entry can be hundreds of KB
+ *  for large advertisers; unbounded growth was evicting the auth-store (user's
+ *  tokens) via localStorage quota pressure. Cap at 4 — enough for the current
+ *  window + a couple of recent switches. */
+const DV360_SWR_MAX_ENTRIES = 4;
+
+/** All localStorage keys this cache uses share this prefix. */
+const DV360_SWR_PREFIX = "dv360_campaigns:";
+
 function swrKey(advertiserId: string, start: string, end: string, strict = false) {
-  return `dv360_campaigns:${advertiserId}:${start}:${end}${strict ? ":strict" : ""}`;
+  return `${DV360_SWR_PREFIX}${advertiserId}:${start}:${end}${strict ? ":strict" : ""}`;
 }
 
 function swrRead(key: string): CampaignData[] | null {
@@ -32,8 +41,68 @@ function swrRead(key: string): CampaignData[] | null {
   } catch { return null; }
 }
 
+/** Evict oldest dv360_campaigns:* entries beyond MAX. Also drops any TTL-expired
+ *  entries while scanning. Keeps auth-store (and everything else) safe from
+ *  quota eviction by the browser. */
+function pruneSwrCache(exceptKey?: string) {
+  try {
+    const now = Date.now();
+    const entries: Array<{ key: string; ts: number }> = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || !k.startsWith(DV360_SWR_PREFIX)) continue;
+      if (k === exceptKey) continue;
+      try {
+        const parsed = JSON.parse(localStorage.getItem(k) || "{}") as { ts?: number };
+        const ts = typeof parsed.ts === "number" ? parsed.ts : 0;
+        // Drop expired entries up front; they're useless either way.
+        if (!ts || now - ts > DV360_SWR_TTL_MS) {
+          localStorage.removeItem(k);
+          continue;
+        }
+        entries.push({ key: k, ts });
+      } catch {
+        // Corrupted entry — remove it.
+        localStorage.removeItem(k);
+      }
+    }
+    // Keep MAX_ENTRIES - 1 (reserve one slot for the write that triggered us).
+    entries.sort((a, b) => b.ts - a.ts); // newest first
+    const toEvict = entries.slice(DV360_SWR_MAX_ENTRIES - 1);
+    for (const { key } of toEvict) {
+      try { localStorage.removeItem(key); } catch { /* ignore */ }
+    }
+  } catch { /* storage access failed — bail */ }
+}
+
+/** Nuke ALL dv360_campaigns:* entries. Last-resort when a write hits quota. */
+function evictAllSwrCache() {
+  try {
+    const victims: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(DV360_SWR_PREFIX)) victims.push(k);
+    }
+    for (const k of victims) {
+      try { localStorage.removeItem(k); } catch { /* ignore */ }
+    }
+  } catch { /* ignore */ }
+}
+
 function swrWrite(key: string, rows: CampaignData[]) {
-  try { localStorage.setItem(key, JSON.stringify({ rows, ts: Date.now() })); } catch { /* quota */ }
+  const payload = JSON.stringify({ rows, ts: Date.now() });
+  // Pre-emptively keep the cache small so quota pressure never evicts the
+  // auth-store entry.
+  pruneSwrCache(key);
+  try {
+    localStorage.setItem(key, payload);
+  } catch {
+    // Quota probably exceeded. Drop every dv360_campaigns:* entry and retry
+    // once. If it still fails (payload itself too large), silently give up —
+    // the dashboard will just re-fetch next time.
+    evictAllSwrCache();
+    try { localStorage.setItem(key, payload); } catch { /* give up */ }
+  }
 }
 
 function rangeToDates(

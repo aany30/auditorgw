@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { persist, createJSONStorage } from "zustand/middleware";
 import { DateRange, CustomDateRange, NamingConvention, NamingRule } from "@/types";
 import { META_BENCHMARKS, type BenchmarkSnapshot } from "@/lib/funnel-benchmarks";
 import { toDisplayCredits } from "@/lib/ai-cost";
@@ -607,6 +607,34 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: "auth-store",
+      // Guard the user's tokens from quota eviction. The DV360 campaign SWR
+      // cache (dv360_campaigns:*) can balloon to hundreds of KB per entry;
+      // when total localStorage approaches the quota, the browser evicts the
+      // oldest keys first — which was wiping auth-store silently. On a
+      // QuotaExceededError, nuke the DV360 cache (unbounded growth is the
+      // only realistic source of pressure here) and retry. Tokens must NEVER
+      // be the first thing evicted.
+      storage: createJSONStorage(() => ({
+        getItem: (name) => {
+          try { return localStorage.getItem(name); } catch { return null; }
+        },
+        setItem: (name, value) => {
+          const attempt = () => localStorage.setItem(name, value);
+          try { attempt(); return; } catch { /* fall through to eviction */ }
+          try {
+            const victims: string[] = [];
+            for (let i = 0; i < localStorage.length; i++) {
+              const k = localStorage.key(i);
+              if (k && k.startsWith("dv360_campaigns:")) victims.push(k);
+            }
+            for (const k of victims) {
+              try { localStorage.removeItem(k); } catch { /* ignore */ }
+            }
+            attempt();
+          } catch { /* storage really broken — can't save tokens here */ }
+        },
+        removeItem: (name) => { try { localStorage.removeItem(name); } catch { /* ignore */ } },
+      })),
       // Exclude transient session state (demoMode) from localStorage so refresh
       // doesn't re-enter demo and other tabs / browsers stay clean.
       partialize: (state) => {
