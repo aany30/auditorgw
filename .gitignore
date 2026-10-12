@@ -9,3 +9,6 @@ dist
 
 # Claude Code local settings can contain leaked URLs with tokens — don't push.
 .claude/settings.local.json
+
+# Local credential backup (survives browser storage wipes)
+.credentials.local.json

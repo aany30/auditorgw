@@ -22,18 +22,37 @@ export function parseSuggestedAction(text: string): AiSuggestedAction | null {
   if (!text) return null;
   const clean = text.replace(/\*+/g, "");
 
+  // Only look for budget recommendations in the FIRST real action bullet.
+  // We scan by LINE (not a split on "\n-") because the old split collided with
+  // "---" markdown horizontal rules: "\n-" matched the first dash of "---",
+  // which pushed the actual recommendation bullet out of the scanned window and
+  // silently dropped the Apply button. A real action bullet starts with •, -,
+  // *, or "N." followed by whitespace + content; a horizontal rule ("---") has
+  // no content after the dashes, so it's excluded.
+  const lines = clean.split("\n").map((l) => l.trim());
+  const isHorizontalRule = (l: string) => /^[-–—*_]{3,}$/.test(l);
+  const bulletLines = lines.filter(
+    (l) => /^([•\-*]|\d+\.)\s+\S/.test(l) && !isHorizontalRule(l)
+  );
+  // Scan the first action bullet; fall back to the whole text when the AI
+  // answered in prose with no bullets at all.
+  const firstBullet = bulletLines.length > 0 ? bulletLines[0] : clean;
+
   // 1. Budget target — "Reduce daily budget to ₹3,500" / "Set budget at ₹5,000"
+  // / "Reduce daily budget from ₹1,750 to ₹735". Requires an explicit action
+  // verb before "budget" so observation sentences ("campaign spends ₹X/day")
+  // are NOT matched.
   const budgetPatterns: RegExp[] = [
-    /(?:reduce|lower|decrease|cut|cap|set|change|adjust|bring|tighten)\s+(?:the\s+|its\s+|your\s+)?(?:daily\s+)?(?:budget|cap|spend)\s+(?:cap\s+)?(?:to|at|around)\s+(?:₹|rs\.?|inr|\$)?\s*([\d,]+(?:\.\d+)?)/i,
-    /(?:increase|raise|boost|scale|bump|up|grow)\s+(?:the\s+|its\s+|your\s+)?(?:daily\s+)?budget\s+(?:to|at|around)\s+(?:₹|rs\.?|inr|\$)?\s*([\d,]+(?:\.\d+)?)/i,
-    /(?:budget|cap|limit)\s+(?:of|to|at)\s+(?:₹|rs\.?|inr|\$)?\s*([\d,]+(?:\.\d+)?)\s*(?:\/day|per\s*day|daily)?/i,
-    /(?:₹|rs\.?|inr|\$)\s*([\d,]+(?:\.\d+)?)\s*\/\s*day/i,
+    // "reduce budget from <X> to <Y>" — capture the target Y.
+    /(?:reduce|lower|decrease|cut|set|change|adjust|bring|tighten|increase|raise|boost|scale|bump|grow)\s+(?:the\s+|its\s+|your\s+)?(?:daily\s+|lifetime\s+)?(?:budget|cap|spend)\s+(?:cap\s+)?from\s+(?:₹|rs\.?|inr|\$)?\s*[\d,]+(?:\.\d+)?\s+to\s+(?:₹|rs\.?|inr|\$)?\s*([\d,]+(?:\.\d+)?)/i,
+    /(?:reduce|lower|decrease|cut|set|change|adjust|bring|tighten)\s+(?:the\s+|its\s+|your\s+)?(?:daily\s+|lifetime\s+)?(?:budget|cap|spend)\s+(?:cap\s+)?(?:to|at|around)\s+(?:₹|rs\.?|inr|\$)?\s*([\d,]+(?:\.\d+)?)/i,
+    /(?:increase|raise|boost|scale|bump|grow)\s+(?:the\s+|its\s+|your\s+)?(?:daily\s+|lifetime\s+)?budget\s+(?:to|at|around)\s+(?:₹|rs\.?|inr|\$)?\s*([\d,]+(?:\.\d+)?)/i,
   ];
   for (const re of budgetPatterns) {
-    const m = clean.match(re);
+    const m = firstBullet.match(re);
     if (m && m[1]) {
       const n = parseFloat(m[1].replace(/,/g, ""));
-      if (!isNaN(n) && n >= 10 && n <= 100_000_000) return { kind: "set_budget", to: n };
+      if (!isNaN(n) && n >= 100 && n <= 100_000_000) return { kind: "set_budget", to: n };
     }
   }
 

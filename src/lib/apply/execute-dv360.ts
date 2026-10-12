@@ -179,10 +179,11 @@ export async function executeDv360Action(
     }
 
     if (action.kind === "set_status") {
-      // Only line items have a simple entityStatus flip in this UI's model.
       const entityStatus =
         action.to === "ACTIVE" ? "ENTITY_STATUS_ACTIVE" : "ENTITY_STATUS_PAUSED";
-      const collection = action.entityType === "insertion_order" ? "insertionOrders" : "lineItems";
+      const collection =
+        action.entityType === "campaign" ? "campaigns" :
+        action.entityType === "insertion_order" ? "insertionOrders" : "lineItems";
       const resp = await patchDv360(
         `/advertisers/${advertiserId}/${collection}/${entityId}`,
         "entityStatus",

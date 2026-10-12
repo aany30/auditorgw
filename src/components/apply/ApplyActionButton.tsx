@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
+import { createPortal } from "react-dom";
 import {
   Zap,
   Play,
@@ -17,6 +18,22 @@ import {
   type ApplyResult,
 } from "@/lib/apply/types";
 import { logApply, markUndone } from "@/lib/apply/audit-log";
+import { formatMoney } from "@/lib/currency";
+
+/**
+ * Slider bounds (in MAJOR currency units) for editing a budget before applying.
+ * Range spans half the smaller of {recommended, current} up to the larger of the
+ * two — so the user can soften or deepen the change up to the existing budget.
+ */
+function budgetSliderConfig(fromMinor: number, toMinor: number) {
+  const rec = toMinor / 100;
+  const cur = fromMinor / 100;
+  const lo = Math.max(1, Math.round(0.5 * Math.min(rec, cur)));
+  let hi = Math.round(Math.max(rec, cur));
+  const step = hi <= 1000 ? 10 : hi <= 10000 ? 50 : hi <= 100000 ? 100 : 1000;
+  if (lo >= hi) hi = lo + step;
+  return { lo, hi, step, rec, cur };
+}
 
 interface Props {
   action: ApplyAction;
@@ -88,9 +105,26 @@ export default function ApplyActionButton({ action, onApplied, compact, disabled
   const [appliedResult, setAppliedResult] = useState<ApplyResult | null>(null);
   const [lastEntryId, setLastEntryId] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
+  // Editable budget target (major units) — slider in the confirm dialog. null
+  // until a budget action's modal opens; reset on close / when action changes.
+  const [editedToMajor, setEditedToMajor] = useState<number | null>(null);
 
-  const risk = useMemo(() => actionRisk(action), [action]);
-  const summary = useMemo(() => describeAction(action), [action]);
+  // Re-seed the slider whenever a new action arrives.
+  useEffect(() => {
+    setEditedToMajor(action.kind === "set_budget" ? Math.round(action.to / 100) : null);
+  }, [action]);
+
+  // The action that will actually be applied — with the slider's edited target
+  // folded in for budget changes, so summary / risk / warning all stay live.
+  const effAction: ApplyAction = useMemo(() => {
+    if (action.kind === "set_budget" && editedToMajor != null) {
+      return { ...action, to: Math.round(editedToMajor) * 100 };
+    }
+    return action;
+  }, [action, editedToMajor]);
+
+  const risk = useMemo(() => actionRisk(effAction), [effAction]);
+  const summary = useMemo(() => describeAction(effAction), [effAction]);
 
   // Tick for undo window countdown.
   useEffect(() => {
@@ -113,7 +147,8 @@ export default function ApplyActionButton({ action, onApplied, compact, disabled
     setPhase("idle");
     setError(null);
     setTypedConfirm("");
-  }, []);
+    setEditedToMajor(action.kind === "set_budget" ? Math.round(action.to / 100) : null);
+  }, [action]);
 
   const runApply = useCallback(
     async (actionToRun: ApplyAction) => {
@@ -166,15 +201,17 @@ export default function ApplyActionButton({ action, onApplied, compact, disabled
   );
 
   const onConfirm = useCallback(() => {
-    if (risk === "high" && typedConfirm.trim() !== action.entityName) return;
-    void runApply(action);
-  }, [action, risk, typedConfirm, runApply]);
+    if (risk === "high" && typedConfirm.trim() !== effAction.entityName) return;
+    void runApply(effAction);
+  }, [effAction, risk, typedConfirm, runApply]);
 
   const onUndo = useCallback(async () => {
-    const inverse = invertAction(action);
+    // Invert what was actually applied (slider-edited value included), not the
+    // original recommended action.
+    const inverse = invertAction(appliedResult?.action ?? effAction);
     await runApply(inverse);
     if (lastEntryId) markUndone(lastEntryId);
-  }, [action, lastEntryId, runApply]);
+  }, [appliedResult, effAction, lastEntryId, runApply]);
 
   // ─── Rendering ────────────────────────────────────────────────────────────
 
@@ -222,21 +259,26 @@ export default function ApplyActionButton({ action, onApplied, compact, disabled
         {buttonLabel(action)}
       </button>
 
-      {phase !== "idle" && (
-        <ConfirmModal
-          action={action}
-          summary={summary}
-          risk={risk}
-          phase={phase}
-          error={error}
-          scopeMissing={!!scopeMissing}
-          typedConfirm={typedConfirm}
-          onTypedConfirmChange={setTypedConfirm}
-          onConfirm={onConfirm}
-          onCancel={closeModal}
-          onRetry={() => void runApply(action)}
-        />
-      )}
+      {phase !== "idle" &&
+        createPortal(
+          <ConfirmModal
+            action={effAction}
+            summary={summary}
+            risk={risk}
+            phase={phase}
+            error={error}
+            scopeMissing={!!scopeMissing}
+            typedConfirm={typedConfirm}
+            onTypedConfirmChange={setTypedConfirm}
+            onConfirm={onConfirm}
+            onCancel={closeModal}
+            onRetry={() => void runApply(effAction)}
+            editedToMajor={editedToMajor}
+            onEditedToMajorChange={setEditedToMajor}
+            recommendedToMinor={action.kind === "set_budget" ? action.to : null}
+          />,
+          document.body
+        )}
     </>
   );
 }
@@ -255,6 +297,11 @@ interface ModalProps {
   onConfirm: () => void;
   onCancel: () => void;
   onRetry: () => void;
+  /** Budget slider — current selected target (major units) and its setter. */
+  editedToMajor: number | null;
+  onEditedToMajorChange: (v: number) => void;
+  /** The AI's recommended target (minor units) to mark on the slider. */
+  recommendedToMinor: number | null;
 }
 
 function ConfirmModal({
@@ -269,6 +316,9 @@ function ConfirmModal({
   onConfirm,
   onCancel,
   onRetry,
+  editedToMajor,
+  onEditedToMajorChange,
+  recommendedToMinor,
 }: ModalProps) {
   const riskBadge = {
     low: "bg-green-100 text-green-800 border-green-200",
@@ -319,6 +369,32 @@ function ConfirmModal({
         <div className="space-y-4 px-5 py-4">
           <p className="text-sm font-medium text-slate-900">{summary}</p>
 
+          {(() => {
+            if (action.kind !== "set_budget" || action.from <= 0) return null;
+            const pct = ((action.to - action.from) / action.from) * 100;
+            const isBigDrop = pct <= -40;
+            const isBigRise = pct >= 60;
+            if (!isBigDrop && !isBigRise) return null;
+            const dir = pct < 0 ? "reduction" : "increase";
+            return (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 p-3">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-600" />
+                  <div className="min-w-0 text-xs text-amber-900">
+                    <div className="font-semibold">
+                      Large budget {dir}: {pct > 0 ? "+" : ""}{Math.round(pct)}%
+                    </div>
+                    <div className="mt-0.5">
+                      {isBigDrop
+                        ? "A cut this steep can stall delivery and reset the learning phase. Make sure this is intentional before applying."
+                        : "A jump this large can spend fast and skew pacing. Confirm this is intentional before applying."}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
           {action.reason && (
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
               <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
@@ -327,6 +403,44 @@ function ConfirmModal({
               <div className="mt-1 text-xs text-slate-700">{action.reason}</div>
             </div>
           )}
+
+          {phase === "confirming" && action.kind === "set_budget" && editedToMajor != null && (() => {
+            const { lo, hi, step, rec } = budgetSliderConfig(action.from, recommendedToMinor ?? action.to);
+            const cur = Math.round(action.from / 100);
+            return (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-slate-700">Adjust new {action.budgetType} budget</label>
+                  <span className="text-sm font-bold text-slate-900 tabular-nums">
+                    {formatMoney(editedToMajor, action.currency, 0)}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={lo}
+                  max={hi}
+                  step={step}
+                  value={Math.min(hi, Math.max(lo, editedToMajor))}
+                  onChange={(e) => onEditedToMajorChange(parseInt(e.target.value, 10))}
+                  className="mt-2 w-full h-1 accent-blue-600 cursor-pointer"
+                />
+                <div className="mt-1 flex items-center justify-between text-[10px] text-slate-400 tabular-nums">
+                  <span>{formatMoney(lo, action.currency, 0)}</span>
+                  <span>{formatMoney(hi, action.currency, 0)}</span>
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
+                  <span>Current: <span className="font-medium text-slate-700">{formatMoney(cur, action.currency, 0)}</span></span>
+                  <button
+                    type="button"
+                    onClick={() => onEditedToMajorChange(Math.round(rec))}
+                    className="text-blue-600 hover:text-blue-800 hover:underline"
+                  >
+                    AI suggests {formatMoney(Math.round(rec), action.currency, 0)} — reset
+                  </button>
+                </div>
+              </div>
+            );
+          })()}
 
           {phase === "confirming" && (
             <>

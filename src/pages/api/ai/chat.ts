@@ -83,6 +83,9 @@ export default async function handler(
     const response = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 1024,
+      // temperature 0 → deterministic: same prompt + data returns the same plan
+      // every call, so recommended ACTIONS stop swinging between requests.
+      temperature: 0,
       system: [{ type: "text", text: systemWithContext, cache_control: { type: "ephemeral" } }],
       messages,
     });

@@ -28,6 +28,7 @@ import AskAITab from "@/components/dashboard/tabs/AskAITab";
 import MediaAdsLibraryTab from "@/components/dashboard/MediaAdsLibraryTab";
 import ScanHistoryTab from "@/components/dashboard/ScanHistoryTab";
 import ChangeLogPanel from "@/components/apply/ChangeLogPanel";
+import CreateCampaignTab from "@/components/dashboard/create-campaign/CreateCampaignTab";
 import {
   ResearchChatTab,
   AgentReadyTab,
@@ -101,6 +102,7 @@ import {
   FlaskConical,
   MessagesSquare,
   Images,
+  PlusCircle,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -145,6 +147,7 @@ const NAV: NavGroup[] = [
       { id: "aud-performance",        label: "Audience Performance",   Icon: BarChart2, platforms: ["meta"] },
       { id: "aud-saturation",         label: "Saturation",             Icon: Zap       },
       { id: "conversion-monitoring",  label: "Conversion Monitoring",  Icon: LineChart },
+      { id: "create-campaign",        label: "Create Campaign",        Icon: PlusCircle },
     ],
   },
   {
@@ -450,6 +453,8 @@ export default function Dashboard() {
         return <AudienceSaturationTab {...ctx} />;
       case "conversion-monitoring":
         return <ConversionMonitoringTab {...props} />;
+      case "create-campaign":
+        return <CreateCampaignTab platform={platform} />;
       // Reporting
       case "rep-dashboard":
         return <DashboardReport {...props} />;

@@ -22,7 +22,7 @@ function parseMetaError(status: number, body: string): string {
     const json = JSON.parse(body);
     const msg = json?.error?.message || json?.message;
     if (msg) return `Meta API: ${msg}`;
-  } catch {}
+  } catch (_e) {}
   return `Meta API ${status}: ${body.slice(0, 120)}`;
 }
 
@@ -354,7 +354,7 @@ export class MetaApiClient {
     try {
       const acctMatch = path.match(/\/act_(\d+)/);
       if (acctMatch) metaThrottle.recordFromHeader(`act_${acctMatch[1]}`, res.headers.get("x-business-use-case-usage") ?? res.headers.get("x-ad-account-usage") ?? res.headers.get("x-app-usage"));
-    } catch { /* header parse is best-effort */ }
+    } catch (_e) { /* header parse is best-effort */ }
     if (!res.ok) {
       const body = await res.text();
       throw new Error(parseMetaError(res.status, body));
@@ -372,7 +372,7 @@ export class MetaApiClient {
     try {
       const acctMatch = absoluteUrl.match(/\/act_(\d+)/);
       if (acctMatch) metaThrottle.recordFromHeader(`act_${acctMatch[1]}`, res.headers.get("x-business-use-case-usage") ?? res.headers.get("x-ad-account-usage") ?? res.headers.get("x-app-usage"));
-    } catch { /* header parse is best-effort */ }
+    } catch (_e) { /* header parse is best-effort */ }
     if (!res.ok) {
       const body = await res.text();
       throw new Error(parseMetaError(res.status, body));
@@ -631,7 +631,7 @@ export class MetaApiClient {
           lastFiredTime: info.last_fired_time,
         },
       };
-    } catch {
+    } catch (_e) {
       return null;
     }
   }
@@ -879,19 +879,27 @@ export class MetaApiClient {
         `/${accountPath}`,
         { fields: "currency,account_currency" }
       );
-      return res.currency || res.account_currency || undefined;
-    } catch {
-      // Fallback: pull from a single-day insights row — account_currency is
-      // always present in every insights response regardless of permissions.
-      try {
-        const res2 = await this.fetch<{ data?: Array<{ account_currency?: string }> }>(
-          `/${accountPath}/insights`,
-          { fields: "account_currency", date_preset: "last_7d", level: "account", limit: "1" }
-        );
-        return res2.data?.[0]?.account_currency || undefined;
-      } catch {
-        return undefined;
+      const found = res.currency || res.account_currency || undefined;
+      console.log(`[getAccountCurrency] path=${accountPath} → ${found}  raw=`, JSON.stringify(res));
+      return found;
+    } catch (_e) {
+      // Fallback: pull from an insights row — account_currency is present in
+      // every insights response. Try progressively wider windows so accounts
+      // with no recent spend still resolve correctly.
+      for (const preset of ["last_30d", "last_90d", "maximum"]) {
+        try {
+          const res2 = await this.fetch<{ data?: Array<{ account_currency?: string }> }>(
+            `/${accountPath}/insights`,
+            { fields: "account_currency", date_preset: preset, level: "account", limit: "1" }
+          );
+          const found2 = res2.data?.[0]?.account_currency;
+          if (found2) {
+            console.log(`[getAccountCurrency] fallback insights (${preset}) for ${accountPath} → ${found2}`);
+            return found2;
+          }
+        } catch (_) { /* try next preset */ }
       }
+      return undefined;
     }
   }
 
@@ -912,7 +920,7 @@ export class MetaApiClient {
         businessName: b.name,
         domains: (b.verified_domains?.data || []).map((d) => d.domain),
       }));
-    } catch {
+    } catch (_e) {
       return [];
     }
   }
@@ -932,7 +940,7 @@ export class MetaApiClient {
       );
       const data = res.aggregated_event_configuration?.data;
       return Array.isArray(data) ? data : [];
-    } catch {
+    } catch (_e) {
       return [];
     }
   }
@@ -949,7 +957,7 @@ export class MetaApiClient {
         { fields: "attribution_spec" }
       );
       return res.attribution_spec || null;
-    } catch {
+    } catch (_e) {
       return null;
     }
   }
@@ -1020,14 +1028,14 @@ export class MetaApiClient {
 
     try {
       await runFetch(true);
-    } catch {
+    } catch (_e) {
       // A bad/unsupported attribution window (e.g. an account using engaged-view)
       // 400s the whole call. Retry WITHOUT attribution windows so spend/
       // impressions/clicks (attribution-independent) are never lost — only
       // conversions fall back to the account default.
       try {
         await runFetch(false);
-      } catch {
+      } catch (_e) {
         // Both failed — degrade gracefully (campaigns render "—").
       }
     }
@@ -1072,7 +1080,7 @@ export class MetaApiClient {
         path = res.paging?.next || null;
         nextParams = undefined;
       }
-    } catch {
+    } catch (_e) {
       // Degrade gracefully — window breakdown is supplemental; main conversions unaffected.
     }
     return out;
@@ -1239,7 +1247,7 @@ export class MetaApiClient {
         path = next || null;
         nextParams = undefined;
       }
-    } catch {
+    } catch (_e) {
       // Degrade gracefully.
     }
     return out;
@@ -1281,7 +1289,7 @@ export class MetaApiClient {
         path = next || null;
         nextParams = undefined;
       }
-    } catch {
+    } catch (_e) {
       // Degrade gracefully — ad metrics are nice-to-have.
     }
     return out;
@@ -1400,7 +1408,7 @@ export class MetaApiClient {
         // Ensure every requested id has an entry (empty = no spend in window).
         for (const id of wantedIds) if (!out[id]) out[id] = [];
         return out;
-      } catch {
+      } catch (_e) {
         // Fall through to the legacy batch path below.
       }
     }
@@ -1428,7 +1436,7 @@ export class MetaApiClient {
             .sort((a: { date: string }, b: { date: string }) => a.date.localeCompare(b.date));
           out[id] = rows;
         }
-      } catch {
+      } catch (_e) {
         for (const id of chunk) {
           if (!out[id]) out[id] = [];
         }
@@ -1490,7 +1498,7 @@ export class MetaApiClient {
             spend7d: insight?.spend ? parseFloat(insight.spend) : 0,
           };
         }
-      } catch {
+      } catch (_e) {
         for (const id of chunk) {
           if (!out[id]) out[id] = { conversions7d: 0, conversionValue7d: 0, reach7d: 0, frequency7d: 0, impressions7d: 0, spend7d: 0 };
         }
@@ -1546,7 +1554,7 @@ export class MetaApiClient {
         name: a.name,
         status: a.status,
       }));
-    } catch {
+    } catch (_e) {
       return null;
     }
   }
@@ -1566,7 +1574,7 @@ export class MetaApiClient {
         name: ad.name,
         creativeType: ad.creative?.type,
       }));
-    } catch {
+    } catch (_e) {
       return null;
     }
   }
@@ -1605,7 +1613,7 @@ export class MetaApiClient {
     let res: { data?: any[] };
     try {
       res = await this.fetch<{ data?: any[] }>(`/${accountPath}/insights`, params);
-    } catch {
+    } catch (_e) {
       return out;
     }
     const baseRows = (res.data || []).map((row: any) => ({
@@ -1642,7 +1650,7 @@ export class MetaApiClient {
           if (rec?.creative?.object_type) (r as any).creativeType = rec.creative.object_type;
           if (rec?.creative?.thumbnail_url) (r as any).thumbnailUrl = rec.creative.thumbnail_url;
         }
-      } catch { /* ignore chunk failure — leave creativeType undefined for those ids */ }
+      } catch (_e) { /* ignore chunk failure — leave creativeType undefined for those ids */ }
     }
 
     return baseRows;
@@ -1760,7 +1768,7 @@ export class MetaApiClient {
 
     try {
       await runFetch(true);
-    } catch {
+    } catch (_e) {
       // Retry without attribution windows in case the account uses a
       // non-standard window (e.g. engaged-view) the default rejects.
       out.length = 0;
@@ -1873,7 +1881,7 @@ export class MetaApiClient {
         if (page.paging?.next) { page = await this.fetchAbsolute(page.paging.next); guard++; }
         else break;
       }
-    } catch { /* return whatever resolved — caller falls back gracefully */ }
+    } catch (_e) { /* return whatever resolved — caller falls back gracefully */ }
     return map;
   }
 
@@ -1887,11 +1895,14 @@ export class MetaApiClient {
     promotedObject?: { product_set_id?: string; custom_event_type?: string };
     campaignId?: string;
     campaignObjective?: string;
+    status?: string;
+    effectiveStatus?: string;
+    dailyBudget?: number;
   }>> {
     if (adSetIds.length === 0) return {};
     const out: Record<string, any> = {};
 
-    // Step 1 — pull ad-set targeting + campaign_id, batched ~50 IDs per call.
+    // Step 1 — pull ad-set targeting + campaign_id + status + budget, batched ~50 IDs per call.
     const chunks: string[][] = [];
     for (let i = 0; i < adSetIds.length; i += 50) chunks.push(adSetIds.slice(i, i + 50));
 
@@ -1900,7 +1911,7 @@ export class MetaApiClient {
       try {
         const res = await this.fetch<Record<string, any>>("/", {
           ids: chunk.join(","),
-          fields: "id,name,targeting,promoted_object,campaign_id",
+          fields: "id,name,targeting,promoted_object,campaign_id,status,effective_status,daily_budget",
         });
         for (const [id, row] of Object.entries(res || {})) {
           const r = row as any;
@@ -1911,10 +1922,13 @@ export class MetaApiClient {
             targeting: r.targeting || undefined,
             promotedObject: r.promoted_object || undefined,
             campaignId: r.campaign_id || undefined,
+            status: r.status || undefined,
+            effectiveStatus: r.effective_status || undefined,
+            dailyBudget: r.daily_budget ? parseFloat(r.daily_budget) / 100 : undefined,
           };
           if (r.campaign_id) seenCampaignIds.add(r.campaign_id);
         }
-      } catch {
+      } catch (_e) {
         // Some ad sets may 403 (Advantage+) — silent skip, name-fallback will handle them.
       }
     }
@@ -1935,7 +1949,7 @@ export class MetaApiClient {
             const r = row as any;
             if (r?.objective) objectives[id] = r.objective;
           }
-        } catch { /* ignore */ }
+        } catch (_e) { /* ignore */ }
       }
       for (const id of Object.keys(out)) {
         const cid = out[id].campaignId;

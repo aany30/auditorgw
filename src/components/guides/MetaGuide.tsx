@@ -25,12 +25,21 @@ export default function MetaGuide({ onClose }: Props) {
       <GuideSection
         number={1}
         title="Get your Access Token"
-        summary="System User token from Business Settings — never expires"
+        summary="Two options: permanent System User token (recommended) or quick Graph API Explorer token"
         yieldsLabel="Access Token"
         defaultOpen
         subSteps={[
           {
-            heading: "Step 1.1 — Create a basic Meta app (one-time, no review needed)",
+            heading: ((
+              <span className="inline-flex items-center gap-2 text-green-900 bg-green-50 border border-green-200 rounded-md px-2.5 py-1.5 w-full">
+                <ShieldCheck className="w-4 h-4 text-green-600 flex-shrink-0" />
+                <span><strong>Option A — System User Token (Recommended)</strong> · Never expires · Best for production use</span>
+              </span>
+            ) as unknown) as string,
+            steps: [],
+          },
+          {
+            heading: "Step 1A.1 — Create a basic Meta app (one-time, no review needed)",
             steps: [
               <>
                 Open <GuideLink href="https://developers.facebook.com/apps">developers.facebook.com/apps</GuideLink> in a new tab. Sign in with the Facebook account that has admin access to your Business Manager.
@@ -39,7 +48,7 @@ export default function MetaGuide({ onClose }: Props) {
                 Top right → click the green <GuideButton>Create App</GuideButton> button.
               </>,
               <>
-                Under <em>"What do you want your app to do?"</em> select <GuideButton>Other</GuideButton> → click <GuideButton>Next</GuideButton>.
+                Under <em>&quot;What do you want your app to do?&quot;</em> select <GuideButton>Other</GuideButton> → click <GuideButton>Next</GuideButton>.
               </>,
               <>
                 App type → select <GuideButton>Business</GuideButton> → click <GuideButton>Next</GuideButton>.
@@ -48,39 +57,39 @@ export default function MetaGuide({ onClose }: Props) {
                 App name: anything (e.g., <GuideCode>Auditor Internal</GuideCode>). Email auto-fills. Click <GuideButton>Create App</GuideButton>.
               </>,
               <>
-                You land on the app dashboard. No app review needed for System User tokens — skip everything about "Live mode" / "App Review".
+                You land on the app dashboard. No app review needed for System User tokens — skip everything about &quot;Live mode&quot; / &quot;App Review&quot;.
               </>,
             ],
           },
           {
-            heading: "Step 1.2 — Generate the System User token",
+            heading: "Step 1A.2 — Generate the System User token",
             steps: [
               <>
                 Open <GuideLink href="https://business.facebook.com/settings">business.facebook.com/settings</GuideLink> in a new tab.
               </>,
               <>
-                Left sidebar → scroll to the <strong>"Users"</strong> section → click <GuideButton>System Users</GuideButton>.
+                Left sidebar → scroll to the <strong>&quot;Users&quot;</strong> section → click <GuideButton>System Users</GuideButton>.
               </>,
               <>
-                Top right → blue <GuideButton>Add</GuideButton> button → name it <GuideCode>Auditor System User</GuideCode> → role: <strong>"Admin"</strong> → click <GuideButton>Create System User</GuideButton>.
+                Top right → blue <GuideButton>Add</GuideButton> button → name it <GuideCode>Auditor System User</GuideCode> → role: <strong>&quot;Admin&quot;</strong> → click <GuideButton>Create System User</GuideButton>.
               </>,
               <>
                 Click the new system user row → on the right side, click <GuideButton>Assign Assets</GuideButton>.
               </>,
               <>
-                Pick <GuideButton>Ad Accounts</GuideButton> → select the ad accounts you want to audit → toggle <strong>"Manage Campaigns"</strong> ON + <strong>"View Performance"</strong> ON → <GuideButton>Save Changes</GuideButton>.
+                Pick <GuideButton>Ad Accounts</GuideButton> → select the ad accounts you want to audit → toggle <strong>&quot;Manage Campaigns&quot;</strong> ON + <strong>&quot;View Performance&quot;</strong> ON → <GuideButton>Save Changes</GuideButton>.
               </>,
               <>
-                (Optional) Repeat <GuideButton>Assign Assets</GuideButton> for <strong>"Pixels"</strong> if you want pixel-level read access.
+                (Optional) Repeat <GuideButton>Assign Assets</GuideButton> for <strong>&quot;Pixels&quot;</strong> if you want pixel-level read access.
               </>,
               <>
                 Back on the system user page → click <GuideButton>Generate New Token</GuideButton> at the top.
               </>,
               <>
-                <strong>Select App</strong> → pick the app you created in Step 1.1 → click <GuideButton>Next</GuideButton>.
+                <strong>Select App</strong> → pick the app you created in Step 1A.1 → click <GuideButton>Next</GuideButton>.
               </>,
               <>
-                <strong>Token Expiration</strong> → choose <strong>"Never"</strong> (System Users uniquely allow this).
+                <strong>Token Expiration</strong> → choose <strong>&quot;Never&quot;</strong> (System Users uniquely allow this).
               </>,
               <>
                 <strong>Permissions</strong> — check all four:{" "}
@@ -94,6 +103,87 @@ export default function MetaGuide({ onClose }: Props) {
                 <strong>Copy it immediately</strong> — you can only see it once. Save it somewhere safe, then paste into the form at the bottom of this page.
               </>,
             ],
+          },
+          {
+            heading: ((
+              <div className="flex items-center gap-3 w-full my-1">
+                <div className="flex-1 border-t border-gray-300" />
+                <span className="text-xs font-bold uppercase tracking-widest text-gray-400 px-2">OR</span>
+                <div className="flex-1 border-t border-gray-300" />
+              </div>
+            ) as unknown) as string,
+            steps: [],
+          },
+          {
+            heading: ((
+              <span className="inline-flex items-center gap-2 text-blue-900 bg-blue-50 border border-blue-200 rounded-md px-2.5 py-1.5 w-full">
+                <span className="text-base">⚡</span>
+                <span><strong>Option B — Graph API Explorer Token (Quick Start)</strong> · Short-lived · Good for quick testing</span>
+              </span>
+            ) as unknown) as string,
+            steps: [],
+          },
+          {
+            heading: "Step 1B.1 — Get a token from Graph API Explorer",
+            steps: [
+              <>
+                Open <GuideLink href="https://developers.facebook.com/tools/explorer/">developers.facebook.com/tools/explorer</GuideLink> in a new tab.
+              </>,
+              <>
+                Top right → <strong>Meta App</strong> dropdown → select your app (or the default <GuideCode>Graph API Explorer</GuideCode> app).
+              </>,
+              <>
+                Click <GuideButton>Generate Access Token</GuideButton>. A login dialog appears — log in and grant access.
+              </>,
+              <>
+                Under <strong>Permissions</strong> on the right sidebar, click <GuideButton>Add a Permission</GuideButton> and add:{" "}
+                <GuideCode>ads_read</GuideCode>, <GuideCode>ads_management</GuideCode>,{" "}
+                <GuideCode>business_management</GuideCode>, <GuideCode>read_insights</GuideCode>.
+              </>,
+              <>
+                Click <GuideButton>Generate Access Token</GuideButton> again to refresh with the new permissions. Approve the permission dialog.
+              </>,
+              <>
+                Copy the token from the <strong>Access Token</strong> field at the top. This is a <strong>short-lived token</strong> — it expires in about 1 hour.
+              </>,
+            ],
+          },
+          {
+            heading: "Step 1B.2 — Extend to a 60-day long-lived token",
+            steps: [
+              <>
+                A Graph API Explorer token expires in ~1 hour. To extend it to <strong>60 days</strong>, you need your app&apos;s <strong>App ID</strong> and <strong>App Secret</strong>.
+              </>,
+              <>
+                Go to <GuideLink href="https://developers.facebook.com/apps">developers.facebook.com/apps</GuideLink> → click your app → left sidebar → <GuideButton>Settings</GuideButton> → <GuideButton>Basic</GuideButton>.
+              </>,
+              <>
+                Copy the <strong>App ID</strong> and click <GuideButton>Show</GuideButton> next to <strong>App Secret</strong> to reveal and copy it.
+              </>,
+              <>
+                Open a new browser tab and paste this URL (replace the three values):<br />
+                <GuideCode>
+                  {`https://graph.facebook.com/v21.0/oauth/access_token?grant_type=fb_exchange_token&client_id=YOUR_APP_ID&client_secret=YOUR_APP_SECRET&fb_exchange_token=YOUR_SHORT_LIVED_TOKEN`}
+                </GuideCode>
+              </>,
+              <>
+                Press Enter. The response is JSON with an <GuideCode>access_token</GuideCode> field — that&apos;s your <strong>60-day long-lived token</strong>.
+              </>,
+              <>
+                Copy that long-lived token and paste it into the form at the bottom of this page. Set a calendar reminder to renew it before it expires.
+              </>,
+            ],
+          },
+          {
+            heading: ((
+              <span className="inline-flex items-start gap-2 text-amber-900 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-1.5 w-full text-xs">
+                <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
+                <span>
+                  <strong>Token lifespan comparison:</strong> System User tokens (Option A) never expire — no renewal needed. Graph API Explorer tokens (Option B) expire in ~1 hour and must be extended to 60 days via the exchange step above. For ongoing use, Option A is strongly recommended.
+                </span>
+              </span>
+            ) as unknown) as string,
+            steps: [],
           },
         ]}
       />

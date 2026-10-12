@@ -258,6 +258,32 @@ export class DV360ApiClient {
     return (await r.json()) as T;
   }
 
+  async authedPost<T>(url: string, body: Record<string, unknown>): Promise<T> {
+    const token = await this.getAccessToken();
+    const r = await fetchWithTimeout(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }, 20_000);
+    if (!r.ok) {
+      const text = await r.text();
+      throw new Error(`DV360 POST ${url.replace(DV360_BASE, "").split("?")[0]} failed (HTTP ${r.status}): ${text.slice(0, 300)}`);
+    }
+    return (await r.json()) as T;
+  }
+
+  async createCampaign(data: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return this.authedPost(`${DV360_BASE}/advertisers/${this.creds.advertiserId}/campaigns`, data);
+  }
+
+  async createInsertionOrder(data: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return this.authedPost(`${DV360_BASE}/advertisers/${this.creds.advertiserId}/insertionOrders`, data);
+  }
+
+  async createLineItem(data: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return this.authedPost(`${DV360_BASE}/advertisers/${this.creds.advertiserId}/lineItems`, data);
+  }
+
   /**
    * Rename a DV360 entity via v4 PATCH (write — needs the display-video scope,
    * which the OAuth consent grants). `kind` selects the resource collection.

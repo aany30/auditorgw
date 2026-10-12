@@ -163,6 +163,9 @@ export default async function handler(
     const response = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 1024,
+      // temperature 0 → deterministic: same failing metric + context returns the
+      // same fix steps every call, so recommendations stop varying run-to-run.
+      temperature: 0,
       system: [
         {
           type: "text",

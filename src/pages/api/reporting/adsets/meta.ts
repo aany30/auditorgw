@@ -58,6 +58,12 @@ type AdSetRow = {
   cpm: number;
   ctr: number;
   videoViews: number;
+  /** Ad-set daily budget in major currency units (e.g. ₹3500). 0 when absent. */
+  dailyBudget: number;
+  /** Ad-set lifetime budget in major currency units. 0 when absent. */
+  lifetimeBudget: number;
+  /** Effective status: ACTIVE | PAUSED | DELETED | ARCHIVED etc. */
+  status: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -72,6 +78,7 @@ function getDemoAdSets(): AdSetRow[] {
       targeting: "Women 25-44, Mumbai + Delhi, Interest: Fashion & Beauty",
       spend: 48500, impressions: 1280000, clicks: 19200, reach: 620000, frequency: 2.06,
       conversions: 342, conversionValue: 1710000, cpm: 37.89, ctr: 1.50, videoViews: 18400,
+      dailyBudget: 5000, lifetimeBudget: 0, status: "ACTIVE",
     },
     {
       id: "a004", name: "Retargeting - Website Visitors 30d",
@@ -79,6 +86,7 @@ function getDemoAdSets(): AdSetRow[] {
       targeting: "Men 18-34, Tier 1 Cities, Custom Audience: Website Visitors",
       spend: 32000, impressions: 540000, clicks: 16200, reach: 185000, frequency: 2.92,
       conversions: 480, conversionValue: 2400000, cpm: 59.26, ctr: 3.00, videoViews: 4200,
+      dailyBudget: 3500, lifetimeBudget: 0, status: "ACTIVE",
     },
     {
       id: "a003", name: "Lookalike - Purchase 1% IN",
@@ -86,6 +94,7 @@ function getDemoAdSets(): AdSetRow[] {
       targeting: "All Genders 21-45, India, Lookalike: Purchasers 1%",
       spend: 42000, impressions: 1050000, clicks: 14700, reach: 510000, frequency: 2.06,
       conversions: 285, conversionValue: 1425000, cpm: 40.00, ctr: 1.40, videoViews: 22100,
+      dailyBudget: 4200, lifetimeBudget: 0, status: "ACTIVE",
     },
     {
       id: "demo_adset_004", name: "Broad - Women 25-54 Metro",
@@ -93,6 +102,7 @@ function getDemoAdSets(): AdSetRow[] {
       targeting: "Women 25-54, Bengaluru + Hyderabad + Chennai, Broad Targeting",
       spend: 28500, impressions: 820000, clicks: 10660, reach: 390000, frequency: 2.10,
       conversions: 195, conversionValue: 975000, cpm: 34.76, ctr: 1.30, videoViews: 15800,
+      dailyBudget: 2800, lifetimeBudget: 0, status: "ACTIVE",
     },
     {
       id: "demo_adset_005", name: "Interest - Home Decor Enthusiasts",
@@ -100,6 +110,7 @@ function getDemoAdSets(): AdSetRow[] {
       targeting: "Women 28-50, Pan India, Interest: Home Decor & Interior Design",
       spend: 22000, impressions: 620000, clicks: 8060, reach: 310000, frequency: 2.00,
       conversions: 148, conversionValue: 1184000, cpm: 35.48, ctr: 1.30, videoViews: 9500,
+      dailyBudget: 2200, lifetimeBudget: 0, status: "ACTIVE",
     },
     {
       id: "a008", name: "Custom Audience - Email Subscribers",
@@ -107,6 +118,7 @@ function getDemoAdSets(): AdSetRow[] {
       targeting: "All Genders 22-55, Custom Audience: Email Subscribers (45K list)",
       spend: 15200, impressions: 280000, clicks: 11200, reach: 38000, frequency: 7.37,
       conversions: 312, conversionValue: 1560000, cpm: 54.29, ctr: 4.00, videoViews: 2100,
+      dailyBudget: 1500, lifetimeBudget: 0, status: "ACTIVE",
     },
     {
       id: "demo_adset_007", name: "Lookalike - ATC 3% South India",
@@ -114,6 +126,7 @@ function getDemoAdSets(): AdSetRow[] {
       targeting: "All Genders 18-40, Karnataka + Tamil Nadu + Kerala, Lookalike: Add-to-Cart 3%",
       spend: 18500, impressions: 520000, clicks: 7280, reach: 260000, frequency: 2.00,
       conversions: 112, conversionValue: 448000, cpm: 35.58, ctr: 1.40, videoViews: 11200,
+      dailyBudget: 1800, lifetimeBudget: 0, status: "PAUSED",
     },
     {
       id: "demo_adset_008", name: "Demographic - Young Professionals",
@@ -121,6 +134,7 @@ function getDemoAdSets(): AdSetRow[] {
       targeting: "Men 22-35, Delhi NCR + Pune, Interest: Fitness & Lifestyle, Income: Top 25%",
       spend: 12800, impressions: 360000, clicks: 5040, reach: 175000, frequency: 2.06,
       conversions: 88, conversionValue: 440000, cpm: 35.56, ctr: 1.40, videoViews: 6700,
+      dailyBudget: 1200, lifetimeBudget: 0, status: "ACTIVE",
     },
     {
       id: "a006", name: "Retargeting - Cart Abandoners 7d",
@@ -128,6 +142,7 @@ function getDemoAdSets(): AdSetRow[] {
       targeting: "All Genders 18-55, India, Custom Audience: Cart Abandoners (7 days)",
       spend: 9800, impressions: 145000, clicks: 7250, reach: 42000, frequency: 3.45,
       conversions: 210, conversionValue: 1050000, cpm: 67.59, ctr: 5.00, videoViews: 980,
+      dailyBudget: 1000, lifetimeBudget: 0, status: "ACTIVE",
     },
     {
       id: "demo_adset_010", name: "Interest - Skincare & Wellness",
@@ -135,6 +150,7 @@ function getDemoAdSets(): AdSetRow[] {
       targeting: "Women 20-38, Tier 1 + Tier 2 Cities, Interest: Skincare & Wellness",
       spend: 35000, impressions: 980000, clicks: 13720, reach: 480000, frequency: 2.04,
       conversions: 228, conversionValue: 1140000, cpm: 35.71, ctr: 1.40, videoViews: 19600,
+      dailyBudget: 3500, lifetimeBudget: 0, status: "ACTIVE",
     },
     {
       id: "demo_adset_011", name: "Lookalike - High-Value Buyers 1%",
@@ -142,6 +158,7 @@ function getDemoAdSets(): AdSetRow[] {
       targeting: "All Genders 28-50, India, Lookalike: High-Value Purchasers 1% (AOV > Rs 5000)",
       spend: 38000, impressions: 850000, clicks: 10200, reach: 420000, frequency: 2.02,
       conversions: 165, conversionValue: 1650000, cpm: 44.71, ctr: 1.20, videoViews: 14300,
+      dailyBudget: 3800, lifetimeBudget: 0, status: "ACTIVE",
     },
     {
       id: "demo_adset_012", name: "Geo - Tier 2 Cities Expansion",
@@ -149,6 +166,7 @@ function getDemoAdSets(): AdSetRow[] {
       targeting: "Women 22-40, Jaipur + Lucknow + Chandigarh + Kochi, Interest: Online Shopping",
       spend: 8500, impressions: 310000, clicks: 4030, reach: 155000, frequency: 2.00,
       conversions: 62, conversionValue: 248000, cpm: 27.42, ctr: 1.30, videoViews: 7200,
+      dailyBudget: 850, lifetimeBudget: 0, status: "ACTIVE",
     },
     {
       id: "demo_adset_013", name: "Video Views - Brand Awareness",
@@ -156,6 +174,7 @@ function getDemoAdSets(): AdSetRow[] {
       targeting: "All Genders 18-45, Pan India, Interest: Fashion & Lifestyle, Optimized for ThruPlay",
       spend: 25000, impressions: 1450000, clicks: 5800, reach: 720000, frequency: 2.01,
       conversions: 42, conversionValue: 168000, cpm: 17.24, ctr: 0.40, videoViews: 185000,
+      dailyBudget: 0, lifetimeBudget: 75000, status: "ACTIVE",
     },
     {
       id: "a005", name: "Retargeting - Video Viewers 50%",
@@ -163,6 +182,7 @@ function getDemoAdSets(): AdSetRow[] {
       targeting: "All Genders 18-45, India, Custom Audience: Video Viewers (50%+ watched, 30d)",
       spend: 11000, impressions: 220000, clicks: 6600, reach: 68000, frequency: 3.24,
       conversions: 135, conversionValue: 675000, cpm: 50.00, ctr: 3.00, videoViews: 3200,
+      dailyBudget: 1100, lifetimeBudget: 0, status: "ACTIVE",
     },
     {
       id: "demo_adset_015", name: "Interest - Tech & Gadgets Male",
@@ -170,6 +190,7 @@ function getDemoAdSets(): AdSetRow[] {
       targeting: "Men 18-30, Mumbai + Bengaluru + Delhi, Interest: Technology & Gadgets",
       spend: 5200, impressions: 185000, clicks: 3330, reach: 92000, frequency: 2.01,
       conversions: 55, conversionValue: 220000, cpm: 28.11, ctr: 1.80, videoViews: 4800,
+      dailyBudget: 520, lifetimeBudget: 0, status: "ACTIVE",
     },
   ];
 }
@@ -357,7 +378,7 @@ async function fetchAdSetsForCampaignChunk(
     { field: "campaign.id", operator: "IN", value: campaignIds },
   ]);
   return metaFetchAll<any>(accessToken, `/${accountPath}/adsets`, {
-    fields: "id,name,campaign_id,campaign{name},targeting",
+    fields: "id,name,campaign_id,campaign{name},targeting,daily_budget,lifetime_budget,effective_status",
     filtering,
     limit: "500",
   }, signal);
@@ -527,6 +548,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const conversionValue = sumConversions(ins?.action_values);
       const videoViews = sumActionValues(ins?.video_play_actions);
 
+      // Meta returns budget in cents (account currency's minor unit).
+      const dailyBudget = adset.daily_budget ? parseFloat(adset.daily_budget) / 100 : 0;
+      const lifetimeBudget = adset.lifetime_budget ? parseFloat(adset.lifetime_budget) / 100 : 0;
+
       return {
         id,
         name: String(adset.name || ""),
@@ -543,6 +568,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         cpm: impressions > 0 ? Math.round((spend / impressions) * 1000 * 100) / 100 : 0,
         ctr: impressions > 0 ? Math.round((clicks / impressions) * 100 * 100) / 100 : 0,
         videoViews,
+        dailyBudget,
+        lifetimeBudget,
+        status: String(adset.effective_status || "UNKNOWN").toUpperCase(),
       };
     });
 

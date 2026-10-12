@@ -14,7 +14,85 @@ import { isDemoCredential } from "@/lib/demo-data";
 import ApplyActionButton from "@/components/apply/ApplyActionButton";
 import type { ApplyAction } from "@/lib/apply/types";
 import { parseSuggestedAction, type AiSuggestedAction } from "@/lib/apply/suggest-from-text";
+import { buildApplyFromText, type ApplyContext } from "@/lib/apply/apply-context";
 export { parseSuggestedAction, type AiSuggestedAction };
+
+function renderAiMarkdown(
+  text: string,
+  applyContext?: ApplyContext,
+  isDemo?: boolean,
+  recommendedBudget?: number | null,
+): React.ReactNode {
+  const lines = text.split("\n");
+  const elements: React.ReactNode[] = [];
+  // Dedupe: at most one budget button and one status button per answer, so a
+  // single recommendation can never show two conflicting "Set budget" buttons.
+  const renderedKinds = new Set<string>();
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i];
+    if (line.trim() === "---") {
+      elements.push(<hr key={i} className="my-2 border-violet-200" />);
+      continue;
+    }
+    const h2 = line.match(/^##\s+(.+)$/);
+    if (h2) {
+      elements.push(<div key={i} className="font-bold text-gray-900 mt-2 mb-1 text-xs">{h2[1]}</div>);
+      continue;
+    }
+    const h1 = line.match(/^#\s+(.+)$/);
+    if (h1) {
+      elements.push(<div key={i} className="font-bold text-gray-900 mt-1 mb-1 text-xs">{h1[1]}</div>);
+      continue;
+    }
+    const bullet = line.match(/^[•\-\*]\s+(.*)$/);
+    if (bullet) line = bullet[1];
+    const parts: React.ReactNode[] = [];
+    const regex = /\*\*(.+?)\*\*/g;
+    let lastIdx = 0;
+    let m: RegExpExecArray | null;
+    while ((m = regex.exec(line)) !== null) {
+      if (m.index > lastIdx) parts.push(line.slice(lastIdx, m.index));
+      parts.push(<strong key={`${i}-${m.index}`} className="font-semibold text-gray-900">{m[1]}</strong>);
+      lastIdx = regex.lastIndex;
+    }
+    if (lastIdx < line.length) parts.push(line.slice(lastIdx));
+    if (parts.length === 0 && !bullet) { elements.push(<br key={i} />); continue; }
+    if (bullet) {
+      // When this bullet maps to a writable Meta/DV360 action, render a one-click
+      // Apply button right under it so the user can act on that specific step.
+      let stepAction = applyContext && !isDemo ? buildApplyFromText(line, applyContext) : null;
+      if (stepAction) {
+        // Force the deterministic budget figure onto the button, regardless of
+        // the number the AI happened to write, so it's consistent and defensible.
+        if (stepAction.kind === "set_budget" && recommendedBudget && recommendedBudget > 0) {
+          const toMinor = Math.round(recommendedBudget) * 100;
+          stepAction = toMinor === stepAction.from ? null : { ...stepAction, to: toMinor };
+        }
+        // Skip a second button of the same kind (one budget + one status max).
+        if (stepAction) {
+          if (renderedKinds.has(stepAction.kind)) stepAction = null;
+          else renderedKinds.add(stepAction.kind);
+        }
+      }
+      elements.push(
+        <div key={i} className="mt-1">
+          <div className="flex gap-1.5">
+            <span className="text-violet-500 flex-shrink-0">•</span>
+            <span>{parts}</span>
+          </div>
+          {stepAction && (
+            <div className="mt-1 ml-3.5">
+              <ApplyActionButton action={stepAction} compact />
+            </div>
+          )}
+        </div>
+      );
+    } else {
+      elements.push(<div key={i} className="mt-0.5">{parts}</div>);
+    }
+  }
+  return <>{elements}</>;
+}
 
 function fmtInt(n: number | undefined): string {
   if (n === undefined || n === null || isNaN(n)) return "—";
@@ -57,35 +135,106 @@ interface RowAiRecoProps {
 }
 
 interface RowAiRecoPropsExt extends RowAiRecoProps {
-  /** Called with the parsed AI-suggested action (budget / pause / resume /
-   *  frequency cap) so the parent can wire the Apply button to the AI's
-   *  exact recommendation instead of a heuristic. */
   onAiSuggestedAction?: (action: AiSuggestedAction) => void;
+  /** When provided, the AI panel renders an Apply button inside itself
+   *  whenever the AI's response contains an actionable recommendation. */
+  applyContext?: ApplyContext;
+  /** Code-computed recommended budget (major units). When set, it grounds the
+   *  prompt and overrides the budget Apply button's value, so the figure is
+   *  deterministic instead of whatever number the AI happens to write. */
+  recommendedBudget?: number | null;
 }
 
-function RowAiReco({ campaignContext, findingLabel, findingDetail, isDemo, platform, onAiSuggestedAction }: RowAiRecoPropsExt) {
+/**
+ * Per-campaign AI-answer cache — pins a recommendation to its data snapshot so
+ * reopening the panel shows the SAME text instead of re-rolling the model.
+ * Keyed by entity + finding + a snapshot of the inputs that matter; the entry
+ * self-invalidates when those numbers change. "Regenerate" deletes the key.
+ */
+const AI_ANSWER_CACHE = new Map<string, string>();
+
+function snapshotKey(
+  applyContext: ApplyContext | undefined,
+  findingLabel: string,
+  campaignContext: Record<string, unknown>,
+): string {
+  const id = applyContext?.entityId ?? "unknown";
+  const budget = Math.round(applyContext?.currentBudget ?? 0);
+  const status = applyContext?.currentStatus ?? "";
+  const spend = Math.round((campaignContext.spend as number) ?? 0);
+  const conv = Math.round((campaignContext.conversions as number) ?? 0);
+  return `${id}|${findingLabel}|${budget}|${status}|${spend}|${conv}`;
+}
+
+function RowAiReco({ campaignContext, findingLabel, findingDetail, isDemo, platform, onAiSuggestedAction, applyContext, recommendedBudget }: RowAiRecoPropsExt) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [answer, setAnswer] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { addAiCredits } = useAuthStore();
 
-  const ask = async () => {
-    if (answer || loading) { setOpen(true); return; }
+  const cacheKey = snapshotKey(applyContext, findingLabel, campaignContext);
+
+  const ask = async (force = false) => {
+    if (!force && (answer || loading)) { setOpen(true); return; }
     setOpen(true);
+    // Serve a pinned answer for this data snapshot unless the user forces a fresh one.
+    if (!force) {
+      const cached = AI_ANSWER_CACHE.get(cacheKey);
+      if (cached) { setAnswer(cached); return; }
+    } else {
+      AI_ANSWER_CACHE.delete(cacheKey);
+      setAnswer(null);
+    }
     setLoading(true);
     setError(null);
     try {
+      const ctxStatus = applyContext?.currentStatus || "";
+      const ctxBudget = applyContext?.currentBudget;
+      const hasCampaignBudget = typeof ctxBudget === "number" && ctxBudget > 0;
+      const budgetLabel = applyContext?.budgetType === "lifetime" ? "lifetime" : "daily";
+      // The dashboard computes the exact recommended budget deterministically;
+      // tell the model to use that figure verbatim so the narrative matches the
+      // Apply button and never wanders between calls.
+      // Detect what entity type we're advising — campaign, adset, or IO
+      const entityLabel = applyContext?.entityType === "insertion_order" ? "insertion order"
+        : applyContext?.entityType === "adset" ? "ad set"
+        : "campaign";
+      const pausePhrase = applyContext?.entityType === "insertion_order"
+        ? `"Pause this insertion order"`
+        : applyContext?.entityType === "adset"
+        ? `"Pause this ad set"`
+        : `"Pause this campaign"`;
+      const resumePhrase = applyContext?.entityType === "insertion_order"
+        ? `"Resume this insertion order"`
+        : applyContext?.entityType === "adset"
+        ? `"Resume this ad set"`
+        : `"Resume this campaign"`;
+
+      const budgetDirective = recommendedBudget && hasCampaignBudget
+        ? `- If you recommend a budget change, the correct new ${budgetLabel} budget is ₹${recommendedBudget}. State EXACTLY "Reduce ${budgetLabel} budget to ₹${recommendedBudget}" (or "Increase…" if higher). Do NOT invent any other figure.`
+        : hasCampaignBudget
+          ? `- This ${entityLabel}'s current ${budgetLabel} budget is about ₹${Math.round(ctxBudget!)}. A budget change is NOT warranted for this finding — do not include a budget figure; focus on diagnosis, pausing, or creative/audience fixes.`
+          : `- This ${entityLabel} has NO ${entityLabel}-level budget set${entityLabel === "campaign" ? " (it uses ad-set-level budgets / ABO)" : ""}. Do NOT recommend a budget change — it cannot be applied here. Recommend pausing, or auditing/adjusting line items instead.`;
+
+      // For no-delivery findings, let the AI know pause is an option (don't force it)
+      const noDeliveryHint = findingLabel.toLowerCase().includes("no delivery")
+        ? `\n\nNO DELIVERY SCENARIO: This ${entityLabel} is active but has ZERO spend. Recommend whatever action is best given the data — pausing to stop wasting the budget slot, adjusting the budget, or keeping it active with specific fixes. Make sure at least one bullet uses an apply-able phrase if any API action is warranted.`
+        : "";
+
       const question = `Finding: ${findingLabel} — ${findingDetail}
 
-Give me 2–4 specific next steps for THIS campaign only. Reference the campaign's actual numbers. Each step on its own line starting with "•". Skip generic advice.
+Give me 2–4 specific next steps for THIS ${entityLabel} only. Reference the ${entityLabel}'s actual numbers. Each step on its own line starting with "•". Skip generic advice. Keep each step to one or two sentences.
+
+BUDGET RECOMMENDATIONS:
+${budgetDirective}
 
 APPLY-ABLE RECOMMENDATION: if ANY of your advice can be executed via the Meta/DV360 API (budget change, pause, resume, frequency cap), state it EXPLICITLY in the FIRST bullet using one of these exact phrasings so the dashboard can wire a one-click Apply button:
-- Budget: "Reduce daily budget to ₹<number>" or "Increase daily budget to ₹<number>" or "Set daily budget to ₹<number>"
-- Pause: "Pause this campaign" or "Turn this off"
-- Resume: "Resume this campaign" or "Reactivate this campaign"
-- Frequency cap (ad set): "Cap frequency to <X> impressions per <Y> days"
-Only include an apply-able phrase when you are confident it's the right action — do not force it.`;
+- Budget: "Reduce ${budgetLabel} budget to ₹<number>" or "Increase ${budgetLabel} budget to ₹<number>"${recommendedBudget && hasCampaignBudget ? ` (use ₹${recommendedBudget})` : " (only if warranted per the rule above)"}
+- Pause: ${pausePhrase} or "Turn this off"
+- Resume: ${resumePhrase} or "Reactivate this ${entityLabel}"
+- Frequency cap (ad set / line item): "Cap frequency to <X> impressions per <Y> days"
+Give AT MOST ONE budget step and AT MOST ONE pause/resume step. Only include an apply-able phrase when you are confident it's the right action — do not force it.${noDeliveryHint}${ctxStatus === "ACTIVE" && !findingLabel.toLowerCase().includes("no delivery") ? `\n\nIMPORTANT: This ${entityLabel}'s status is already ACTIVE. Do NOT suggest "Resume" or "Reactivate" — it is already active. If it's not delivering despite being active (e.g. flight dates ended, line items paused, or creative issues), recommend the actual fix (extend flight dates, activate line items, check creatives, etc.).` : ""}`;
       const res = await fetch("/api/ai/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -98,8 +247,7 @@ Only include an apply-able phrase when you are confident it's the right action �
       const json = await res.json();
       const text = json.answer || "(no response)";
       setAnswer(text);
-      // Parse the AI's reply for any apply-able action and tell the parent so
-      // the Apply button can be wired to the AI's exact recommendation.
+      AI_ANSWER_CACHE.set(cacheKey, text);
       const suggested = parseSuggestedAction(text);
       if (suggested && onAiSuggestedAction) onAiSuggestedAction(suggested);
       if (json.creditsUsedUsd) addAiCredits(json.creditsUsedUsd);
@@ -114,7 +262,7 @@ Only include an apply-able phrase when you are confident it's the right action �
     <div className="mt-2">
       {!open && (
         <button
-          onClick={ask}
+          onClick={() => void ask()}
           className="inline-flex items-center gap-1 text-[10px] font-semibold text-violet-700 hover:text-violet-900 hover:underline"
         >
           <Sparkles className="w-3 h-3" />
@@ -128,7 +276,12 @@ Only include an apply-able phrase when you are confident it's the right action �
             <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide text-violet-700">
               <Sparkles className="w-3 h-3" /> AI recommendation
             </span>
-            <button onClick={() => setOpen(false)} className="text-[10px] text-gray-400 hover:text-gray-600">close</button>
+            <div className="flex items-center gap-2">
+              {answer && !loading && (
+                <button onClick={() => void ask(true)} className="text-[10px] text-violet-500 hover:text-violet-700">Regenerate</button>
+              )}
+              <button onClick={() => setOpen(false)} className="text-[10px] text-gray-400 hover:text-gray-600">close</button>
+            </div>
           </div>
           {loading && (
             <div className="flex items-center gap-2 text-[11px] text-gray-600">
@@ -140,7 +293,7 @@ Only include an apply-able phrase when you are confident it's the right action �
             <div className="text-[11px] text-red-700">Couldn&apos;t generate: {error}</div>
           )}
           {answer && !loading && (
-            <div className="text-[11px] text-gray-700 leading-relaxed whitespace-pre-wrap">{answer}</div>
+            <div className="text-[11px] text-gray-700 leading-relaxed">{renderAiMarkdown(answer, applyContext, isDemo, recommendedBudget)}</div>
           )}
         </div>
       )}
@@ -194,6 +347,31 @@ function computeMetaTip(
   }
   const pct = c.dailyBudget > 0 ? (avg7d / c.dailyBudget) * 100 : 100;
   return { kind: "healthy", severity: "good", label: "On pace", detail: `Spending ${formatMoney(avg7d, currency, 0)}/day · ${Math.round(pct)}% of the ${formatMoney(c.dailyBudget, currency, 0)}/day budget. No action needed.`, isSpike: false, sevRank: 0 };
+}
+
+/**
+ * Deterministic recommended budget (major units) for a tip — the single source
+ * of truth for the "Set budget" apply value, so the number never wanders
+ * between AI calls. Rules (tip-aware):
+ *   - spike / over-pacing → measured 15% cut of the current budget.
+ *   - under-pacing → align the cap down toward actual delivery (avg7d),
+ *     floored at 80% of current so it's never a drastic drop.
+ *   - anything else → no budget change.
+ * Returns null when there's no campaign-level budget to change.
+ */
+function recommendedBudgetMajor(
+  tipKind: TipKind,
+  currentBudgetMajor: number,
+  avg7d: number,
+): number | null {
+  if (!currentBudgetMajor || currentBudgetMajor <= 0) return null;
+  if (tipKind === "spike" || tipKind === "overPacing") {
+    return Math.max(1, Math.round(currentBudgetMajor * 0.85));
+  }
+  if (tipKind === "underPacing") {
+    return Math.max(1, Math.round(Math.max(avg7d, currentBudgetMajor * 0.80)));
+  }
+  return null;
 }
 
 function fmtFlightDate(iso?: string): string | null {
@@ -350,7 +528,7 @@ function buildApplyActionForTip(
   return null;
 }
 
-function TipCell({ tip, campaignContext, isDemo, platform, campaign, currency, budget, budgetType }: {
+function TipCell({ tip, campaignContext, isDemo, platform, campaign, currency, budget, budgetType, recommendedBudget }: {
   tip: Tip;
   campaignContext: Record<string, unknown>;
   isDemo: boolean;
@@ -359,15 +537,30 @@ function TipCell({ tip, campaignContext, isDemo, platform, campaign, currency, b
   currency: string;
   budget: number;
   budgetType: string;
+  recommendedBudget?: number | null;
 }) {
-  // State: an AI-suggested action parsed from the "Ask AI" response. When
-  // populated, buildApplyActionForTip prefers it over the heuristic — so the
-  // "Set budget" button applies the AI's exact ₹ number (not a ±15% guess),
-  // and a pause/resume rec gets wired to its matching Apply.
   const [aiSuggested, setAiSuggested] = useState<AiSuggestedAction | null>(null);
-  const applyAction = isDemo
-    ? null
-    : buildApplyActionForTip(tip, campaign, currency, budget, budgetType, aiSuggested);
+
+  // Detect sub-campaign entities from the context passed by the parent.
+  const ctxEntityType = campaignContext.entityType as string | undefined;
+  const entityType = (
+    ctxEntityType === "adset" ? "adset"
+    : ctxEntityType === "insertion_order" ? "insertion_order"
+    : "campaign"
+  ) as "campaign" | "adset" | "insertion_order";
+
+  const tipApplyContext: ApplyContext | undefined = isDemo ? undefined : {
+    platform: platform as "meta" | "dv360",
+    entityType,
+    entityId: campaign.id,
+    entityName: campaign.name,
+    currentBudget: budget,
+    budgetType: budgetType === "lifetime" ? "lifetime" : "daily",
+    currentStatus: (campaign.status || "").toUpperCase().includes("ACTIVE") ? "ACTIVE" : "PAUSED",
+    currency,
+    reasonPrefix: tip.label,
+  };
+
   const styles = {
     high:   { ring: "ring-red-200 bg-red-50",       pill: "bg-red-100 text-red-700",       Icon: AlertCircle,   iconClass: "text-red-600" },
     medium: { ring: "ring-yellow-200 bg-yellow-50", pill: "bg-yellow-100 text-yellow-700", Icon: tip.kind === "overPacing" ? TrendingUp : TrendingDown, iconClass: "text-yellow-600" },
@@ -391,12 +584,9 @@ function TipCell({ tip, campaignContext, isDemo, platform, campaign, currency, b
             campaignContext={campaignContext}
             platform={platform}
             onAiSuggestedAction={setAiSuggested}
+            applyContext={tipApplyContext}
+            recommendedBudget={recommendedBudget}
           />
-        )}
-        {applyAction && (
-          <div className="mt-2">
-            <ApplyActionButton action={applyAction} compact />
-          </div>
         )}
       </div>
     </div>
@@ -415,6 +605,7 @@ interface SpendTableProps {
     objective: string;
     budget: number;
     budgetType: string;
+    recommendedBudget?: number | null;
     spend: number;
     impressions: number;
     clicks: number;
@@ -506,6 +697,7 @@ function SpendTable({ rows, currency, totalSpend, totalImpressions, totalClicks,
                     currency={currency}
                     budget={r.budget}
                     budgetType={r.budgetType}
+                    recommendedBudget={r.recommendedBudget}
                     campaignContext={{
                       name: r.name, status: r.status, objective: r.objective,
                       dailyBudget: r.budget, budgetType: r.budgetType,
@@ -537,7 +729,7 @@ function SpendTable({ rows, currency, totalSpend, totalImpressions, totalClicks,
                     <button
                       onClick={() => toggleExpand(r.c.id)}
                       className="p-1 rounded hover:bg-gray-100 text-gray-500"
-                      title={expanded.has(r.c.id) ? "Collapse" : "Expand insertion orders"}
+                      title={expanded.has(r.c.id) ? "Collapse" : platform === "meta" ? "Expand ad sets" : "Expand insertion orders"}
                     >
                       {expanded.has(r.c.id)
                         ? <ChevronDown className="w-4 h-4" />
@@ -677,6 +869,59 @@ function MetaBudgetSection({ campaigns, dateRange, currency }: { campaigns: Camp
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [metaAccessToken, metaBusinessId]);
 
+  // ── Ad-set data (for campaign drill) ──────────────────────────────────────
+  const [adsetRows, setAdsetRows] = useState<MetaAdSetRow[]>([]);
+  const [adsetLoading, setAdsetLoading] = useState(false);
+  const [adsetFetched, setAdsetFetched] = useState(false);
+  const [adsetTrail, setAdsetTrail] = useState<Record<string, { avg7d: number; avg14d: number; avg28d: number }>>({});
+  useEffect(() => {
+    if (!metaAccessToken || !metaBusinessId) return;
+    setAdsetLoading(true);
+    const today = new Date();
+    const start = new Date(today);
+    const days = dateRange === "7d" ? 7 : dateRange === "90d" ? 90 : 30;
+    start.setDate(today.getDate() - days);
+    fetch("/api/reporting/adsets/meta", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        accessToken: metaAccessToken,
+        businessId: metaBusinessId,
+        startDate: start.toISOString().slice(0, 10),
+        endDate: today.toISOString().slice(0, 10),
+      }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (!data?.rows) return;
+        const rows = (data.rows as any[]).map((r: any) => ({
+          id: r.id, name: r.name, campaignId: r.campaignId,
+          campaignName: r.campaignName, spend: r.spend || 0,
+          dailyBudget: r.dailyBudget || 0, lifetimeBudget: r.lifetimeBudget || 0,
+          status: r.status || "UNKNOWN", impressions: r.impressions || 0,
+          clicks: r.clicks || 0, conversions: r.conversions || 0,
+        }));
+        setAdsetRows(rows);
+        const derived: Record<string, { avg7d: number; avg14d: number; avg28d: number }> = {};
+        for (const a of rows) {
+          const avg = a.spend / days;
+          derived[a.id] = { avg7d: avg, avg14d: avg, avg28d: avg };
+        }
+        setAdsetTrail(derived);
+      })
+      .catch(() => {})
+      .finally(() => { setAdsetLoading(false); setAdsetFetched(true); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [metaAccessToken, metaBusinessId, dateRange]);
+
+  const adsetsByCampaign = useMemo(() => {
+    const map: Record<string, MetaAdSetRow[]> = {};
+    for (const a of adsetRows) {
+      (map[a.campaignId] ??= []).push(a);
+    }
+    return map;
+  }, [adsetRows]);
+
   const totals = useMemo(() => {
     let spend = 0, impressions = 0, clicks = 0;
     for (const c of visible) { spend += c.spend || 0; impressions += c.impressions || 0; clicks += c.clicks || 0; }
@@ -708,12 +953,14 @@ function MetaBudgetSection({ campaigns, dateRange, currency }: { campaigns: Camp
     () => visible.map((c) => {
       const spend = c.spend || 0;
       const tip = computeMetaTip(c, trail, currency);
+      const budget = c.lifetimeBudget ?? c.dailyBudget ?? 0;
       return {
         c, name: c.name, status: c.status || "—",
         statusOrder: isActive(c) ? 0 : 1,
         objective: c.objective || "—",
-        budget: c.lifetimeBudget ?? c.dailyBudget ?? 0,
+        budget,
         budgetType: c.lifetimeBudget !== undefined ? "lifetime" : c.dailyBudget !== undefined ? "daily" : "none",
+        recommendedBudget: recommendedBudgetMajor(tip.kind, budget, trail[c.id]?.avg7d ?? 0),
         spend, impressions: c.impressions || 0, clicks: c.clicks || 0, tip, tipSeverity: tip.sevRank,
       };
     }),
@@ -877,6 +1124,16 @@ function MetaBudgetSection({ campaigns, dateRange, currency }: { campaigns: Camp
         platform="meta"
         spikeNotice={spikeNotice}
         subtitle="Real per-campaign delivery for the window — mirrors a Meta Ads Manager export."
+        renderDrill={(c) => (
+          <MetaCampaignDrill
+            campaignId={c.id}
+            adsets={adsetsByCampaign[c.id] || []}
+            adsetTrail={adsetTrail}
+            currency={currency}
+            isDemo={isDemo}
+            loading={adsetLoading}
+          />
+        )}
       />
 
       {/* Drill tree */}
@@ -890,6 +1147,396 @@ function MetaBudgetSection({ campaigns, dateRange, currency }: { campaigns: Camp
       <p className="text-[11px] text-gray-400 leading-relaxed px-1">
         This is a spend report — every figure is real data Meta returns for the selected window (spend, impressions, clicks, results via the Insights API). The &ldquo;Budget (setting)&rdquo; column is the live configured budget, not a projection.
       </p>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Meta ad-set-level budget analysis (ABO campaigns)
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface MetaAdSetRow {
+  id: string;
+  name: string;
+  campaignId: string;
+  campaignName: string;
+  spend: number;
+  dailyBudget: number;
+  lifetimeBudget: number;
+  status: string;
+  impressions: number;
+  clicks: number;
+  conversions: number;
+}
+
+function computeAdSetTip(
+  adset: MetaAdSetRow,
+  trail: Record<string, { avg7d: number; avg14d: number; avg28d: number }>,
+  currency: string,
+): Tip {
+  const s = adset.status.toUpperCase();
+  if (s === "PAUSED" || s === "DELETED" || s === "ARCHIVED") {
+    return { kind: "paused", severity: "info", label: "Paused", detail: "Ad set is not currently delivering.", isSpike: false, sevRank: 1 };
+  }
+  const t = trail[adset.id];
+  if (!t) {
+    // No daily trail yet — fall back to window-level analysis using the
+    // reported spend divided by a heuristic 7-day window.
+    const budget = adset.dailyBudget || 0;
+    if (budget <= 0) {
+      return { kind: "adSetLevel", severity: "info", label: "Lifetime budget", detail: `Lifetime budget of ${formatMoney(adset.lifetimeBudget, currency, 0)}. Pacing analysis needs daily spend data.`, isSpike: false, sevRank: 1 };
+    }
+    return { kind: "noBudgetTrail", severity: "info", label: "Loading…", detail: "Fetching daily spend trail for pacing analysis.", isSpike: false, sevRank: 1 };
+  }
+  const { avg7d, avg14d } = t;
+  const budget = adset.dailyBudget || 0;
+  if (budget <= 0) {
+    return { kind: "adSetLevel", severity: "info", label: "Lifetime budget", detail: `Lifetime budget of ${formatMoney(adset.lifetimeBudget, currency, 0)}. Averaging ${formatMoney(avg7d, currency, 0)}/day over the last 7 days.`, isSpike: false, sevRank: 1 };
+  }
+  if (avg14d > 0 && avg7d / avg14d > 1.25) {
+    const pct = ((avg7d - avg14d) / avg14d) * 100;
+    return { kind: "spike", severity: "high", label: "Budget spike", detail: `${formatMoney(avg7d, currency, 0)}/day this week vs ${formatMoney(avg14d, currency, 0)}/day prior · +${Math.round(pct)}%. Check if intentional.`, isSpike: true, sevRank: 3 };
+  }
+  if (avg7d === 0 && adset.spend > 0) {
+    return { kind: "noDelivery", severity: "high", label: "No delivery", detail: "Active but zero spend in the last 7 days. Check audience size, creative approvals, or bid competitiveness.", isSpike: false, sevRank: 3 };
+  }
+  if (avg7d / budget > 1.10) {
+    const pct = ((avg7d - budget) / budget) * 100;
+    return { kind: "overPacing", severity: "medium", label: "Over-pacing", detail: `${formatMoney(avg7d, currency, 0)}/day vs ${formatMoney(budget, currency, 0)}/day budget · +${Math.round(pct)}%.`, isSpike: false, sevRank: 2 };
+  }
+  if (avg7d > 0 && avg7d < budget * 0.70) {
+    const pct = (avg7d / budget) * 100;
+    return { kind: "underPacing", severity: "medium", label: "Under-pacing", detail: `${formatMoney(avg7d, currency, 0)}/day vs ${formatMoney(budget, currency, 0)}/day budget · ${Math.round(pct)}% of cap.`, isSpike: false, sevRank: 2 };
+  }
+  const pct = budget > 0 ? (avg7d / budget) * 100 : 100;
+  return { kind: "healthy", severity: "good", label: "On pace", detail: `Spending ${formatMoney(avg7d, currency, 0)}/day · ${Math.round(pct)}% of the ${formatMoney(budget, currency, 0)}/day budget.`, isSpike: false, sevRank: 0 };
+}
+
+function MetaCampaignDrill({
+  campaignId,
+  adsets,
+  adsetTrail,
+  currency,
+  isDemo,
+  loading,
+}: {
+  campaignId: string;
+  adsets: MetaAdSetRow[];
+  adsetTrail: Record<string, { avg7d: number; avg14d: number; avg28d: number }>;
+  currency: string;
+  isDemo: boolean;
+  loading: boolean;
+}) {
+  if (isDemo) {
+    return <div className="text-[11px] text-gray-500 italic px-4 py-2">Ad-set drill is only available with a live Meta connection.</div>;
+  }
+  const aboAdsets = adsets.filter((a) => a.dailyBudget > 0 || a.lifetimeBudget > 0);
+  if (adsets.length === 0) {
+    if (loading) {
+      return <div className="flex items-center gap-2 text-[11px] text-gray-500 italic px-4 py-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading ad sets…</div>;
+    }
+    return <div className="text-[11px] text-gray-500 italic px-4 py-2">No ad sets returned for this campaign.</div>;
+  }
+  if (aboAdsets.length === 0) {
+    return <div className="text-[11px] text-gray-500 italic px-4 py-2">This campaign uses CBO — budgets are managed at the campaign level, not per ad set.</div>;
+  }
+
+  const sortedAdsets = [...aboAdsets]
+    .map((a) => {
+      const tip = computeAdSetTip(a, adsetTrail, currency);
+      const budget = a.dailyBudget || a.lifetimeBudget || 0;
+      const budgetType = a.dailyBudget > 0 ? "daily" : "lifetime";
+      return { adset: a, tip, budget, budgetType, recommendedBudget: a.dailyBudget > 0 ? recommendedBudgetMajor(tip.kind, a.dailyBudget, adsetTrail[a.id]?.avg7d ?? 0) : null };
+    })
+    .sort((a, b) => a.tip.sevRank !== b.tip.sevRank ? b.tip.sevRank - a.tip.sevRank : b.adset.spend - a.adset.spend);
+
+  return (
+    <div className="bg-white rounded-md border border-gray-200 overflow-hidden">
+      <table className="w-full text-[12px]">
+        <thead className="bg-gray-100 text-[10px] uppercase text-gray-500">
+          <tr>
+            <th className="pl-4 pr-3 py-2 text-left">Ad Set</th>
+            <th className="px-3 py-2 text-center">Status</th>
+            <th className="px-3 py-2 text-right">Budget</th>
+            <th className="px-3 py-2 text-right">Spend</th>
+            <th className="px-3 py-2 text-right">Impr.</th>
+            <th className="px-3 py-2 text-right">Clicks</th>
+            <th className="px-3 py-2 text-left min-w-[260px]">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sortedAdsets.map((r) => (
+            <tr key={r.adset.id} className="border-b border-gray-100 hover:bg-white align-top">
+              <td className="pl-4 pr-3 py-2 font-mono text-gray-900 text-[11px] break-words max-w-[240px]" title={r.adset.name}>{r.adset.name}</td>
+              <td className="px-3 py-2 text-center">{statusBadge(r.adset.status)}</td>
+              <td className="px-3 py-2 text-right text-[11px] text-gray-700 whitespace-nowrap">
+                {formatMoney(r.budget, currency, 0)}
+                <span className="text-[10px] text-gray-400">/{r.budgetType === "daily" ? "day" : "life"}</span>
+              </td>
+              <td className="px-3 py-2 text-right text-[11px] text-gray-700 whitespace-nowrap font-semibold">{formatMoney(r.adset.spend, currency, 0)}</td>
+              <td className="px-3 py-2 text-right text-[11px] text-gray-700 whitespace-nowrap">{fmtInt(r.adset.impressions)}</td>
+              <td className="px-3 py-2 text-right text-[11px] text-gray-700 whitespace-nowrap">{fmtInt(r.adset.clicks)}</td>
+              <td className="px-3 py-2">
+                <TipCell
+                  tip={r.tip}
+                  isDemo={isDemo}
+                  platform="meta"
+                  campaign={{
+                    id: r.adset.id, name: r.adset.name, platform: "meta",
+                    status: r.adset.status, spend: r.adset.spend,
+                    impressions: r.adset.impressions, clicks: r.adset.clicks,
+                    conversions: r.adset.conversions,
+                    dailyBudget: r.adset.dailyBudget, lifetimeBudget: r.adset.lifetimeBudget,
+                    objective: "",
+                  } as CampaignData}
+                  currency={currency}
+                  budget={r.budget}
+                  budgetType={r.budgetType}
+                  recommendedBudget={r.recommendedBudget}
+                  campaignContext={{
+                    name: r.adset.name, status: r.adset.status,
+                    campaignName: r.adset.campaignName, entityType: "adset",
+                    dailyBudget: r.adset.dailyBudget, lifetimeBudget: r.adset.lifetimeBudget,
+                    budgetType: r.budgetType, spend: r.adset.spend,
+                    impressions: r.adset.impressions, clicks: r.adset.clicks,
+                    conversions: r.adset.conversions, currency,
+                  }}
+                />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="px-4 py-1.5 text-[10px] text-gray-400">
+        {aboAdsets.length} ad set{aboAdsets.length === 1 ? "" : "s"} with own budget (ABO).
+        {adsets.length - aboAdsets.length > 0 && ` ${adsets.length - aboAdsets.length} CBO ad set${adsets.length - aboAdsets.length === 1 ? "" : "s"} managed at campaign level.`}
+      </div>
+    </div>
+  );
+}
+
+function MetaAdSetBudgetSection({
+  metaAccessToken,
+  metaBusinessId,
+  currency,
+  isDemo,
+  dateRange,
+}: {
+  metaAccessToken: string;
+  metaBusinessId: string;
+  currency: string;
+  isDemo: boolean;
+  dateRange?: string;
+}) {
+  const [adsets, setAdsets] = useState<MetaAdSetRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+
+  // Fetch adset data
+  useEffect(() => {
+    if (!metaAccessToken || !metaBusinessId) return;
+    setLoading(true);
+    const today = new Date();
+    const start = new Date(today);
+    const days = dateRange === "7d" ? 7 : dateRange === "90d" ? 90 : 30;
+    start.setDate(today.getDate() - days);
+    fetch("/api/reporting/adsets/meta", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        accessToken: metaAccessToken,
+        businessId: metaBusinessId,
+        startDate: start.toISOString().slice(0, 10),
+        endDate: today.toISOString().slice(0, 10),
+      }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data?.rows) {
+          setAdsets(
+            (data.rows as any[]).map((r) => ({
+              id: r.id,
+              name: r.name,
+              campaignId: r.campaignId,
+              campaignName: r.campaignName,
+              spend: r.spend || 0,
+              dailyBudget: r.dailyBudget || 0,
+              lifetimeBudget: r.lifetimeBudget || 0,
+              status: r.status || "UNKNOWN",
+              impressions: r.impressions || 0,
+              clicks: r.clicks || 0,
+              conversions: r.conversions || 0,
+            }))
+          );
+        }
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : "Failed to load ad sets"))
+      .finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [metaAccessToken, metaBusinessId, dateRange]);
+
+  // Daily spend trail per adset (for pacing analysis)
+  const [trail, setTrail] = useState<Record<string, { avg7d: number; avg14d: number; avg28d: number }>>({});
+  useEffect(() => {
+    if (!metaAccessToken || adsets.length === 0) return;
+    // Fetch daily spend at adset level — use the same daily-trail endpoint
+    // but with adset IDs. Note: the endpoint currently only supports campaign IDs,
+    // so we'll compute from window-level data for now.
+    // TODO: Add adset-level daily trail endpoint for full pacing analysis.
+    // For now, estimate avg7d from window spend ÷ days.
+    const days = dateRange === "7d" ? 7 : dateRange === "90d" ? 90 : 30;
+    const derived: Record<string, { avg7d: number; avg14d: number; avg28d: number }> = {};
+    for (const a of adsets) {
+      const avg = a.spend / days;
+      derived[a.id] = { avg7d: avg, avg14d: avg, avg28d: avg };
+    }
+    setTrail(derived);
+  }, [metaAccessToken, adsets, dateRange]);
+
+  // Only show adsets that have their own budget (ABO)
+  const aboAdsets = useMemo(
+    () => adsets.filter((a) => a.dailyBudget > 0 || a.lifetimeBudget > 0),
+    [adsets]
+  );
+
+  // Only active adsets with budgets for the table
+  const activeAbo = useMemo(
+    () => aboAdsets.filter((a) => {
+      const s = a.status.toUpperCase();
+      return s === "ACTIVE" || s === "ENABLED";
+    }),
+    [aboAdsets]
+  );
+
+  if (loading) {
+    return (
+      <div className="bg-white rounded-lg border border-gray-200 p-4">
+        <div className="flex items-center gap-2 text-sm text-gray-500">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          Loading ad-set budget data…
+        </div>
+      </div>
+    );
+  }
+
+  if (error || aboAdsets.length === 0) return null;
+
+  const cur = (n: number) => formatMoney(n, currency, 0);
+
+  const rows = aboAdsets.map((a) => {
+    const tip = computeAdSetTip(a, trail, currency);
+    const budget = a.dailyBudget || a.lifetimeBudget || 0;
+    return {
+      adset: a,
+      tip,
+      budget,
+      budgetType: a.dailyBudget > 0 ? "daily" : "lifetime",
+      recommendedBudget: a.dailyBudget > 0
+        ? recommendedBudgetMajor(tip.kind, a.dailyBudget, trail[a.id]?.avg7d ?? 0)
+        : null,
+    };
+  });
+
+  // Sort: highest severity first, then by spend descending
+  const sortedRows = [...rows].sort((a, b) =>
+    a.tip.sevRank !== b.tip.sevRank
+      ? b.tip.sevRank - a.tip.sevRank
+      : b.adset.spend - a.adset.spend
+  );
+
+  const issueCount = sortedRows.filter((r) => r.tip.severity === "high" || r.tip.severity === "medium").length;
+
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 shadow-sm">
+      <button
+        onClick={() => setExpanded((v) => !v)}
+        className="w-full flex items-center justify-between px-5 py-3 border-b border-gray-200 hover:bg-gray-50 transition"
+      >
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-bold text-gray-900">Ad-set level budget analysis</h3>
+          <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-semibold">
+            {aboAdsets.length} ad sets with own budget (ABO)
+          </span>
+          {issueCount > 0 && (
+            <span className="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-semibold">
+              {issueCount} issue{issueCount === 1 ? "" : "s"}
+            </span>
+          )}
+        </div>
+        {expanded ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
+      </button>
+      {expanded && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 border-b border-gray-200">
+              <tr>
+                <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 min-w-[180px]">Ad Set</th>
+                <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500">Campaign</th>
+                <th className="px-4 py-2 text-center text-xs font-semibold text-gray-500">Status</th>
+                <th className="px-4 py-2 text-right text-xs font-semibold text-gray-500">Budget</th>
+                <th className="px-4 py-2 text-right text-xs font-semibold text-gray-500">Spend</th>
+                <th className="px-4 py-2 text-right text-xs font-semibold text-gray-500">Impr.</th>
+                <th className="px-4 py-2 text-right text-xs font-semibold text-gray-500">Clicks</th>
+                <th className="px-4 py-2 text-xs font-semibold text-gray-500 min-w-[280px]">Recommendation</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedRows.map((r) => (
+                <tr key={r.adset.id} className="border-b border-gray-100 hover:bg-gray-50 align-top">
+                  <td className="px-4 py-2.5 font-mono text-gray-900 text-xs break-words max-w-[240px]" title={r.adset.name}>{r.adset.name}</td>
+                  <td className="px-4 py-2.5 text-xs text-gray-600" title={r.adset.campaignName}>{r.adset.campaignName}</td>
+                  <td className="px-4 py-2.5 text-center">{statusBadge(r.adset.status)}</td>
+                  <td className="px-4 py-2.5 text-right text-gray-700 whitespace-nowrap">
+                    {cur(r.budget)}
+                    <span className="text-[10px] text-gray-400">/{r.budgetType === "daily" ? "day" : "life"}</span>
+                  </td>
+                  <td className="px-4 py-2.5 text-right font-semibold text-gray-900 whitespace-nowrap">{cur(r.adset.spend)}</td>
+                  <td className="px-4 py-2.5 text-right text-gray-700 whitespace-nowrap">{fmtInt(r.adset.impressions)}</td>
+                  <td className="px-4 py-2.5 text-right text-gray-700 whitespace-nowrap">{fmtInt(r.adset.clicks)}</td>
+                  <td className="px-4 py-2.5">
+                    <TipCell
+                      tip={r.tip}
+                      isDemo={isDemo}
+                      platform="meta"
+                      campaign={{
+                        id: r.adset.id,
+                        name: r.adset.name,
+                        platform: "meta",
+                        status: r.adset.status,
+                        spend: r.adset.spend,
+                        impressions: r.adset.impressions,
+                        clicks: r.adset.clicks,
+                        conversions: r.adset.conversions,
+                        dailyBudget: r.adset.dailyBudget,
+                        lifetimeBudget: r.adset.lifetimeBudget,
+                        objective: "",
+                      } as CampaignData}
+                      currency={currency}
+                      budget={r.budget}
+                      budgetType={r.budgetType}
+                      recommendedBudget={r.recommendedBudget}
+                      campaignContext={{
+                        name: r.adset.name, status: r.adset.status,
+                        campaignName: r.adset.campaignName,
+                        entityType: "adset",
+                        dailyBudget: r.adset.dailyBudget, lifetimeBudget: r.adset.lifetimeBudget,
+                        budgetType: r.budgetType,
+                        spend: r.adset.spend, impressions: r.adset.impressions,
+                        clicks: r.adset.clicks, conversions: r.adset.conversions,
+                        currency,
+                      }}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="px-4 py-2 text-[10px] text-gray-400">
+            Showing {aboAdsets.length} ad sets that have their own budget (Ad Set Budget Optimization). CBO ad sets are managed at the campaign level.
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1126,26 +1773,28 @@ function DV360LiRow({ li, currency, isDemo }: { li: DV360LiRaw; currency: string
             }}
             platform="dv360"
             onAiSuggestedAction={setAiSuggested}
+            applyContext={isDemo ? undefined : {
+              platform: "dv360",
+              entityType: "lineitem",
+              entityId: li.lineItemId,
+              entityName: li.displayName,
+              currentStatus: DV_ACTIVE(li.entityStatus) ? "ACTIVE" : "PAUSED",
+              currency,
+              reasonPrefix: `DV360 Line Item — ${li.displayName}`,
+            }}
           />
-          {applyActions.map((a) => (
-            <div key={a.id}><ApplyActionButton action={a} compact /></div>
-          ))}
         </div>
       </td>
     </tr>
   );
 }
 
-function DV360IoDrill({ io, currency, isDemo, lis }: { io: DV360IoRaw; currency: string; isDemo: boolean; lis: DV360LiRaw[] }) {
+function DV360IoDrill({ io, currency, isDemo, lis, ioSpend }: { io: DV360IoRaw; currency: string; isDemo: boolean; lis: DV360LiRaw[]; ioSpend?: number }) {
   const [expanded, setExpanded] = useState(false);
-  const [aiSuggested, setAiSuggested] = useState<AiSuggestedAction | null>(null);
   const seg = activeIoSegment(io);
   const budget = seg?.amount ?? 0;
-  const spend = 0; // Entity endpoint doesn't return spend; see known gaps below.
+  const spend = ioSpend ?? 0;
   const tip = computeIoTip(io, budget, spend);
-  const action = isDemo
-    ? null
-    : buildIoApplyAction(io, currency, tip.label, tip.detail, aiSuggested);
 
   return (
     <>
@@ -1163,29 +1812,41 @@ function DV360IoDrill({ io, currency, isDemo, lis }: { io: DV360IoRaw; currency:
           {budget > 0 ? formatMoney(budget, currency, 0) : <span className="text-gray-400">—</span>}
           {seg && seg.totalSegments > 1 && <div className="text-[10px] text-gray-400">seg {seg.index + 1} of {seg.totalSegments}</div>}
         </td>
-        <td className="px-3 py-2 text-right text-[11px] text-gray-700 whitespace-nowrap">
-          <span className="text-gray-400">—</span>
+        <td className="px-3 py-2 text-right text-[11px] text-gray-700 whitespace-nowrap font-semibold">
+          {spend > 0 ? formatMoney(spend, currency, 0) : <span className="text-gray-400 font-normal">—</span>}
         </td>
         <td className="px-3 py-2 text-[11px] text-gray-700 whitespace-nowrap">
           {lis.length} line item{lis.length === 1 ? "" : "s"}
         </td>
         <td className="px-3 py-2">
-          <div className="space-y-1.5">
-            <RowAiReco
-              isDemo={isDemo}
-              findingLabel={`DV360 Insertion Order — ${io.displayName}`}
-              findingDetail={`Status ${io.entityStatus}. Current active budget segment: ${budget > 0 ? formatMoney(budget, currency, 0) : "none"}. Applyable actions on an IO: change the current budget-segment amount, pause, or resume. Frequency caps are set at the Line Item level, not the IO level. Use DV360 UI terminology — "Insertion Order", "budget segment" — NOT Meta terms.`}
-              campaignContext={{
-                platform: "dv360", entityType: "insertion_order",
-                name: io.displayName, status: io.entityStatus,
-                currentSegmentBudget: budget, segments: io.budget?.budgetSegments?.length ?? 0,
-                lineItemCount: lis.length, currency,
-              }}
-              platform="dv360"
-              onAiSuggestedAction={setAiSuggested}
-            />
-            {action && <ApplyActionButton action={action} compact />}
-          </div>
+          <TipCell
+            tip={tip}
+            isDemo={isDemo}
+            platform="dv360"
+            campaign={{
+              id: io.insertionOrderId,
+              name: io.displayName,
+              platform: "dv360",
+              status: io.entityStatus,
+              spend,
+              impressions: 0,
+              clicks: 0,
+              conversions: 0,
+              dailyBudget: 0,
+              lifetimeBudget: budget,
+              objective: "",
+            } as CampaignData}
+            currency={currency}
+            budget={budget}
+            budgetType="lifetime"
+            recommendedBudget={budget > 0 ? recommendedBudgetMajor(tip.kind, budget, 0) : null}
+            campaignContext={{
+              platform: "dv360", entityType: "insertion_order",
+              name: io.displayName, status: io.entityStatus,
+              currentSegmentBudget: budget, segments: io.budget?.budgetSegments?.length ?? 0,
+              spend, lineItemCount: lis.length, currency,
+            }}
+          />
         </td>
       </tr>
       {expanded && lis.length > 0 && (
@@ -1214,7 +1875,7 @@ function DV360IoDrill({ io, currency, isDemo, lis }: { io: DV360IoRaw; currency:
   );
 }
 
-function DV360CampaignDrill({ campaign, currency, isDemo }: { campaign: CampaignData; currency: string; isDemo: boolean }) {
+function DV360CampaignDrill({ campaign, currency, isDemo, ioSpendMap }: { campaign: CampaignData; currency: string; isDemo: boolean; ioSpendMap?: Record<string, number> }) {
   const { ios, lis, loading, error, iosForCampaign, lisForIo } = useDV360Entities();
   if (isDemo) {
     return <div className="text-[11px] text-gray-500 italic">Insertion-order drill is only available with a live DV360 connection.</div>;
@@ -1250,6 +1911,7 @@ function DV360CampaignDrill({ campaign, currency, isDemo }: { campaign: Campaign
               currency={currency}
               isDemo={isDemo}
               lis={lisForIo(io.insertionOrderId)}
+              ioSpend={ioSpendMap?.[io.insertionOrderId]}
             />
           ))}
         </tbody>
@@ -1259,10 +1921,39 @@ function DV360CampaignDrill({ campaign, currency, isDemo }: { campaign: Campaign
 }
 
 function DV360BudgetSection({ campaigns, currency, dateRange, customStart, customEnd }: { campaigns: CampaignData[]; currency: string; dateRange?: string; customStart?: string; customEnd?: string }) {
-  const { dv360RefreshToken } = useAuthStore();
+  const { dv360RefreshToken, dv360ClientId, dv360ClientSecret, dv360AdvertiserId } = useAuthStore();
   const isDemo = !dv360RefreshToken || isDemoCredential(dv360RefreshToken);
   const cur = (n: number) => formatMoney(n, currency, 0);
   const dvWindow = useMemo(() => resolveDvWindow(dateRange, customStart, customEnd), [dateRange, customStart, customEnd]);
+
+  // IO-level spend aggregated from Bid Manager line-item report
+  const [ioSpendMap, setIoSpendMap] = useState<Record<string, number>>({});
+  useEffect(() => {
+    if (isDemo || !dv360RefreshToken) return;
+    fetch("/api/reporting/adsets/dv360", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        refreshToken: dv360RefreshToken,
+        clientId: dv360ClientId,
+        clientSecret: dv360ClientSecret,
+        advertiserId: dv360AdvertiserId,
+        startDate: dvWindow.startDate,
+        endDate: dvWindow.endDate,
+      }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (!data?.rows || !Array.isArray(data.rows)) return;
+        const map: Record<string, number> = {};
+        for (const li of data.rows as Array<{ insertionOrderId: string; spend: number }>) {
+          map[li.insertionOrderId] = (map[li.insertionOrderId] || 0) + (li.spend || 0);
+        }
+        setIoSpendMap(map);
+      })
+      .catch((_e) => { /* IO spend enrichment is best-effort */ });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDemo, dv360RefreshToken, dv360ClientId, dv360ClientSecret, dv360AdvertiserId, dvWindow.startDate, dvWindow.endDate]);
 
   const [statusFilter, setStatusFilter] = useState<"all" | "active">("all");
   const visible = useMemo(
@@ -1353,7 +2044,7 @@ function DV360BudgetSection({ campaigns, currency, dateRange, customStart, custo
         isDemo={isDemo}
         platform="dv360"
         subtitle="Real per-campaign delivery from Bid Manager for the selected window. Expand a row to drill into insertion orders and line items."
-        renderDrill={(c) => <DV360CampaignDrill campaign={c} currency={currency} isDemo={isDemo} />}
+        renderDrill={(c) => <DV360CampaignDrill campaign={c} currency={currency} isDemo={isDemo} ioSpendMap={ioSpendMap} />}
       />
 
       {/* Drill tree */}

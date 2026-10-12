@@ -114,7 +114,11 @@ export function actionRisk(a: ApplyAction): "low" | "medium" | "high" {
   switch (a.kind) {
     case "set_budget": {
       if (a.from <= 0) return "medium";
-      const pct = Math.abs(a.to - a.from) / a.from;
+      const signed = (a.to - a.from) / a.from;
+      const pct = Math.abs(signed);
+      // Reductions are riskier than increases (they can stall delivery and
+      // reset learning), so a ≥40% cut is high-risk; increases stay at >50%.
+      if (signed < 0 && pct >= 0.4) return "high";
       if (pct > 0.5) return "high";
       if (pct > 0.2) return "medium";
       return "low";

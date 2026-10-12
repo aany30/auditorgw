@@ -32,6 +32,10 @@ export interface AdSetRow {
   targeting?: AdSetTargeting;
   promotedObject?: { product_set_id?: string; custom_event_type?: string };
   campaignObjective?: string;
+  /** Entity-level fields — used for Apply actions (pause/resume, budget change). */
+  status?: string;
+  effectiveStatus?: string;
+  dailyBudget?: number;
 }
 
 export interface AdSetInsightsResponse {
@@ -59,25 +63,25 @@ const DEMO_AUDIENCES: CustomAudienceDetail[] = [
 
 const DEMO_ADSETS: AdSetRow[] = [
   { id: "a001", name: "TOF - Broad - All India",             campaignName: "Awareness - Broad India",        spend: 48000, impressions: 1850000, clicks: 22000, reach: 820000, frequency: 2.3, conversions: 180, conversionValue: 126000, uniqueClicks: 18200,
-    targeting: { age_min: 18, age_max: 65, geo_locations: { countries: ["IN"] } }, campaignObjective: "OUTCOME_AWARENESS" },
+    targeting: { age_min: 18, age_max: 65, geo_locations: { countries: ["IN"] } }, campaignObjective: "OUTCOME_AWARENESS", status: "ACTIVE", effectiveStatus: "ACTIVE", dailyBudget: 2000 },
   { id: "a002", name: "TOF - Interest - Fashion & Lifestyle",campaignName: "Awareness - Interest Stacks",    spend: 32000, impressions: 1120000, clicks: 15000, reach: 560000, frequency: 2.0, conversions: 145, conversionValue: 101500, uniqueClicks: 12800,
-    targeting: { flexible_spec: [{ interests: [{ id: "6003107", name: "Fashion" }, { id: "6003139", name: "Lifestyle" }] }] }, campaignObjective: "OUTCOME_AWARENESS" },
+    targeting: { flexible_spec: [{ interests: [{ id: "6003107", name: "Fashion" }, { id: "6003139", name: "Lifestyle" }] }] }, campaignObjective: "OUTCOME_AWARENESS", status: "ACTIVE", effectiveStatus: "ACTIVE", dailyBudget: 1500 },
   { id: "a003", name: "TOF - LAL 1pct Purchasers",           campaignName: "Prospecting - LAL",              spend: 28000, impressions: 980000,  clicks: 13000, reach: 490000, frequency: 2.0, conversions: 168, conversionValue: 134400, uniqueClicks: 11200,
-    targeting: { custom_audiences: [{ id: "ca1" }] }, campaignObjective: "OUTCOME_SALES" },
+    targeting: { custom_audiences: [{ id: "ca1" }] }, campaignObjective: "OUTCOME_SALES", status: "ACTIVE", effectiveStatus: "ACTIVE", dailyBudget: 1200 },
   { id: "a004", name: "MOF - Website Visitors 30d",          campaignName: "Retargeting - Web Visitors",     spend: 22000, impressions: 680000,  clicks: 11000, reach: 180000, frequency: 3.8, conversions: 132, conversionValue: 105600, uniqueClicks: 7800,
-    targeting: { custom_audiences: [{ id: "ca2" }], excluded_custom_audiences: [{ id: "ca6" }] }, campaignObjective: "OUTCOME_SALES" },
+    targeting: { custom_audiences: [{ id: "ca2" }], excluded_custom_audiences: [{ id: "ca6" }] }, campaignObjective: "OUTCOME_SALES", status: "ACTIVE", effectiveStatus: "ACTIVE", dailyBudget: 1000 },
   { id: "a005", name: "MOF - Video Viewers 75pct",           campaignName: "Retargeting - Video Viewers",    spend: 12000, impressions: 420000,  clicks: 6200,  reach: 95000,  frequency: 4.4, conversions: 65,  conversionValue: 52000,  uniqueClicks: 4900,
-    targeting: { custom_audiences: [{ id: "ca3" }] }, campaignObjective: "OUTCOME_ENGAGEMENT" },
+    targeting: { custom_audiences: [{ id: "ca3" }] }, campaignObjective: "OUTCOME_ENGAGEMENT", status: "ACTIVE", effectiveStatus: "ACTIVE", dailyBudget: 800 },
   { id: "a006", name: "BOF - ATC 7d",                        campaignName: "Conversion - ATC Retargeting",   spend: 18000, impressions: 380000,  clicks: 8500,  reach: 52000,  frequency: 7.3, conversions: 198, conversionValue: 178200, uniqueClicks: 5200,
-    targeting: { custom_audiences: [{ id: "ca4" }], excluded_custom_audiences: [{ id: "ca6" }] }, campaignObjective: "OUTCOME_SALES" },
+    targeting: { custom_audiences: [{ id: "ca4" }], excluded_custom_audiences: [{ id: "ca6" }] }, campaignObjective: "OUTCOME_SALES", status: "ACTIVE", effectiveStatus: "ACTIVE", dailyBudget: 750 },
   { id: "a007", name: "BOF - Checkout Abandon 3d",           campaignName: "Conversion - Checkout Recovery", spend: 9500,  impressions: 195000,  clicks: 4800,  reach: 28000,  frequency: 6.96,conversions: 128, conversionValue: 128000, uniqueClicks: 3100,
-    targeting: { custom_audiences: [{ id: "ca5" }], excluded_custom_audiences: [{ id: "ca6" }] }, campaignObjective: "OUTCOME_SALES" },
+    targeting: { custom_audiences: [{ id: "ca5" }], excluded_custom_audiences: [{ id: "ca6" }] }, campaignObjective: "OUTCOME_SALES", status: "ACTIVE", effectiveStatus: "ACTIVE", dailyBudget: 600 },
   { id: "a008", name: "LOY - Existing Customers 180d",       campaignName: "Loyalty - Repeat Purchase",      spend: 8000,  impressions: 240000,  clicks: 4200,  reach: 45000,  frequency: 5.3, conversions: 95,  conversionValue: 114000, uniqueClicks: 3600,
-    targeting: { custom_audiences: [{ id: "ca6" }] }, campaignObjective: "OUTCOME_SALES" },
+    targeting: { custom_audiences: [{ id: "ca6" }] }, campaignObjective: "OUTCOME_SALES", status: "ACTIVE", effectiveStatus: "ACTIVE", dailyBudget: 500 },
   { id: "a009", name: "TOF - Broad 18-35 Female",            campaignName: "Awareness - Broad India",        spend: 22000, impressions: 960000,  clicks: 12500, reach: 440000, frequency: 2.2, conversions: 88,  conversionValue: 52800,  uniqueClicks: 10500,
-    targeting: { age_min: 18, age_max: 35, genders: [2], geo_locations: { countries: ["IN"] } }, campaignObjective: "OUTCOME_AWARENESS" },
+    targeting: { age_min: 18, age_max: 35, genders: [2], geo_locations: { countries: ["IN"] } }, campaignObjective: "OUTCOME_AWARENESS", status: "ACTIVE", effectiveStatus: "ACTIVE", dailyBudget: 1800 },
   { id: "a010", name: "MOF - IG Engaged 60d",                campaignName: "Retargeting - Social Engaged",   spend: 7500,  impressions: 285000,  clicks: 4100,  reach: 68000,  frequency: 4.2, conversions: 42,  conversionValue: 33600,  uniqueClicks: 3400,
-    targeting: { custom_audiences: [{ id: "ca7" }] }, campaignObjective: "OUTCOME_ENGAGEMENT" },
+    targeting: { custom_audiences: [{ id: "ca7" }] }, campaignObjective: "OUTCOME_ENGAGEMENT", status: "ACTIVE", effectiveStatus: "ACTIVE", dailyBudget: 400 },
 ];
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -126,6 +130,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         targeting: t?.targeting,
         promotedObject: t?.promotedObject,
         campaignObjective: t?.campaignObjective,
+        status: t?.status,
+        effectiveStatus: t?.effectiveStatus,
+        dailyBudget: t?.dailyBudget,
       };
     });
 

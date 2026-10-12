@@ -8,8 +8,7 @@ import { useState, useCallback, useMemo } from "react";
 import { Sparkles, ChevronDown, ChevronUp, ExternalLink, Loader2, BookOpen } from "lucide-react";
 import { useAuthStore } from "@/store/auth";
 import { isDemoCredential } from "@/lib/demo-data";
-import { parseSuggestedAction } from "@/lib/apply/suggest-from-text";
-import { buildApplyFromAi, type ApplyContext } from "@/lib/apply/apply-context";
+import { buildStepActions, type ApplyContext } from "@/lib/apply/apply-context";
 import ApplyActionButton from "@/components/apply/ApplyActionButton";
 
 interface FixStep {
@@ -101,23 +100,20 @@ export default function AIRecommendationButton({
     }
   }, [cacheKey, metric, value, status, platform, threshold, campaignContext, accountContext, auditContext, isDemo, addAiCredits]);
 
-  // Parse the AI's step actions for an apply-able recommendation (budget /
-  // pause / resume / frequency cap) and build a concrete ApplyAction when
-  // the caller passed an applyContext. Null when the AI's reply is text-only
-  // advisory or when the caller opted out of Apply.
-  const applyAction = useMemo(() => {
-    if (!data || !applyContext) return null;
-    const combined = [data.title, ...data.steps.map((s) => s.action)].join("\n");
-    const suggested = parseSuggestedAction(combined);
-    if (!suggested) return null;
-    return buildApplyFromAi(suggested, applyContext);
-  }, [data, applyContext]);
-
   const handleToggle = () => {
     const next = !open;
     setOpen(next);
     if (next && !data && !loading) fetchFix();
   };
+
+  const regenerate = () => {
+    SESSION_CACHE.delete(cacheKey);
+    setData(null);
+    fetchFix();
+  };
+
+  // Dedupe: at most one apply button per action kind across all steps.
+  const stepActions = buildStepActions(data ? data.steps : [], applyContext);
 
   return (
     <div className={compact ? "inline-block" : "mt-2"}>
@@ -146,29 +142,35 @@ export default function AIRecommendationButton({
           )}
           {data && !loading && (
             <div className="space-y-3">
-              <h4 className="text-sm font-bold text-gray-900">{data.title}</h4>
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm font-bold text-gray-900">{data.title}</h4>
+                <button onClick={regenerate} className="text-[10px] text-violet-500 hover:text-violet-700 flex-shrink-0 ml-2">Regenerate</button>
+              </div>
               <ol className="list-decimal list-outside ml-5 space-y-2 text-sm text-gray-700 leading-relaxed">
-                {data.steps.map((step, i) => (
-                  <li key={i}>
-                    <div>{step.action}</div>
-                    {step.links && step.links.length > 0 && (
-                      <div className="mt-1 flex flex-wrap gap-1.5">
-                        {step.links.map((link, j) => (
-                          <a key={j} href={link.url} target="_blank" rel="noopener noreferrer"
-                            className="inline-flex items-center gap-0.5 px-2 py-0.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold rounded border border-gray-200 transition">
-                            {link.label}<ExternalLink className="w-3 h-3" />
-                          </a>
-                        ))}
-                      </div>
-                    )}
-                  </li>
-                ))}
+                {data.steps.map((step, i) => {
+                  const stepAction = stepActions[i];
+                  return (
+                    <li key={i}>
+                      <div>{step.action}</div>
+                      {step.links && step.links.length > 0 && (
+                        <div className="mt-1 flex flex-wrap gap-1.5">
+                          {step.links.map((link, j) => (
+                            <a key={j} href={link.url} target="_blank" rel="noopener noreferrer"
+                              className="inline-flex items-center gap-0.5 px-2 py-0.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold rounded border border-gray-200 transition">
+                              {link.label}<ExternalLink className="w-3 h-3" />
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                      {stepAction && (
+                        <div className="mt-1.5">
+                          <ApplyActionButton action={stepAction} compact />
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
               </ol>
-              {applyAction && (
-                <div className="pt-2 border-t border-gray-100">
-                  <ApplyActionButton action={applyAction} compact />
-                </div>
-              )}
               <div className="text-[10px] text-gray-400 italic flex items-center gap-1 pt-2 border-t border-gray-100">
                 {data.source === "ai"
                   ? <><Sparkles className="w-3 h-3" />AI-generated from your data</>

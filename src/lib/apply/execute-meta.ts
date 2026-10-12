@@ -82,6 +82,14 @@ export async function executeMetaAction(
 
     switch (action.kind) {
       case "set_budget": {
+        // Sanity check: new budget must be at least ₹100 (10000 paise) and
+        // not less than 10% of the old value — catches AI parse mistakes.
+        if (action.to < 10000) {
+          return {
+            success: false, action, appliedAt,
+            error: `Budget too low: ₹${(action.to / 100).toFixed(0)} — likely a parsing error. Please verify the amount before applying.`,
+          };
+        }
         payload =
           action.budgetType === "daily"
             ? { daily_budget: action.to }

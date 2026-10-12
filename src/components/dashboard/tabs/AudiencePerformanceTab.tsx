@@ -18,6 +18,10 @@ import { formatMoney } from "@/lib/currency";
 import type { DateRange } from "@/components/shared/DateRangePicker";
 import TabSummaryFooter from "@/components/shared/TabSummaryFooter";
 import LoadingState from "@/components/shared/LoadingState";
+import ApplyActionButton from "@/components/apply/ApplyActionButton";
+import AIRecommendationButton from "@/components/shared/AIRecommendationButton";
+import type { ApplyAction } from "@/lib/apply/types";
+import type { ApplyContext } from "@/lib/apply/apply-context";
 import {
   classifyAdSet,
   AUDIENCE_COLORS, STAGE_COLORS, INTENT_COLORS, TYPE_COLORS,
@@ -30,6 +34,112 @@ import {
 // so audience label / funnel stage / intent / new-vs-existing never disagree.
 
 type AudienceType = NewVsExisting;
+
+function buildAdSetApplyContext(a: AdSetRow, currency: string): ApplyContext {
+  const eff = (a.effectiveStatus || a.status || "").toUpperCase();
+  return {
+    platform: "meta",
+    entityType: "adset",
+    entityId: a.id,
+    entityName: a.name,
+    currentBudget: a.dailyBudget,
+    budgetType: "daily",
+    currentStatus: eff === "PAUSED" ? "PAUSED" : "ACTIVE",
+    currency,
+    reasonPrefix: `Audience Performance — ${a.name}`,
+  };
+}
+
+function buildAdSetAuditContext(a: AdSetRow, cls: AudienceClassification, currency: string) {
+  const roas = a.spend > 0 ? a.conversionValue / a.spend : 0;
+  const cpa = a.conversions > 0 ? a.spend / a.conversions : 0;
+  return {
+    module: "Audience Performance",
+    siblingMetrics: {
+      adSetName: a.name,
+      campaignName: a.campaignName || "—",
+      audienceType: cls.cls,
+      funnelStage: cls.funnelStage,
+      intent: cls.intent,
+      spend: formatMoney(a.spend, currency, 0),
+      revenue: formatMoney(a.conversionValue, currency, 0),
+      impressions: a.impressions.toLocaleString("en-IN"),
+      clicks: a.clicks.toLocaleString("en-IN"),
+      conversions: a.conversions,
+      roas: roas.toFixed(2),
+      cpa: formatMoney(cpa, currency, 0),
+      frequency: a.frequency.toFixed(1),
+      reach: a.reach.toLocaleString("en-IN"),
+      dailyBudget: a.dailyBudget ? formatMoney(a.dailyBudget, currency, 0) : "unknown",
+      status: a.effectiveStatus || a.status || "unknown",
+    },
+  };
+}
+
+function adSetRecoStatus(a: AdSetRow): "bad" | "warn" | "moderate" {
+  if (a.conversions === 0 && a.spend > 500) return "bad";
+  if (a.frequency > 6) return "critical" as "bad";
+  const roas = a.spend > 0 ? a.conversionValue / a.spend : 0;
+  if (roas < 1 && a.spend > 200) return "warn";
+  return "moderate";
+}
+
+let _applyIdSeq = 0;
+function buildAdSetApplyAction(a: AdSetRow, currency: string): ApplyAction | null {
+  const eff = (a.effectiveStatus || a.status || "").toUpperCase();
+  const roas = a.spend > 0 ? a.conversionValue / a.spend : 0;
+
+  // Zero conversions + meaningful spend → suggest pause
+  if (a.conversions === 0 && a.spend > 500 && eff === "ACTIVE") {
+    return {
+      kind: "set_status",
+      id: `aud-perf-pause-${a.id}-${++_applyIdSeq}`,
+      platform: "meta",
+      entityType: "adset",
+      entityId: a.id,
+      entityName: a.name,
+      reason: `Zero conversions with ${formatMoney(a.spend, currency, 0)} spend — pause to stop waste`,
+      from: "ACTIVE",
+      to: "PAUSED",
+    };
+  }
+
+  // Paused adset with decent historical ROAS → suggest resume
+  if (eff === "PAUSED" && roas >= 2) {
+    return {
+      kind: "set_status",
+      id: `aud-perf-resume-${a.id}-${++_applyIdSeq}`,
+      platform: "meta",
+      entityType: "adset",
+      entityId: a.id,
+      entityName: a.name,
+      reason: `Paused but ROAS ${roas.toFixed(1)}× — resume to recapture performance`,
+      from: "PAUSED",
+      to: "ACTIVE",
+    };
+  }
+
+  // High ROAS + has daily budget → suggest +25% budget
+  if (roas >= 3 && a.dailyBudget && a.dailyBudget > 0 && eff === "ACTIVE") {
+    const fromMicros = Math.round(a.dailyBudget * 100);
+    const toMicros = Math.round(fromMicros * 1.25);
+    return {
+      kind: "set_budget",
+      id: `aud-perf-budget-${a.id}-${++_applyIdSeq}`,
+      platform: "meta",
+      entityType: "adset",
+      entityId: a.id,
+      entityName: a.name,
+      reason: `ROAS ${roas.toFixed(1)}× — scale budget +25% to capture more volume`,
+      budgetType: "daily",
+      from: fromMicros,
+      to: toMicros,
+      currency,
+    };
+  }
+
+  return null;
+}
 
 function classify(a: AdSetRow, audienceMap: Map<string, CustomAudienceDetail>): AudienceClassification {
   return classifyAdSet(a.targeting, audienceMap, a.campaignObjective, a.name);
@@ -220,7 +330,7 @@ function fmtKpi(id: string, r: AggRow, m: ReturnType<typeof deriveAgg>, cur: (n:
 const AP_SAMPLE = { label: "", adSets: [], spend: 5000, impressions: 100000, clicks: 1500, conversions: 80, conversionValue: 120000 } as unknown as AggRow;
 const AP_FETCHABLE = ALL_STANDARD_KPIS.filter((k) => fmtKpi(k.id, AP_SAMPLE, deriveAgg(AP_SAMPLE), (n) => String(n), (n) => String(n)) !== "—");
 
-function DrillDownRow({ adSets, currency, colCount }: { adSets: AdSetRow[]; currency: string; colCount: number }) {
+function DrillDownRow({ adSets, currency, colCount, audienceMap }: { adSets: AdSetRow[]; currency: string; colCount: number; audienceMap: Map<string, CustomAudienceDetail> }) {
   const cur = (n: number) => formatMoney(n, currency, 0);
   const sorted = [...adSets].sort((a, b) => b.spend - a.spend);
   return (
@@ -238,12 +348,16 @@ function DrillDownRow({ adSets, currency, colCount }: { adSets: AdSetRow[]; curr
                 <th className="px-4 py-1.5 text-right font-semibold text-blue-700 uppercase text-[10px]">Orders</th>
                 <th className="px-4 py-1.5 text-right font-semibold text-blue-700 uppercase text-[10px]">Revenue</th>
                 <th className="px-4 py-1.5 text-right font-semibold text-blue-700 uppercase text-[10px]">ROAS</th>
+                <th className="px-4 py-1.5 text-center font-semibold text-blue-700 uppercase text-[10px]">AI / Apply</th>
               </tr>
             </thead>
             <tbody>
               {sorted.map((a) => {
                 const ctr = a.impressions > 0 ? (a.clicks / a.impressions) * 100 : 0;
                 const roas = a.spend > 0 ? a.conversionValue / a.spend : 0;
+                const cls = classify(a, audienceMap);
+                const recoStatus = adSetRecoStatus(a);
+                const applyAction = buildAdSetApplyAction(a, currency);
                 return (
                   <tr key={a.id} className="border-b border-blue-50 hover:bg-blue-50">
                     <td className="px-6 py-1.5 text-gray-700 font-mono break-words max-w-[280px]" title={a.name}>{a.name}</td>
@@ -254,6 +368,20 @@ function DrillDownRow({ adSets, currency, colCount }: { adSets: AdSetRow[]; curr
                     <td className="px-4 py-1.5 text-right text-gray-600">{Math.round(a.conversions).toLocaleString("en-IN")}</td>
                     <td className="px-4 py-1.5 text-right text-gray-600">{cur(a.conversionValue)}</td>
                     <td className="px-4 py-1.5 text-right text-gray-600">{roas > 0 ? `${roas.toFixed(2)}×` : "—"}</td>
+                    <td className="px-3 py-1.5 text-center">
+                      <div className="flex items-center justify-end gap-1">
+                        <AIRecommendationButton
+                          metric="roas"
+                          value={roas.toFixed(2)}
+                          status={recoStatus}
+                          platform="meta"
+                          auditContext={buildAdSetAuditContext(a, cls, currency)}
+                          compact
+                          applyContext={a.dailyBudget || a.status ? buildAdSetApplyContext(a, currency) : undefined}
+                        />
+                        {applyAction && <ApplyActionButton action={applyAction} compact />}
+                      </div>
+                    </td>
                   </tr>
                 );
               })}
@@ -381,7 +509,7 @@ function ByAudienceTab({ adsets, audienceMap, loading, currency, startDate, endD
                         </td>
                       ))}
                     </tr>
-                    {isOpen && <DrillDownRow adSets={r.adSets} currency={currency} colCount={cols.length} />}
+                    {isOpen && <DrillDownRow adSets={r.adSets} currency={currency} colCount={cols.length} audienceMap={audienceMap} />}
                   </React.Fragment>
                 );
               })}
@@ -482,28 +610,48 @@ function IntentTab({ adsets, audienceMap, loading, currency }: { adsets: AdSetRo
                   </th>
                 );
               })}
+              <th className="px-3 py-2.5 text-[11px] font-semibold text-gray-600 uppercase text-center whitespace-nowrap">AI / Apply</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map(({ a, cls }) => (
-              <tr key={a.id} className="border-b border-gray-100 hover:bg-gray-50">
-                <td className="px-4 py-2.5 max-w-[260px]">
-                  <div className="font-mono text-gray-900 break-words text-xs">{a.name}</div>
-                  {a.campaignName && <div className="text-[10px] text-gray-400 mt-0.5 break-words">{a.campaignName}</div>}
-                </td>
-                <td className="px-4 py-2.5">
-                  {cls.cls === "Unclassified"
-                    ? <span className="text-gray-400 font-mono text-sm" title="No targeting data and no recognisable name keywords — bucket unknown">—</span>
-                    : <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${INTENT_COLORS[cls.intent]}`}>{cls.intent}</span>
-                  }
-                </td>
-                <td className="px-4 py-2.5">{audienceBadge(cls)}</td>
-                {cols.map((id) => {
-                  const k = KPI_MAP.get(id)!;
-                  return <td key={id} className="px-3 py-2.5 text-right text-gray-700 whitespace-nowrap">{k.fmt(a, currency)}</td>;
-                })}
-              </tr>
-            ))}
+            {rows.map(({ a, cls }) => {
+              const applyAction = buildAdSetApplyAction(a, currency);
+              const recoStatus = adSetRecoStatus(a);
+              const roas = a.spend > 0 ? a.conversionValue / a.spend : 0;
+              return (
+                <tr key={a.id} className="border-b border-gray-100 hover:bg-gray-50">
+                  <td className="px-4 py-2.5 max-w-[260px]">
+                    <div className="font-mono text-gray-900 break-words text-xs">{a.name}</div>
+                    {a.campaignName && <div className="text-[10px] text-gray-400 mt-0.5 break-words">{a.campaignName}</div>}
+                  </td>
+                  <td className="px-4 py-2.5">
+                    {cls.cls === "Unclassified"
+                      ? <span className="text-gray-400 font-mono text-sm" title="No targeting data and no recognisable name keywords — bucket unknown">—</span>
+                      : <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${INTENT_COLORS[cls.intent]}`}>{cls.intent}</span>
+                    }
+                  </td>
+                  <td className="px-4 py-2.5">{audienceBadge(cls)}</td>
+                  {cols.map((id) => {
+                    const k = KPI_MAP.get(id)!;
+                    return <td key={id} className="px-3 py-2.5 text-right text-gray-700 whitespace-nowrap">{k.fmt(a, currency)}</td>;
+                  })}
+                  <td className="px-3 py-2 text-center">
+                    <div className="flex items-center justify-end gap-1">
+                      <AIRecommendationButton
+                        metric="roas"
+                        value={roas.toFixed(2)}
+                        status={recoStatus}
+                        platform="meta"
+                        auditContext={buildAdSetAuditContext(a, cls, currency)}
+                        compact
+                        applyContext={a.dailyBudget || a.status ? buildAdSetApplyContext(a, currency) : undefined}
+                      />
+                      {applyAction && <ApplyActionButton action={applyAction} compact />}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -524,13 +672,11 @@ function NewVsExistingTab({ adsets, audienceMap, loading, currency }: { adsets: 
       if (!map.has(k)) map.set(k, []);
       map.get(k)!.push(a);
     }
-    // Always emit all three buckets so an empty group surfaces as a 0 row
-    // rather than disappearing — useful to see "no Existing audiences running".
-    const result: Array<{ group: AudienceType | "Unknown"; adSetNames: string[]; spend: number; conversions: number; conversionValue: number; impressions: number; clicks: number; reach: number }> =
+    const result: Array<{ group: AudienceType | "Unknown"; adSets: AdSetRow[]; adSetNames: string[]; spend: number; conversions: number; conversionValue: number; impressions: number; clicks: number; reach: number }> =
       (["New", "Engaged", "Existing"] as AudienceType[]).map(k => {
         const g = map.get(k) ?? [];
         return {
-          group: k, adSetNames: g.map(r => r.name),
+          group: k, adSets: g, adSetNames: g.map(r => r.name),
           spend: g.reduce((s, r) => s + r.spend, 0),
           conversions: g.reduce((s, r) => s + r.conversions, 0),
           conversionValue: g.reduce((s, r) => s + r.conversionValue, 0),
@@ -541,7 +687,7 @@ function NewVsExistingTab({ adsets, audienceMap, loading, currency }: { adsets: 
       });
     if (unknownSets.length > 0) {
       result.push({
-        group: "Unknown", adSetNames: unknownSets.map(r => r.name),
+        group: "Unknown", adSets: unknownSets, adSetNames: unknownSets.map(r => r.name),
         spend: unknownSets.reduce((s, r) => s + r.spend, 0),
         conversions: unknownSets.reduce((s, r) => s + r.conversions, 0),
         conversionValue: unknownSets.reduce((s, r) => s + r.conversionValue, 0),

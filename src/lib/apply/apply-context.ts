@@ -9,7 +9,7 @@
  */
 
 import type { ApplyAction } from "./types";
-import type { AiSuggestedAction } from "./suggest-from-text";
+import { parseSuggestedAction, type AiSuggestedAction } from "./suggest-from-text";
 
 export interface ApplyContext {
   platform: "meta" | "dv360";
@@ -89,4 +89,36 @@ export function buildApplyFromAi(
   }
 
   return null;
+}
+
+/**
+ * Convenience wrapper: parse one step/bullet of AI text and build a concrete
+ * ApplyAction from it in a single call. Returns null when the text implies no
+ * writable action, or when the action can't be safely built for this entity
+ * (no-op, missing budget, unsupported level). Used by every surface that wants
+ * a per-step Apply button.
+ */
+export function buildApplyFromText(text: string, ctx: ApplyContext): ApplyAction | null {
+  const suggested = parseSuggestedAction(text);
+  return suggested ? buildApplyFromAi(suggested, ctx) : null;
+}
+
+/**
+ * Build one ApplyAction per step, deduped so at most one button of each kind
+ * (budget, status, …) renders across the whole step list. Returns an array
+ * aligned 1:1 with `steps` (null where a step has no — or a duplicate — action).
+ */
+export function buildStepActions(
+  steps: Array<{ action: string }>,
+  ctx: ApplyContext | undefined,
+): Array<ApplyAction | null> {
+  const seen = new Set<string>();
+  const out: Array<ApplyAction | null> = [];
+  for (const step of steps) {
+    let action = ctx ? buildApplyFromText(step.action, ctx) : null;
+    if (action && seen.has(action.kind)) action = null;
+    if (action) seen.add(action.kind);
+    out.push(action);
+  }
+  return out;
 }
