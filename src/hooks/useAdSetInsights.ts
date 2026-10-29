@@ -13,7 +13,7 @@ import { buildAudienceMap, type CustomAudienceDetail } from "@/lib/audience-clas
 export type { AdSetRow };
 
 export function useAdSetInsights(
-  platform: "meta" | "dv360" | "both",
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both",
   dateRange: DateRange,
   customStart?: string,
   customEnd?: string

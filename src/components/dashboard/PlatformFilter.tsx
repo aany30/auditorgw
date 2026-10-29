@@ -3,13 +3,14 @@ import { useRouter } from "next/router";
 import { Globe, ChevronDown, Check } from "lucide-react";
 import { useAuthStore } from "@/store/auth";
 
-export type PlatformValue = "all" | "meta" | "dv360" | "snapchat" | "x" | "linkedin";
+export type PlatformValue = "all" | "meta" | "dv360" | "google_ads" | "snapchat" | "x" | "linkedin";
 
 const PLATFORM_OPTIONS: Array<{ value: PlatformValue; label: string; available: boolean }> = [
   { value: "all", label: "All", available: true },
   { value: "meta", label: "Meta", available: true },
   { value: "dv360", label: "DV360", available: true },
-  { value: "snapchat", label: "Snapchat", available: false },
+  { value: "google_ads", label: "Google Ads", available: true },
+  { value: "snapchat", label: "Snapchat", available: true },
   { value: "x", label: "X", available: false },
   { value: "linkedin", label: "LinkedIn", available: false },
 ];
@@ -23,7 +24,7 @@ export default function PlatformFilter({ value, onChange }: Props) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const router = useRouter();
-  const { isMetaConnected, isDV360Connected, demoMode } = useAuthStore();
+  const { isMetaConnected, isDV360Connected, isGoogleAdsConnected, isSnapchatConnected, demoMode } = useAuthStore();
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
@@ -44,6 +45,8 @@ export default function PlatformFilter({ value, onChange }: Props) {
     ? {
         meta: demoMode || isMetaConnected(),
         dv360: demoMode || isDV360Connected(),
+        google_ads: demoMode || isGoogleAdsConnected(),
+        snapchat: demoMode || isSnapchatConnected(),
       }
     : {};
 
@@ -123,8 +126,10 @@ export default function PlatformFilter({ value, onChange }: Props) {
  * shape that existing tabs consume. "all" + any not-yet-integrated platform
  * falls back to "both" so existing fetch logic still runs.
  */
-export function toLegacyPlatform(p: PlatformValue): "meta" | "dv360" | "both" {
+export function toLegacyPlatform(p: PlatformValue): "meta" | "dv360" | "google_ads" | "snapchat" | "both" {
   if (p === "meta") return "meta";
   if (p === "dv360") return "dv360";
+  if (p === "google_ads") return "google_ads";
+  if (p === "snapchat") return "snapchat";
   return "both";
 }

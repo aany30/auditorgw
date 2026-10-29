@@ -11,7 +11,7 @@ import TabSummaryFooter from "@/components/shared/TabSummaryFooter";
 import LoadingState from "@/components/shared/LoadingState";
 
 interface Props {
-  platform: "meta" | "dv360" | "both";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
   dateRange: string;
   customStart?: string;
   customEnd?: string;

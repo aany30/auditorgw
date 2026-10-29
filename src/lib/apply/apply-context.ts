@@ -12,8 +12,8 @@ import type { ApplyAction } from "./types";
 import { parseSuggestedAction, type AiSuggestedAction } from "./suggest-from-text";
 
 export interface ApplyContext {
-  platform: "meta" | "dv360";
-  entityType: "campaign" | "adset" | "ad" | "lineitem" | "insertion_order";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat";
+  entityType: "campaign" | "adset" | "ad" | "lineitem" | "insertion_order" | "ad_squad";
   entityId: string;
   entityName: string;
   /** Major currency units (e.g. 3500 for ₹3,500 — not cents/paise). */
@@ -76,10 +76,12 @@ export function buildApplyFromAi(
   }
 
   if (ai.kind === "set_frequency_cap") {
-    // Meta: freq caps live on ad sets. DV360: on line items. Skip others.
+    // Meta: freq caps live on ad sets. DV360: on line items. Google Ads: on campaigns. Skip others.
     const isMetaAdset = ctx.platform === "meta" && ctx.entityType === "adset";
     const isDv360LineItem = ctx.platform === "dv360" && ctx.entityType === "lineitem";
-    if (!isMetaAdset && !isDv360LineItem) return null;
+    const isGAdsCampaign = ctx.platform === "google_ads" && ctx.entityType === "campaign";
+    const isSnapAdSquad = ctx.platform === "snapchat" && ctx.entityType === "ad_squad";
+    if (!isMetaAdset && !isDv360LineItem && !isGAdsCampaign && !isSnapAdSquad) return null;
     return {
       ...base,
       kind: "set_frequency_cap",

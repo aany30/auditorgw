@@ -15,9 +15,10 @@
  * routes can return 202-pending and let the client retry.
  */
 
+import { getGoogleAccessToken } from "./google-token-cache";
+
 const DV360_BASE = "https://displayvideo.googleapis.com/v4";
 const BM_BASE = "https://doubleclickbidmanager.googleapis.com/v2";
-const TOKEN_URL = "https://oauth2.googleapis.com/token";
 
 /**
  * fetch with a hard wall-clock cap. Google's Bid Manager poll/download endpoints
@@ -213,39 +214,17 @@ export interface BMDone {
 
 export type BMResult = BMPending | BMDone;
 
-// Module-level access-token cache keyed by refresh token — survives across
-// requests within a warm serverless instance. Expiry-aware with 60s headroom.
-const tokenCache = new Map<string, { token: string; expiresAt: number }>();
-
 export class DV360ApiClient {
   constructor(private creds: DV360Credentials) {}
 
   // ─── OAuth ──────────────────────────────────────────────────────────────────
 
   async getAccessToken(): Promise<string> {
-    const key = this.creds.refreshToken;
-    const cached = tokenCache.get(key);
-    if (cached && cached.expiresAt > Date.now() + 60_000) return cached.token;
-
-    const r = await fetchWithTimeout(TOKEN_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        client_id: this.creds.clientId,
-        client_secret: this.creds.clientSecret,
-        refresh_token: this.creds.refreshToken,
-        grant_type: "refresh_token",
-      }).toString(),
-    });
-    const body = await r.json();
-    if (!r.ok || !body.access_token) {
-      throw new Error(
-        `DV360 token exchange failed: ${body.error_description || body.error || `HTTP ${r.status}`}`
-      );
-    }
-    const token = body.access_token as string;
-    tokenCache.set(key, { token, expiresAt: Date.now() + (body.expires_in ?? 3600) * 1000 });
-    return token;
+    return getGoogleAccessToken(
+      this.creds.clientId,
+      this.creds.clientSecret,
+      this.creds.refreshToken,
+    );
   }
 
   private async authedGet<T>(url: string): Promise<T> {

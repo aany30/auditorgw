@@ -15,7 +15,7 @@ import { useCampaigns } from "@/hooks/useCampaigns";
 import { usePersistentJSON } from "@/hooks/useColumnPrefs";
 import { useDV360Reach } from "@/hooks/useDV360Reach";
 import { useAuthStore } from "@/store/auth";
-import { formatMoney } from "@/lib/currency";
+import { formatMoney, currencyFor } from "@/lib/currency";
 import { toDisplayCredits } from "@/lib/ai-cost";
 import type { CampaignData } from "@/types";
 import {
@@ -200,7 +200,7 @@ export default function DashboardReport({
   customStart,
   customEnd,
 }: {
-  platform: "meta" | "dv360" | "both";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
   dateRange: DateRange;
   customStart?: string;
   customEnd?: string;
@@ -217,9 +217,11 @@ export default function DashboardReport({
   const [aiLoading, setAiLoading] = useState(false);
 
   const cur = metaCurrency || dv360Currency || "INR";
+  const gadsCurrency = currencyFor(campaigns, "google_ads");
 
-  const showMeta = platform !== "dv360";
+  const showMeta = platform === "meta" || platform === "both";
   const showDv = platform === "dv360" || platform === "both";
+  const showGads = platform === "google_ads" || platform === "both";
 
   const metaCampaigns = useMemo(() => campaigns.filter((c) => c.platform === "meta"), [campaigns]);
 
@@ -232,7 +234,9 @@ export default function DashboardReport({
     }),
   [campaigns, reachByCampaign]);
 
-  const enrichedCampaigns = useMemo(() => [...metaCampaigns, ...dv360Campaigns], [metaCampaigns, dv360Campaigns]);
+  const gadsCampaigns = useMemo(() => campaigns.filter((c) => c.platform === "google_ads"), [campaigns]);
+
+  const enrichedCampaigns = useMemo(() => [...metaCampaigns, ...dv360Campaigns, ...gadsCampaigns], [metaCampaigns, dv360Campaigns, gadsCampaigns]);
 
   // Honor the date range picker strictly for ALL selections (presets and
   // custom): no all-time fallback. If a DV360 campaign has 0 spend in the
@@ -242,6 +246,7 @@ export default function DashboardReport({
   const overall = useMemo(() => deliveredOfGroup(enrichedCampaigns, false), [enrichedCampaigns]);
   const metaD = useMemo(() => deliveredOfGroup(metaCampaigns, false), [metaCampaigns]);
   const dvD = useMemo(() => deliveredOfGroup(dv360Campaigns, false), [dv360Campaigns]);
+  const gadsD = useMemo(() => deliveredOfGroup(gadsCampaigns, false), [gadsCampaigns]);
 
   const pacing = (key: string) => {
     const p = planned[key] || 0;
@@ -555,6 +560,19 @@ export default function DashboardReport({
             dateRange={dateRange}
             aiPlatform="dv360"
             lineItemReach={reachByLineItem}
+          />
+        </div>
+      )}
+      {showGads && gadsCampaigns.length > 0 && (
+        <div className="space-y-4">
+          <SectionHeader label="Google Ads" sub="Google Ads" />
+          <PlanningSection
+            campaigns={gadsCampaigns}
+            loading={loading}
+            currency={gadsCurrency}
+            storageSuffix="google_ads"
+            dateRange={dateRange}
+            aiPlatform="google_ads"
           />
         </div>
       )}

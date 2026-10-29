@@ -9,7 +9,7 @@ import AIRecommendationButton from "@/components/shared/AIRecommendationButton";
 import TabSummaryFooter from "@/components/shared/TabSummaryFooter";
 
 interface Props {
-  platform?: "meta" | "dv360" | "both";
+  platform?: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
   dateRange?: string;
   customStart?: string;
   customEnd?: string;
@@ -596,7 +596,7 @@ export default function AttributionTab({ platform, dateRange, customStart, custo
           dv360TotalConversions: dv360Attr.totals?.totalConversions ?? 0,
           dateRange,
         }}
-        platform={(platform ?? "meta") === "both" ? "meta" : (platform ?? "meta") as "meta" | "dv360"}
+        platform={(platform ?? "meta") === "both" ? "meta" : (platform ?? "meta") as "meta" | "dv360" | "google_ads"}
         dateRange={String(dateRange ?? "30d")}
       />
     </div>

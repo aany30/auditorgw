@@ -64,7 +64,7 @@ export interface PlatformDaily {
 }
 
 export function useMetaDailyVsPrev(
-  platform: "meta" | "dv360" | "both",
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both",
   dateRange: DateRange,
   customStart?: string,
   customEnd?: string
@@ -72,15 +72,17 @@ export function useMetaDailyVsPrev(
   const {
     metaAccessToken, metaBusinessId,
     dv360ClientId, dv360ClientSecret, dv360RefreshToken, dv360AdvertiserId, dv360PartnerId,
+    googleAdsCustomerId, googleAdsLoginCustomerId,
     demoMode,
   } = useAuthStore();
   const [current, setCurrent] = useState<DailyPoint[]>([]);
   const [previous, setPrevious] = useState<DailyPoint[]>([]);
   // Per-platform split — populated in "both" mode so the Overview can render
-  // separated Meta / DV360 subtotal strips (never blended without labels).
-  const [byPlatform, setByPlatform] = useState<{ meta: PlatformDaily; dv360: PlatformDaily }>({
+  // separated Meta / DV360 / Google Ads subtotal strips (never blended without labels).
+  const [byPlatform, setByPlatform] = useState<{ meta: PlatformDaily; dv360: PlatformDaily; google_ads: PlatformDaily }>({
     meta: { current: [], previous: [] },
     dv360: { current: [], previous: [] },
+    google_ads: { current: [], previous: [] },
   });
   const [loading, setLoading] = useState(true);
 
@@ -142,6 +144,33 @@ export function useMetaDailyVsPrev(
       });
     };
 
+    const fetchGadsDaily = (s: string, e: string): Promise<DailyPoint[]> => {
+      const hasServerDefaults3 = !!process.env.NEXT_PUBLIC_HAS_DEFAULT_CREDS;
+      if (!hasServerDefaults3 && (!googleAdsCustomerId || !dv360RefreshToken || !dv360ClientId || !dv360ClientSecret))
+        return Promise.resolve([]);
+      return fetch("/api/reporting/breakdown/google-ads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clientId: dv360ClientId,
+          clientSecret: dv360ClientSecret,
+          refreshToken: dv360RefreshToken,
+          customerId: googleAdsCustomerId,
+          loginCustomerId: googleAdsLoginCustomerId || undefined,
+          breakdown: "daily", startDate: s, endDate: e,
+        }),
+      })
+        .then(r => r.json())
+        .then(d => (d.rows || []) as DailyPoint[])
+        .catch(() => [] as DailyPoint[]);
+    };
+
+    const emptyByPlatform = {
+      meta: { current: [] as DailyPoint[], previous: [] as DailyPoint[] },
+      dv360: { current: [] as DailyPoint[], previous: [] as DailyPoint[] },
+      google_ads: { current: [] as DailyPoint[], previous: [] as DailyPoint[] },
+    };
+
     if (platform === "dv360") {
       setLoading(true);
       Promise.all([
@@ -151,7 +180,20 @@ export function useMetaDailyVsPrev(
         .then(([cur, pr]) => {
           if (cancelled) return;
           setCurrent(cur); setPrevious(pr);
-          setByPlatform({ meta: { current: [], previous: [] }, dv360: { current: cur, previous: pr } });
+          setByPlatform({ ...emptyByPlatform, dv360: { current: cur, previous: pr } });
+        })
+        .catch(() => { if (!cancelled) { setCurrent([]); setPrevious([]); } })
+        .finally(() => { if (!cancelled) setLoading(false); });
+    } else if (platform === "google_ads") {
+      setLoading(true);
+      Promise.all([
+        fetchGadsDaily(startDate, endDate),
+        fetchGadsDaily(prev.startDate, prev.endDate),
+      ])
+        .then(([cur, pr]) => {
+          if (cancelled) return;
+          setCurrent(cur); setPrevious(pr);
+          setByPlatform({ ...emptyByPlatform, google_ads: { current: cur, previous: pr } });
         })
         .catch(() => { if (!cancelled) { setCurrent([]); setPrevious([]); } })
         .finally(() => { if (!cancelled) setLoading(false); });
@@ -164,12 +206,18 @@ export function useMetaDailyVsPrev(
         fetchMetaDaily(prev.startDate, prev.endDate),
         fetchDv360Daily(startDate, endDate),
         fetchDv360Daily(prev.startDate, prev.endDate),
+        fetchGadsDaily(startDate, endDate),
+        fetchGadsDaily(prev.startDate, prev.endDate),
       ])
-        .then(([mCur, mPrev, dCur, dPrev]) => {
+        .then(([mCur, mPrev, dCur, dPrev, gCur, gPrev]) => {
           if (cancelled) return;
-          setCurrent(mergeDaily(mCur, dCur));
-          setPrevious(mergeDaily(mPrev, dPrev));
-          setByPlatform({ meta: { current: mCur, previous: mPrev }, dv360: { current: dCur, previous: dPrev } });
+          setCurrent(mergeDaily(mergeDaily(mCur, dCur), gCur));
+          setPrevious(mergeDaily(mergeDaily(mPrev, dPrev), gPrev));
+          setByPlatform({
+            meta: { current: mCur, previous: mPrev },
+            dv360: { current: dCur, previous: dPrev },
+            google_ads: { current: gCur, previous: gPrev },
+          });
         })
         .catch(() => { if (!cancelled) { setCurrent([]); setPrevious([]); } })
         .finally(() => { if (!cancelled) setLoading(false); });
@@ -183,7 +231,7 @@ export function useMetaDailyVsPrev(
         .then(([cur, pr]) => {
           if (cancelled) return;
           setCurrent(cur); setPrevious(pr);
-          setByPlatform({ meta: { current: cur, previous: pr }, dv360: { current: [], previous: [] } });
+          setByPlatform({ ...emptyByPlatform, meta: { current: cur, previous: pr } });
         })
         .catch(() => { if (!cancelled) { setCurrent([]); setPrevious([]); } })
         .finally(() => { if (!cancelled) setLoading(false); });
@@ -191,7 +239,7 @@ export function useMetaDailyVsPrev(
 
     return () => { cancelled = true; retryTimers.forEach(clearTimeout); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [platform, startDate, endDate, prev.startDate, prev.endDate, metaAccessToken, metaBusinessId, dv360ClientId, dv360ClientSecret, dv360RefreshToken, dv360AdvertiserId, demoMode]);
+  }, [platform, startDate, endDate, prev.startDate, prev.endDate, metaAccessToken, metaBusinessId, dv360ClientId, dv360ClientSecret, dv360RefreshToken, dv360AdvertiserId, googleAdsCustomerId, googleAdsLoginCustomerId, demoMode]);
 
   return { current, previous, byPlatform, loading, startDate, endDate, prevStartDate: prev.startDate, prevEndDate: prev.endDate };
 }

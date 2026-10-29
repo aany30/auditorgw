@@ -57,7 +57,7 @@ const areasToSections = (areaIds: Set<string>): string[] =>
 const RAW_EST: Record<ReportLength, number> = { concise: 0.006, standard: 0.011, detailed: 0.02 };
 
 interface Props {
-  platform: "meta" | "dv360" | "both";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
   dateRange: DateRange;
   customStart?: string;
   customEnd?: string;

@@ -133,6 +133,94 @@ export interface DV360LineItemInput {
   };
 }
 
+// ── Google Ads campaign creation ──────────────────────────────────────────
+
+export type GAdsChannelType =
+  | "SEARCH"
+  | "DISPLAY"
+  | "VIDEO"
+  | "SHOPPING"
+  | "PERFORMANCE_MAX";
+
+export type GAdsBiddingStrategy =
+  | "MAXIMIZE_CLICKS"
+  | "MAXIMIZE_CONVERSIONS"
+  | "MAXIMIZE_CONVERSION_VALUE"
+  | "TARGET_CPA"
+  | "TARGET_ROAS"
+  | "TARGET_IMPRESSION_SHARE"
+  | "MANUAL_CPC";
+
+export interface GAdsCampaignInput {
+  name: string;
+  advertisingChannelType: GAdsChannelType;
+  status: "PAUSED";
+  biddingStrategyType: GAdsBiddingStrategy;
+  dailyBudget: number;          // major currency units (will be × 1,000,000)
+  startDate?: string;           // YYYY-MM-DD
+  endDate?: string;             // YYYY-MM-DD
+  networkSettings?: {
+    targetGoogleSearch: boolean;
+    targetSearchNetwork: boolean;
+    targetContentNetwork: boolean;
+    targetPartnerSearchNetwork: boolean;
+  };
+}
+
+export interface GAdsAdGroupInput {
+  name: string;
+  type: string;                 // SEARCH_STANDARD, DISPLAY_STANDARD, VIDEO_RESPONSIVE
+  cpcBidMicros?: string;        // max CPC in micros
+}
+
+export interface GAdsAdInput {
+  headlines: string[];           // 3-15 headlines (max 30 chars each)
+  descriptions: string[];        // 2-4 descriptions (max 90 chars each)
+  finalUrls: string[];
+}
+
+// ── Snapchat campaign creation ───────────────────────────────────────────
+
+export type SnapchatObjective =
+  | "AWARENESS"
+  | "APP_INSTALLS"
+  | "DRIVING_TRAFFIC_TO_APP"
+  | "DRIVING_TRAFFIC_TO_WEBSITE"
+  | "ENGAGEMENT"
+  | "LEAD_GENERATION"
+  | "VIDEO_VIEWS"
+  | "WEB_CONVERSIONS"
+  | "CATALOG_SALES";
+
+export type SnapchatBidStrategy =
+  | "AUTO_BID"
+  | "TARGET_COST"
+  | "LOWEST_COST_WITH_MAX_BID";
+
+export interface SnapchatCampaignInput {
+  name: string;
+  objective?: SnapchatObjective;
+  status: "PAUSED";
+  daily_budget_micro?: string;
+  start_time?: string;           // ISO 8601
+  end_time?: string;             // ISO 8601
+}
+
+export interface SnapchatAdSquadInput {
+  name: string;
+  type?: "SNAP_ADS" | "STORY" | "LENS" | "FILTER";
+  status: "PAUSED";
+  bid_micro?: string;
+  bid_strategy?: SnapchatBidStrategy;
+  billing_event?: "IMPRESSION" | "SWIPE_UP";
+  optimization_goal?: "IMPRESSIONS" | "SWIPES" | "APP_INSTALLS" | "VIDEO_VIEWS" | "PIXEL_PAGE_VIEW" | "PIXEL_PURCHASE";
+  daily_budget_micro?: string;
+  start_time?: string;
+  end_time?: string;
+  placement_v2?: { config: string };
+  targeting?: Record<string, unknown>;
+}
+
 // ── Shared response ───────────────────────────────────────────────────────
 
 export interface CreateCampaignResponse {
@@ -142,6 +230,9 @@ export interface CreateCampaignResponse {
   adId?: string;               // Meta
   insertionOrderId?: string;   // DV360
   lineItemId?: string;         // DV360
+  adGroupId?: string;          // Google Ads
+  adGroupAdId?: string;        // Google Ads
+  adSquadId?: string;          // Snapchat
   error?: string;
   partialErrors?: string[];
 }

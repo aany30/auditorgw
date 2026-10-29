@@ -7,7 +7,7 @@ import { rangeToDates } from "@/lib/date-range";
 import LoadingState from "@/components/shared/LoadingState";
 
 interface Props {
-  platform: "meta" | "dv360" | "both";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
   /** Dashboard date range — forwarded to /api/naming/campaigns so insights
    * window matches the date picker. Default "30d" if omitted. */
   dateRange?: string;
@@ -22,7 +22,7 @@ interface Props {
     id: string;
     label: string;
     description: string;
-    render: (args: { campaigns: CampaignData[]; loading: boolean; platform: "meta" | "dv360" | "both" }) => ReactNode;
+    render: (args: { campaigns: CampaignData[]; loading: boolean; platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both" }) => ReactNode;
   }>;
   defaultSubTab: string;
 }

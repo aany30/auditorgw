@@ -14,7 +14,7 @@ export interface FixStep {
 
 export interface FixRecipe {
   title: string;
-  platform: "meta" | "dv360" | "both";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
   steps: FixStep[];
 }
 

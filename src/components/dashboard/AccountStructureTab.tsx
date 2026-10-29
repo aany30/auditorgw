@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
-import { Layers } from "lucide-react";
+import { Layers, ChevronDown, ChevronRight } from "lucide-react";
 import { useCampaigns } from "@/hooks/useCampaigns";
+import { useAuthStore } from "@/store/auth";
 import type { CampaignData, DateRange } from "@/types";
 import { objectiveMatches } from "./CampaignObjectiveFilter";
 import NamingConventionAudit from "./audits/NamingConventionAudit";
@@ -14,7 +15,7 @@ import AIExecutiveSummary from "@/components/shared/AIExecutiveSummary";
 import TabSummaryFooter from "@/components/shared/TabSummaryFooter";
 
 interface Props {
-  platform: "meta" | "dv360" | "both";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
   dateRange: string;
   customStart?: string;
   customEnd?: string;
@@ -58,7 +59,7 @@ export default function AccountStructureTab({ platform, dateRange, customStart, 
   const [active, setActive] = useState<SubTab>("naming");
 
   const visibleTabs = useMemo(
-    () => SUB_TABS.filter(t => !t.metaOnly || platform !== "dv360"),
+    () => SUB_TABS.filter(t => !t.metaOnly || (platform !== "dv360" && platform !== "google_ads")),
     [platform]
   );
 

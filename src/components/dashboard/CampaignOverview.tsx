@@ -3,7 +3,7 @@ import SectionOverview from "./SectionOverview";
 import TabSummaryFooter from "@/components/shared/TabSummaryFooter";
 
 interface Props {
-  platform: "meta" | "dv360" | "both";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
   setActiveTab: (id: string) => void;
 }
 

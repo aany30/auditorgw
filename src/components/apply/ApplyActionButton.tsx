@@ -66,12 +66,17 @@ function buttonIcon(a: ApplyAction) {
   return <Zap className="h-3.5 w-3.5" />;
 }
 
-function reauthLink(platform: "meta" | "dv360"): string {
-  return platform === "meta" ? "/api/auth/meta/start" : "/api/auth/google/start";
+function reauthLink(platform: "meta" | "dv360" | "google_ads" | "snapchat"): string {
+  if (platform === "meta") return "/api/auth/meta/start";
+  if (platform === "snapchat") return "/api/auth/snapchat/start";
+  return "/api/auth/google/start";
 }
 
-function platformLabel(p: "meta" | "dv360"): string {
-  return p === "meta" ? "Meta" : "DV360";
+function platformLabel(p: "meta" | "dv360" | "google_ads" | "snapchat"): string {
+  if (p === "meta") return "Meta";
+  if (p === "google_ads") return "Google Ads";
+  if (p === "snapchat") return "Snapchat";
+  return "DV360";
 }
 
 function invertAction(a: ApplyAction): ApplyAction {
@@ -141,7 +146,9 @@ export default function ApplyActionButton({ action, onApplied, compact, disabled
   const scopeMissing =
     error &&
     (error.includes("Missing ads_management scope") ||
-      error.includes("Missing display-video write scope"));
+      error.includes("Missing display-video write scope") ||
+      error.includes("Missing Google Ads write access") ||
+      error.includes("Missing Snapchat write access"));
 
   const closeModal = useCallback(() => {
     setPhase("idle");
@@ -155,11 +162,29 @@ export default function ApplyActionButton({ action, onApplied, compact, disabled
       setPhase("applying");
       setError(null);
 
-      const url = actionToRun.platform === "meta" ? "/api/apply/meta" : "/api/apply/dv360";
+      const url =
+        actionToRun.platform === "meta"
+          ? "/api/apply/meta"
+          : actionToRun.platform === "google_ads"
+          ? "/api/apply/google-ads"
+          : actionToRun.platform === "snapchat"
+          ? "/api/apply/snapchat"
+          : "/api/apply/dv360";
       const body: Record<string, unknown> = { action: actionToRun };
       if (actionToRun.platform === "meta") {
         if (auth.metaAccessToken) body.accessToken = auth.metaAccessToken;
         if (auth.metaBusinessId) body.businessId = auth.metaBusinessId;
+      } else if (actionToRun.platform === "google_ads") {
+        if (auth.dv360ClientId) body.clientId = auth.dv360ClientId;
+        if (auth.dv360ClientSecret) body.clientSecret = auth.dv360ClientSecret;
+        if (auth.dv360RefreshToken) body.refreshToken = auth.dv360RefreshToken;
+        if (auth.googleAdsCustomerId) body.customerId = auth.googleAdsCustomerId;
+        if (auth.googleAdsLoginCustomerId) body.loginCustomerId = auth.googleAdsLoginCustomerId;
+      } else if (actionToRun.platform === "snapchat") {
+        if (auth.snapchatClientId) body.clientId = auth.snapchatClientId;
+        if (auth.snapchatClientSecret) body.clientSecret = auth.snapchatClientSecret;
+        if (auth.snapchatRefreshToken) body.refreshToken = auth.snapchatRefreshToken;
+        if (auth.snapchatAdAccountId) body.adAccountId = auth.snapchatAdAccountId;
       } else {
         if (auth.dv360ClientId) body.clientId = auth.dv360ClientId;
         if (auth.dv360ClientSecret) body.clientSecret = auth.dv360ClientSecret;
@@ -352,7 +377,7 @@ function ConfirmModal({
                 {risk} risk
               </span>
               <span className="text-xs text-slate-500">
-                on {action.platform === "meta" ? "Meta" : "DV360"}
+                on {platformLabel(action.platform)}
               </span>
             </div>
           </div>

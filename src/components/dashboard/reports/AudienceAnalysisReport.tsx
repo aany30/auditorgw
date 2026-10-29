@@ -23,6 +23,8 @@ import TabSummaryFooter from "@/components/shared/TabSummaryFooter";
 import { useMetaBreakdown, type BreakdownRow } from "@/hooks/useMetaBreakdown";
 import { useDV360Breakdown } from "@/hooks/useDV360Breakdown";
 import { useYouTubeAnalyticsBreakdown } from "@/hooks/useYouTubeAnalyticsBreakdown";
+import { useGoogleAdsBreakdown } from "@/hooks/useGoogleAdsBreakdown";
+import { useAuthStore } from "@/store/auth";
 import { useAdSetInsights } from "@/hooks/useAdSetInsights";
 import { classifyAdSet, AUDIENCE_COLORS, type AudienceClass } from "@/lib/audience-classifier";
 import { formatMoney } from "@/lib/currency";
@@ -30,7 +32,7 @@ import { rangeToDates } from "@/lib/date-range";
 import type { DateRange } from "@/components/shared/DateRangePicker";
 
 interface Props {
-  platform: "meta" | "dv360" | "both";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
   dateRange: DateRange;
   customStart?: string;
   customEnd?: string;
@@ -1144,8 +1146,10 @@ function CohortDetail({ rows, currency }: { rows: CohortRow[]; currency: string 
 export default function AudienceAnalysisReport({ platform, dateRange, customStart, customEnd }: Props) {
   const { startDate, endDate } = rangeToDates(dateRange, customStart, customEnd);
 
-  const showMeta = platform !== "dv360";
+  const isGadsConnected = useAuthStore((s) => s.isGoogleAdsConnected());
+  const showMeta = platform === "meta" || platform === "both";
   const showDv   = platform === "dv360" || platform === "both";
+  const showGads = platform === "google_ads" || (platform === "both" && isGadsConnected);
 
   // ── Meta breakdowns ──────────────────────────────────────────────────────
   const { rows: metaAge,     loading: metaAgeL     } = useMetaBreakdown("age",               dateRange, customStart, customEnd, showMeta);
@@ -1199,6 +1203,12 @@ export default function AudienceAnalysisReport({ platform, dateRange, customStar
   // "no data": BM has no demographics AND the YouTube fallback also came up empty.
   const dvDemoUnsupported = !bmDemoHasData && !dvDemoApiDisabled && !dvDemoMissingScope && !dvDemoNoChannel && !dvAgeL && !dvGenderL && dvAge.length === 0 && dvGender.length === 0;
 
+  // ── Google Ads breakdowns ─────────────────────────────────────────────
+  const { rows: gadsAge,     loading: gadsAgeL     } = useGoogleAdsBreakdown("age",     dateRange, customStart, customEnd, showGads);
+  const { rows: gadsGender,  loading: gadsGenL     } = useGoogleAdsBreakdown("gender",  dateRange, customStart, customEnd, showGads);
+  const { rows: gadsCountry, loading: gadsCountryL } = useGoogleAdsBreakdown("country", dateRange, customStart, customEnd, showGads);
+  const { rows: gadsDevice,  loading: gadsDeviceL  } = useGoogleAdsBreakdown("device",  dateRange, customStart, customEnd, showGads);
+
   // ── Meta-only cohort detailing ───────────────────────────────────────────
   const { adsets, audienceMap, currency } = useAdSetInsights(
     showMeta ? (platform === "both" ? "both" : "meta") : "meta",
@@ -1244,9 +1254,9 @@ export default function AudienceAnalysisReport({ platform, dateRange, customStar
           tabName="Audience Analysis"
           context={{
             window: `${startDate} → ${endDate}`,
-            ageBreakdown: [...metaAge, ...dvAge].map(r => ({ label: r.label, impressions: r.impressions, clicks: r.clicks, spend: Math.round(r.spend), conversions: r.conversions })),
-            genderBreakdown: [...metaGender, ...dvGender].map(r => ({ label: r.label, impressions: r.impressions, spend: Math.round(r.spend), conversions: r.conversions })),
-            countryBreakdown: [...metaCountry, ...dvCountry].sort((a, b) => b.spend - a.spend).slice(0, 15).map(r => ({ label: r.label, impressions: r.impressions, spend: Math.round(r.spend), conversions: r.conversions })),
+            ageBreakdown: [...metaAge, ...dvAge, ...gadsAge].map(r => ({ label: r.label, impressions: r.impressions, clicks: r.clicks, spend: Math.round(r.spend), conversions: r.conversions })),
+            genderBreakdown: [...metaGender, ...dvGender, ...gadsGender].map(r => ({ label: r.label, impressions: r.impressions, spend: Math.round(r.spend), conversions: r.conversions })),
+            countryBreakdown: [...metaCountry, ...dvCountry, ...gadsCountry].sort((a, b) => b.spend - a.spend).slice(0, 15).map(r => ({ label: r.label, impressions: r.impressions, spend: Math.round(r.spend), conversions: r.conversions })),
             cohorts: cohortRows.length,
           }}
           platform={platform}
@@ -1372,26 +1382,52 @@ export default function AudienceAnalysisReport({ platform, dateRange, customStar
         </div>
       )}
 
+      {/* ── Google Ads section ── */}
+      {showGads && (
+        <div className="space-y-5">
+          <SectionHeader label="Google Ads" sub="Google Ads Search, Display, Video, PMax" />
+          <GeoExplorer
+            countryRows={gadsCountry}
+            loadingCountry={gadsCountryL}
+            regionRows={[]}
+            cityRows={[]}
+            loadingRegion={false}
+            loadingCity={false}
+            currency={currency}
+            providerLabel="Google Ads"
+          />
+          <AgeProfile rows={gadsAge} loading={gadsAgeL} currency={currency} />
+          <GenderSplit rows={gadsGender} loading={gadsGenL} />
+          <DeviceBreakdown rows={gadsDevice} loading={gadsDeviceL} />
+          <CustomCohorts ageRows={gadsAge} genderRows={gadsGender} countryRows={gadsCountry} deviceRows={gadsDevice} />
+          <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs text-blue-800 flex items-start gap-2">
+            <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+            Google Ads demographic data comes from age_range_view, gender_view, geographic_view, and campaign device segments. Region/city drill-down and custom-audience cohort detailing remain Meta-only features.
+          </div>
+        </div>
+      )}
+
       <TabSummaryFooter
         tabName="Audience Analysis"
         lines={(() => {
           const lines = [];
           if (showMeta) lines.push(`Meta — ${metaAge.length} age groups · ${metaCountry.length} countries · ${metaGender.length} gender segments.`);
           if (showDv && !dv360Error) lines.push(`DV360 — ${dvAge.length} age groups · ${dvCountry.length} countries · ${dvGender.length} gender segments.`);
+          if (showGads) lines.push(`Google Ads — ${gadsAge.length} age groups · ${gadsCountry.length} countries · ${gadsGender.length} gender segments.`);
           lines.push(`Date window: ${startDate} → ${endDate}.`);
           return lines;
         })()}
         context={{
           window: `${startDate} → ${endDate}`,
-          ageGroups: metaAge.length + dvAge.length,
-          countries: metaCountry.length + dvCountry.length,
+          ageGroups: metaAge.length + dvAge.length + gadsAge.length,
+          countries: metaCountry.length + dvCountry.length + gadsCountry.length,
           cohorts: cohortRows.length,
-          ageBreakdown: [...metaAge, ...dvAge].map(r => ({ label: r.label, impressions: r.impressions, clicks: r.clicks, spend: r.spend, conversions: r.conversions })),
-          genderBreakdown: [...metaGender, ...dvGender].map(r => ({ label: r.label, impressions: r.impressions, clicks: r.clicks, spend: r.spend, conversions: r.conversions })),
-          countryBreakdown: [...metaCountry, ...dvCountry].map(r => ({ label: r.label, impressions: r.impressions, clicks: r.clicks, spend: r.spend, conversions: r.conversions })),
+          ageBreakdown: [...metaAge, ...dvAge, ...gadsAge].map(r => ({ label: r.label, impressions: r.impressions, clicks: r.clicks, spend: r.spend, conversions: r.conversions })),
+          genderBreakdown: [...metaGender, ...dvGender, ...gadsGender].map(r => ({ label: r.label, impressions: r.impressions, clicks: r.clicks, spend: r.spend, conversions: r.conversions })),
+          countryBreakdown: [...metaCountry, ...dvCountry, ...gadsCountry].map(r => ({ label: r.label, impressions: r.impressions, clicks: r.clicks, spend: r.spend, conversions: r.conversions })),
           cohortBreakdown: cohortRows.map(r => ({ segment: r.segment, impressions: r.impressions, clicks: r.clicks, spend: r.spend, conversions: r.conversions, ctr: r.ctr, convRate: r.convRate, cpm: r.cpm })),
         }}
-        platform="meta"
+        platform={showGads ? "google_ads" : "meta"}
         dateRange={String(dateRange)}
       />
     </div>

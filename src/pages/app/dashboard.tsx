@@ -110,8 +110,8 @@ interface SubTab {
   id: string;
   label: string;
   Icon: LucideIcon;
-  /** Platforms this tab has meaningful data for. Absent = both. */
-  platforms?: Array<"meta" | "dv360">;
+  /** Platforms this tab has meaningful data for. Absent = all. */
+  platforms?: Array<"meta" | "dv360" | "google_ads" | "snapchat">;
 }
 
 interface NavGroup {
@@ -143,10 +143,10 @@ const NAV: NavGroup[] = [
     label: "Tracking",
     Icon: Monitor,
     children: [
-      { id: "account-structure",      label: "Account Structure",      Icon: Layers    },
+      { id: "account-structure",      label: "Account Structure",      Icon: Layers,   platforms: ["meta", "dv360", "google_ads", "snapchat"] },
       { id: "aud-performance",        label: "Audience Performance",   Icon: BarChart2, platforms: ["meta"] },
-      { id: "aud-saturation",         label: "Saturation",             Icon: Zap       },
-      { id: "conversion-monitoring",  label: "Conversion Monitoring",  Icon: LineChart },
+      { id: "aud-saturation",         label: "Saturation",             Icon: Zap,      platforms: ["meta", "dv360"] },
+      { id: "conversion-monitoring",  label: "Conversion Monitoring",  Icon: LineChart, platforms: ["meta", "dv360", "google_ads", "snapchat"] },
       { id: "create-campaign",        label: "Create Campaign",        Icon: PlusCircle },
     ],
   },
@@ -206,8 +206,8 @@ const NAV: NavGroup[] = [
 ];
 
 /** True when the tab has meaningful data for the selected platform. */
-function isTabVisible(tab: SubTab, platform: "meta" | "dv360" | "both"): boolean {
-  if (!tab.platforms) return true;         // no restriction = both
+function isTabVisible(tab: SubTab, platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both"): boolean {
+  if (!tab.platforms) return true;         // no restriction = all
   if (platform === "both") return true;    // "All" shows everything
   return tab.platforms.includes(platform);
 }
@@ -222,9 +222,17 @@ export default function Dashboard() {
     clearAllCredentials,
     clearMetaCredentials,
     clearDV360Credentials,
+    clearGoogleAdsCredentials,
+    clearSnapchatCredentials,
+    googleAdsCustomerId,
+    snapchatAdAccountId,
     setMetaCredentials,
     setMetaPixelList,
     setDV360Credentials,
+    setGoogleAdsCredentials,
+    setSnapchatCredentials,
+    isGoogleAdsConnected,
+    isSnapchatConnected,
     totalAiCreditsUsd,
     alertEmail,
     loginEmail,
@@ -247,8 +255,63 @@ export default function Dashboard() {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(["audit", "tracking", "reporting", "ad-library", "insights"]));
   const [mounted, setMounted] = useState(false);
   const [dv360AdvOptions, setDv360AdvOptions] = useState<{ id: string; name: string }[] | null>(null);
+  const [gadsCustomerOptions, setGadsCustomerOptions] = useState<{ id: string; name: string; loginCustomerId?: string }[] | null>(null);
+  const [snapAdAccountOptions, setSnapAdAccountOptions] = useState<{ id: string; name: string }[] | null>(null);
   const [dv360NeedsAdvertiser, setDv360NeedsAdvertiser] = useState(false);
+  const [gadsResolving, setGadsResolving] = useState(false);
+  const [gadsResolveError, setGadsResolveError] = useState<string | null>(null);
   const [logoutMenuOpen, setLogoutMenuOpen] = useState(false);
+
+  // Resolve a pasted Google Ads ID into a usable leaf (client) account.
+  // The ID may be a manager (MCC) that holds no metrics — query customer_client
+  // to list the real ad accounts underneath, then pick one (or auto-pick if
+  // there's exactly one).
+  const resolveGoogleAdsAccount = async (enteredId: string) => {
+    const s = useAuthStore.getState();
+    setGadsResolving(true);
+    setGadsResolveError(null);
+    try {
+      const r = await fetch("/api/google-ads/accounts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clientId: s.dv360ClientId || undefined,
+          clientSecret: s.dv360ClientSecret || undefined,
+          refreshToken: s.dv360RefreshToken || undefined,
+          customerId: enteredId,
+        }),
+      });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
+        throw new Error(body.error || `HTTP ${r.status}`);
+      }
+      const { accounts } = (await r.json()) as {
+        accounts: { id: string; name: string; isManager: boolean; level: number }[];
+      };
+      const leaves = accounts.filter((a) => !a.isManager);
+      const enteredIsLeaf = leaves.some((a) => a.id === enteredId);
+
+      if (enteredIsLeaf && leaves.length === 1) {
+        // The pasted ID is itself a normal ad account — use it directly.
+        setGoogleAdsCredentials({ customerId: enteredId });
+      } else if (leaves.length === 1) {
+        // Manager with a single client account — auto-select it.
+        setGoogleAdsCredentials({ customerId: leaves[0].id, loginCustomerId: enteredId });
+      } else if (leaves.length > 1) {
+        // Manager with several client accounts — let the user choose. Each pick
+        // carries the manager as its login-customer-id.
+        setGadsCustomerOptions(
+          leaves.map((a) => ({ id: a.id, name: a.name, loginCustomerId: enteredId })),
+        );
+      } else {
+        throw new Error("No ad accounts found under this ID.");
+      }
+    } catch (e) {
+      setGadsResolveError(e instanceof Error ? e.message : "Could not resolve account.");
+    } finally {
+      setGadsResolving(false);
+    }
+  };
 
   // Zustand-persist hydration gate.
   //
@@ -379,7 +442,47 @@ export default function Dashboard() {
       router.replace("/app/dashboard");
     }
 
-  }, [router.isReady, hydrated, router.query, setMetaCredentials, setMetaPixelList, setDV360Credentials, setLoginEmail, router]);
+    // Handle Google Ads customer IDs from OAuth callback
+    const { gads_customer_ids, gads_customer_names } = router.query;
+    if (gads_customer_ids && dv360_refresh) {
+      const gadsIds = (gads_customer_ids as string).split(",");
+      const gadsNames = gads_customer_names ? (gads_customer_names as string).split("|") : gadsIds;
+      if (gadsIds.length === 1) {
+        setGoogleAdsCredentials({ customerId: gadsIds[0] });
+      } else if (gadsIds.length > 1) {
+        setGadsCustomerOptions(gadsIds.map((id, i) => ({ id, name: gadsNames[i] || id })));
+      }
+    }
+
+    // Handle Snapchat OAuth callback
+    const { snap_refresh, snap_client_id, snap_client_secret, snap_org_id, snap_ad_account_ids, snap_ad_account_names } = router.query;
+    if (snap_refresh && snap_client_id && snap_client_secret) {
+      const adAccountIds = snap_ad_account_ids ? (snap_ad_account_ids as string).split(",") : [];
+      const adAccountNames = snap_ad_account_names ? (snap_ad_account_names as string).split("|") : adAccountIds;
+      if (adAccountIds.length > 0) {
+        setSnapchatCredentials({
+          clientId: snap_client_id as string,
+          clientSecret: snap_client_secret as string,
+          refreshToken: snap_refresh as string,
+          adAccountId: adAccountIds[0],
+          orgId: (snap_org_id as string) || undefined,
+        });
+        if (adAccountIds.length > 1) {
+          setSnapAdAccountOptions(adAccountIds.map((id, i) => ({ id, name: adAccountNames[i] || id })));
+        }
+      } else {
+        setSnapchatCredentials({
+          clientId: snap_client_id as string,
+          clientSecret: snap_client_secret as string,
+          refreshToken: snap_refresh as string,
+          adAccountId: "",
+          orgId: (snap_org_id as string) || undefined,
+        });
+      }
+      router.replace("/app/dashboard");
+    }
+
+  }, [router.isReady, hydrated, router.query, setMetaCredentials, setMetaPixelList, setDV360Credentials, setGoogleAdsCredentials, setSnapchatCredentials, setLoginEmail, router]);
 
   // Hydrate demo mode from ?demo=1 — survives refresh / back-button within the
   // tab without leaking into localStorage.
@@ -398,10 +501,11 @@ export default function Dashboard() {
     // (OAuth found no advertisers, user must paste the ID). Don't bounce them
     // back to landing — let the "Paste your Advertiser ID" prompt show.
     const dv360Pending = !!dv360RefreshToken;
-    if (!isMetaConnected() && !isDV360Connected() && !dv360Pending && !demoMode) {
+    const snapPending = !!snapchatAdAccountId || !!(router.query.snap_refresh);
+    if (!isMetaConnected() && !isDV360Connected() && !isGoogleAdsConnected() && !isSnapchatConnected() && !dv360Pending && !snapPending && !demoMode) {
       router.replace("/");
     }
-  }, [mounted, hydrated, router.isReady, router.query.demo, isMetaConnected, isDV360Connected, dv360RefreshToken, demoMode, router, hasServerDefaults]);
+  }, [mounted, hydrated, router.isReady, router.query.demo, isMetaConnected, isDV360Connected, isGoogleAdsConnected, isSnapchatConnected, dv360RefreshToken, snapchatAdAccountId, demoMode, router, hasServerDefaults]);
 
   const handleLogout = () => {
     clearAllCredentials();
@@ -409,11 +513,13 @@ export default function Dashboard() {
   };
 
   // Disconnect one platform, keep the session alive if the other remains.
-  const handleDisconnect = (which: "meta" | "dv360") => {
+  const handleDisconnect = (which: "meta" | "dv360" | "google_ads" | "snapchat") => {
     if (which === "meta") clearMetaCredentials();
-    else clearDV360Credentials();
+    else if (which === "dv360") clearDV360Credentials();
+    else if (which === "google_ads") clearGoogleAdsCredentials();
+    else clearSnapchatCredentials();
     setLogoutMenuOpen(false);
-    const stillConnected = which === "meta" ? isDV360Connected() : isMetaConnected();
+    const stillConnected = isMetaConnected() || isDV360Connected() || isGoogleAdsConnected() || isSnapchatConnected();
     if (!stillConnected && !demoMode) router.push("/");
   };
 
@@ -716,6 +822,14 @@ export default function Dashboard() {
                       Disconnect DV360 only
                     </button>
                   )}
+                  {mounted && isGoogleAdsConnected() && (
+                    <button
+                      onClick={() => handleDisconnect("google_ads")}
+                      className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                    >
+                      Disconnect Google Ads only
+                    </button>
+                  )}
                   {mounted && !isDV360Connected() && (
                     <a
                       href="/api/auth/google/start"
@@ -734,6 +848,24 @@ export default function Dashboard() {
                     >
                       <svg className="w-3.5 h-3.5" viewBox="0 0 24 24"><path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="currentColor" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="currentColor" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="currentColor" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
                       Reconnect DV360
+                    </a>
+                  )}
+                  {mounted && isSnapchatConnected() && (
+                    <button
+                      onClick={() => handleDisconnect("snapchat")}
+                      className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                    >
+                      Disconnect Snapchat only
+                    </button>
+                  )}
+                  {mounted && !isSnapchatConnected() && (
+                    <a
+                      href="/api/auth/snapchat/start"
+                      className="w-full text-left px-3 py-2 text-sm text-yellow-700 hover:bg-yellow-50 flex items-center gap-2 border-t border-gray-100"
+                      onClick={() => setLogoutMenuOpen(false)}
+                    >
+                      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M12.206.793c.99 0 4.347.276 5.93 3.821.529 1.193.403 3.219.299 4.847l-.003.06c-.012.18-.022.345-.03.51.075.045.203.09.401.09.3-.016.659-.12 1.033-.301a.477.477 0 0 1 .718.447c-.003.2-.154.462-.469.667-.293.191-.678.369-1.08.503-.112.037-.208.087-.295.161-.065.054-.111.123-.145.198.033.197.116.42.255.633.396.611 1.028 1.136 1.726 1.402a.466.466 0 0 1 .242.707c-.143.309-.677.585-1.547.803-.2.049-.361.131-.468.256-.105.122-.177.284-.218.453-.077.317-.159.662-.476.834a.578.578 0 0 1-.298.088c-.128 0-.265-.04-.413-.086-.219-.068-.472-.144-.788-.144a2.38 2.38 0 0 0-.372.028c-.345.052-.736.247-1.189.49-.776.416-1.735.933-3.049.933-1.33 0-2.294-.523-3.078-.943-.443-.238-.825-.443-1.162-.494a2.42 2.42 0 0 0-.371-.027c-.332 0-.591.083-.808.149-.14.044-.264.082-.382.082a.617.617 0 0 1-.339-.102c-.29-.168-.372-.498-.448-.808-.042-.174-.116-.34-.224-.465-.108-.126-.272-.21-.474-.26-.859-.216-1.386-.49-1.53-.8a.49.49 0 0 1 .243-.712c.699-.265 1.33-.79 1.726-1.401.14-.213.222-.436.255-.633a.564.564 0 0 0-.145-.198 1.063 1.063 0 0 0-.295-.161c-.4-.134-.787-.312-1.08-.503-.315-.205-.466-.468-.47-.668a.482.482 0 0 1 .72-.447c.374.181.733.285 1.033.301.199 0 .326-.045.401-.09a31.03 31.03 0 0 1-.033-.57c-.104-1.628-.23-3.654.299-4.847C7.86 1.069 11.216.793 12.206.793z"/></svg>
+                      Connect Snapchat
                     </a>
                   )}
                   <button
@@ -839,6 +971,55 @@ export default function Dashboard() {
             </div>
           )}
 
+          {/* Google Ads customer picker — shown when OAuth returned multiple customers */}
+          {gadsCustomerOptions && gadsCustomerOptions.length > 1 && (
+            <div className="bg-green-50 border-b border-green-200 px-8 py-4">
+              <p className="text-sm font-semibold text-green-900 mb-2">Select a Google Ads Account</p>
+              <div className="flex flex-wrap gap-2">
+                {gadsCustomerOptions.map((opt) => (
+                  <button
+                    key={opt.id}
+                    onClick={() => {
+                      setGoogleAdsCredentials({ customerId: opt.id, loginCustomerId: opt.loginCustomerId });
+                      setGadsCustomerOptions(null);
+                    }}
+                    className="px-3 py-1.5 bg-white border border-green-300 rounded-lg text-sm text-green-900 hover:bg-green-100 transition-colors"
+                  >
+                    {opt.name} <span className="text-green-400 text-xs ml-1">({opt.id})</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Snapchat ad account picker — shown when OAuth returned multiple ad accounts */}
+          {snapAdAccountOptions && snapAdAccountOptions.length > 1 && (
+            <div className="bg-yellow-50 border-b border-yellow-200 px-8 py-4">
+              <p className="text-sm font-semibold text-yellow-900 mb-2">Select a Snapchat Ad Account</p>
+              <div className="flex flex-wrap gap-2">
+                {snapAdAccountOptions.map((opt) => (
+                  <button
+                    key={opt.id}
+                    onClick={() => {
+                      const s = useAuthStore.getState();
+                      setSnapchatCredentials({
+                        clientId: s.snapchatClientId!,
+                        clientSecret: s.snapchatClientSecret!,
+                        refreshToken: s.snapchatRefreshToken!,
+                        adAccountId: opt.id,
+                        orgId: s.snapchatOrgId || undefined,
+                      });
+                      setSnapAdAccountOptions(null);
+                    }}
+                    className="px-3 py-1.5 bg-white border border-yellow-300 rounded-lg text-sm text-yellow-900 hover:bg-yellow-100 transition-colors"
+                  >
+                    {opt.name} <span className="text-yellow-500 text-xs ml-1">({opt.id})</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* DV360 needs advertiser ID — OAuth didn't find any advertisers, or
               creds persisted (e.g. after reload) without an advertiser yet. */}
           {(dv360NeedsAdvertiser || (dv360RefreshToken && !dv360AdvertiserId)) && (
@@ -868,6 +1049,34 @@ export default function Dashboard() {
                   Save
                 </button>
               </form>
+            </div>
+          )}
+
+          {/* Google Ads needs Customer ID — OAuth completed (shared Google creds)
+              but no Google Ads customer ID was auto-detected or set yet. */}
+          {!demoMode && dv360RefreshToken && !googleAdsCustomerId && !gadsCustomerOptions && (
+            <div className="bg-green-50 border-b border-green-200 px-8 py-4">
+              <p className="text-sm font-semibold text-green-900 mb-1">Paste your Google Ads Customer ID</p>
+              <p className="text-xs text-green-700 mb-2">
+                Open <a href="https://ads.google.com" target="_blank" rel="noreferrer" className="underline">ads.google.com</a> — the number in the top-right (e.g. 123-456-7890) is your Customer ID. Dashes are optional.
+              </p>
+              <form
+                className="flex gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const input = (e.target as HTMLFormElement).elements.namedItem("gadsId") as HTMLInputElement;
+                  const val = input.value.trim().replace(/-/g, "");
+                  if (val) resolveGoogleAdsAccount(val);
+                }}
+              >
+                <input name="gadsId" placeholder="e.g. 123-456-7890" disabled={gadsResolving} className="px-3 py-1.5 border border-green-300 rounded-lg text-sm bg-white w-48 focus:outline-none focus:ring-2 focus:ring-green-200 disabled:opacity-50" />
+                <button type="submit" disabled={gadsResolving} className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50">
+                  {gadsResolving ? "Checking…" : "Save"}
+                </button>
+              </form>
+              {gadsResolveError && (
+                <p className="text-xs text-red-600 mt-2">{gadsResolveError}</p>
+              )}
             </div>
           )}
 

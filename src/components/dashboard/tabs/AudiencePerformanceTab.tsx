@@ -1039,7 +1039,7 @@ function EmptyState() {
 // ─── Main tab ────────────────────────────────────────────────────────────────
 
 interface Props {
-  platform: "meta" | "dv360" | "both";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
   dateRange: DateRange;
   customStart?: string;
   customEnd?: string;
@@ -1057,6 +1057,26 @@ const SUB_TABS = [
 export default function AudiencePerformanceTab({ platform, dateRange, customStart, customEnd }: Props) {
   const [active, setActive] = useState("by-audience");
   const { adsets, audienceMap, loading, error, currency, startDate, endDate } = useAdSetInsights(platform, dateRange, customStart, customEnd);
+
+  // Audience Performance is built on Meta ad-set audience insights (reach,
+  // frequency, audience-type grouping). The Google Ads API doesn't expose an
+  // equivalent ad-set audience breakdown, so we don't fabricate it.
+  if (platform === "google_ads") {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-3">
+          <BarChart2 className="w-8 h-8 text-blue-600" />
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900">Audience Performance</h1>
+            <p className="text-gray-600 mt-1">Spend, ROAS, CPA and funnel breakdown by audience type.</p>
+          </div>
+        </div>
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-800">
+          Audience-type performance (with reach and frequency) isn&apos;t available via the Google Ads API. Use Meta or DV360 for this audit, or see Key Metrics / Dashboard for Google Ads campaign performance.
+        </div>
+      </div>
+    );
+  }
 
   if (loading && adsets.length === 0) return <LoadingState message="Loading audience data…" />;
 

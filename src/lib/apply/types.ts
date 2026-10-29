@@ -11,8 +11,8 @@
 interface BaseAction {
   /** uuid for audit log */
   id: string;
-  platform: "meta" | "dv360";
-  entityType: "campaign" | "adset" | "ad" | "lineitem" | "insertion_order";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat";
+  entityType: "campaign" | "adset" | "ad" | "lineitem" | "insertion_order" | "ad_squad";
   entityId: string;
   /** for the confirm modal + audit log display */
   entityName: string;

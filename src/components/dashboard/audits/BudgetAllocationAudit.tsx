@@ -550,7 +550,7 @@ function TipCell({ tip, campaignContext, isDemo, platform, campaign, currency, b
   ) as "campaign" | "adset" | "insertion_order";
 
   const tipApplyContext: ApplyContext | undefined = isDemo ? undefined : {
-    platform: platform as "meta" | "dv360",
+    platform: platform as "meta" | "dv360" | "google_ads",
     entityType,
     entityId: campaign.id,
     entityName: campaign.name,
@@ -2063,13 +2063,169 @@ function DV360BudgetSection({ campaigns, currency, dateRange, customStart, custo
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Google Ads budget section — campaign-level spend/budget from the Google Ads
+// API (synchronous, already on each campaign row). Drills into ad groups.
+// ─────────────────────────────────────────────────────────────────────────────
+function computeGadsTip(c: CampaignData, currency: string): Tip {
+  if (!isActive(c)) {
+    return { kind: "paused", severity: "info", label: "Paused", detail: "Campaign is not currently delivering.", isSpike: false, sevRank: 1 };
+  }
+  const spend = c.spend || 0;
+  if (spend === 0) {
+    const adGroups = c.adSets ?? [];
+    const activeAgs = adGroups.filter((ag) => {
+      const st = (ag.status || "").toUpperCase();
+      return st.includes("ACTIVE") || st.includes("ENABLED");
+    }).length;
+    const agNote = adGroups.length > 0
+      ? ` ${activeAgs} of ${adGroups.length} ad group${adGroups.length === 1 ? "" : "s"} active` +
+        (activeAgs === 0 ? " — every ad group is paused, which is why the campaign isn't delivering despite showing Enabled." : " — active ad groups exist but recorded no spend in this window (check budget, bids, or ad approvals).")
+      : "";
+    return { kind: "noDelivery", severity: "high", label: "No delivery", detail: `Enabled but zero spend in the selected window.${agNote || " Check ad group status, budget, or ad approvals."}`, isSpike: false, sevRank: 3 };
+  }
+  return { kind: "adSetLevel", severity: "info", label: "Delivering", detail: `Total: ${formatMoney(spend, currency, 0)} in window.`, isSpike: false, sevRank: 1 };
+}
+
+function GoogleAdsBudgetSection({ campaigns, currency }: { campaigns: CampaignData[]; currency: string }) {
+  const cur = (n: number) => formatMoney(n, currency, 0);
+  const [statusFilter, setStatusFilter] = useState<"all" | "active">("all");
+  const visible = useMemo(
+    () => (statusFilter === "active" ? campaigns.filter(isActive) : campaigns),
+    [campaigns, statusFilter]
+  );
+
+  const totals = useMemo(() => {
+    let spend = 0, impressions = 0, clicks = 0, conversions = 0;
+    for (const c of visible) {
+      spend += c.spend || 0;
+      impressions += c.impressions || 0;
+      clicks += c.clicks || 0;
+      conversions += c.conversions || 0;
+    }
+    return { spend, impressions, clicks, conversions };
+  }, [visible]);
+
+  const budgetSetting = useMemo(() => {
+    let daily = 0, lifetime = 0;
+    for (const c of visible.filter(isActive)) {
+      if (c.dailyBudget) daily += c.dailyBudget;
+      else if (c.lifetimeBudget) lifetime += c.lifetimeBudget;
+    }
+    return { daily, lifetime };
+  }, [visible]);
+
+  const rows = useMemo(
+    () => visible.map((c) => {
+      const spend = c.spend || 0;
+      const tip = computeGadsTip(c, currency);
+      return {
+        c, name: c.name, status: c.status || "—",
+        statusOrder: isActive(c) ? 0 : 1,
+        objective: c.objective || "—",
+        budget: c.lifetimeBudget ?? c.dailyBudget ?? 0,
+        budgetType: c.lifetimeBudget !== undefined ? "lifetime" : c.dailyBudget !== undefined ? "daily" : "none",
+        spend, impressions: c.impressions || 0, clicks: c.clicks || 0, tip, tipSeverity: tip.sevRank,
+      };
+    }),
+    [visible, currency]
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="inline-flex rounded-lg border border-gray-200">
+          {(["all", "active"] as const).map((f) => (
+            <button key={f} onClick={() => setStatusFilter(f)} className={`px-3 py-1.5 text-xs font-semibold transition ${statusFilter === f ? "bg-blue-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}>
+              {f === "all" ? `All campaigns (${campaigns.length})` : `Active only (${campaigns.filter(isActive).length})`}
+            </button>
+          ))}
+        </div>
+        <span className="inline-flex items-center gap-1 text-[11px] text-gray-500">
+          Spend from the Google Ads API for the selected window
+        </span>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3">
+        <div className="bg-white rounded-lg border border-gray-200 p-4">
+          <div className="text-[11px] text-gray-500">Spend</div>
+          <div className="text-xl font-bold text-gray-900 mt-0.5">{cur(totals.spend)}</div>
+          <div className="text-[10px] text-gray-400 mt-0.5">Real, for the selected window</div>
+        </div>
+      </div>
+
+      {(budgetSetting.daily > 0 || budgetSetting.lifetime > 0) && (
+        <div className="bg-gray-50 border border-gray-200 rounded-lg px-4 py-2.5 text-xs text-gray-600">
+          <span className="font-semibold text-gray-700">Current budget setting</span> (live config):{" "}
+          {budgetSetting.daily > 0 && <span className="font-semibold text-gray-900">{cur(budgetSetting.daily)}/day</span>}
+          {budgetSetting.daily > 0 && budgetSetting.lifetime > 0 && " · "}
+          {budgetSetting.lifetime > 0 && <span className="font-semibold text-gray-900">{cur(budgetSetting.lifetime)} lifetime</span>}
+          <span className="text-gray-400"> · across active campaigns.</span>
+        </div>
+      )}
+
+      <SpendTable
+        rows={rows}
+        currency={currency}
+        totalSpend={totals.spend}
+        totalImpressions={totals.impressions}
+        totalClicks={totals.clicks}
+        totalCount={visible.length}
+        isDemo={false}
+        platform="google_ads"
+        subtitle="Real per-campaign delivery from the Google Ads API for the selected window. Expand a row to drill into ad groups."
+        renderDrill={(c) => <GoogleAdsCampaignDrill campaign={c} currency={currency} />}
+      />
+
+      <p className="text-[11px] text-gray-400 leading-relaxed px-1">
+        Every figure is real data from the Google Ads API for the selected window.
+      </p>
+    </div>
+  );
+}
+
+function GoogleAdsCampaignDrill({ campaign, currency }: { campaign: CampaignData; currency: string }) {
+  const adGroups = campaign.adSets ?? [];
+  if (adGroups.length === 0) {
+    return <div className="px-4 py-3 text-xs text-gray-500">No ad groups returned for this campaign in the selected window.</div>;
+  }
+  return (
+    <div className="px-4 py-3">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="text-gray-500 text-left">
+            <th className="py-1.5 font-semibold">Ad Group</th>
+            <th className="py-1.5 font-semibold">Status</th>
+            <th className="py-1.5 font-semibold text-right">Spend</th>
+            <th className="py-1.5 font-semibold text-right">Impr.</th>
+            <th className="py-1.5 font-semibold text-right">Clicks</th>
+          </tr>
+        </thead>
+        <tbody>
+          {adGroups.map((ag) => (
+            <tr key={ag.id} className="border-t border-gray-100">
+              <td className="py-1.5 text-gray-900">{ag.name}</td>
+              <td className="py-1.5 text-gray-600">{ag.status || "—"}</td>
+              <td className="py-1.5 text-right font-mono">{formatMoney(ag.spend || 0, currency, 0)}</td>
+              <td className="py-1.5 text-right font-mono">{(ag.impressions || 0).toLocaleString("en-IN")}</td>
+              <td className="py-1.5 text-right font-mono">{(ag.clicks || 0).toLocaleString("en-IN")}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Main export — renders per-platform sections
 // ─────────────────────────────────────────────────────────────────────────────
 export default function BudgetAllocationAudit({ campaigns, dateRange, customStart, customEnd, platform = "meta" }: AuditProps) {
   const metaCampaigns = campaigns.filter((c) => c.platform === "meta");
   const dv360Campaigns = campaigns.filter((c) => c.platform === "dv360");
+  const gadsCampaigns = campaigns.filter((c) => c.platform === "google_ads");
   const metaCurrency = currencyFor(campaigns, "meta");
   const dv360Currency = currencyFor(campaigns, "dv360");
+  const gadsCurrency = currencyFor(campaigns, "google_ads");
 
   if (campaigns.length === 0) {
     return (
@@ -2081,12 +2237,14 @@ export default function BudgetAllocationAudit({ campaigns, dateRange, customStar
 
   const showMeta = (platform === "meta" || platform === "both") && metaCampaigns.length > 0;
   const showDV360 = (platform === "dv360" || platform === "both") && dv360Campaigns.length > 0;
+  const showGads = (platform === "google_ads" || platform === "both") && gadsCampaigns.length > 0;
+  const multi = Number(showMeta) + Number(showDV360) + Number(showGads) > 1;
 
   return (
     <div className="space-y-8">
       {showMeta && (
         <section>
-          {showDV360 && (
+          {multi && (
             <div className="flex items-center gap-2 mb-4">
               <div className="w-1 h-6 bg-blue-600 rounded-full" />
               <h2 className="text-base font-bold text-gray-900">Meta — Budget Allocation</h2>
@@ -2096,23 +2254,31 @@ export default function BudgetAllocationAudit({ campaigns, dateRange, customStar
         </section>
       )}
 
-      {showMeta && showDV360 && <hr className="border-gray-200" />}
+      {showMeta && (showDV360 || showGads) && <hr className="border-gray-200" />}
 
       {showDV360 && (
         <section>
-          {showMeta && (
-            <div className="flex items-center gap-2 mb-4">
-              <div className="w-1 h-6 bg-emerald-600 rounded-full" />
-              <h2 className="text-base font-bold text-gray-900">DV360 — Budget Allocation</h2>
-            </div>
-          )}
-          {!showMeta && platform === "dv360" && (
+          {multi && (
             <div className="flex items-center gap-2 mb-4">
               <div className="w-1 h-6 bg-emerald-600 rounded-full" />
               <h2 className="text-base font-bold text-gray-900">DV360 — Budget Allocation</h2>
             </div>
           )}
           <DV360BudgetSection campaigns={dv360Campaigns} currency={dv360Currency} dateRange={dateRange} customStart={customStart} customEnd={customEnd} />
+        </section>
+      )}
+
+      {showDV360 && showGads && <hr className="border-gray-200" />}
+
+      {showGads && (
+        <section>
+          {multi && (
+            <div className="flex items-center gap-2 mb-4">
+              <div className="w-1 h-6 bg-green-600 rounded-full" />
+              <h2 className="text-base font-bold text-gray-900">Google Ads — Budget Allocation</h2>
+            </div>
+          )}
+          <GoogleAdsBudgetSection campaigns={gadsCampaigns} currency={gadsCurrency} />
         </section>
       )}
     </div>

@@ -26,7 +26,7 @@ import { useAuthStore } from "@/store/auth";
 import { useCampaigns } from "@/hooks/useCampaigns";
 import { useDV360Creatives } from "@/hooks/useDV360Creatives";
 import { useDV360Breakdown } from "@/hooks/useDV360Breakdown";
-import { formatMoney } from "@/lib/currency";
+import { formatMoney, currencyFor } from "@/lib/currency";
 import { rangeToDates } from "@/lib/date-range";
 import type { DateRange } from "@/components/shared/DateRangePicker";
 import type { AdInsightRow } from "@/pages/api/reporting/ad-insights/meta";
@@ -63,7 +63,7 @@ function CreativeColPicker<T extends string>({ cols, setCols, defaultIds, colOpe
 }
 
 interface Props {
-  platform: "meta" | "dv360" | "both";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
   dateRange: DateRange;
   customStart?: string;
   customEnd?: string;
@@ -133,7 +133,7 @@ function detectFormat(row: AdInsightRow): CFormat {
 // ─── Sub-types ────────────────────────────────────────────────────────────────
 
 interface EnrichedAd {
-  id: string; name: string; format: CFormat; language: string; platform: "meta" | "dv360";
+  id: string; name: string; format: CFormat; language: string; platform: "meta" | "dv360" | "google_ads";
   spend: number; impressions: number; clicks: number; conversions: number; conversionValue: number;
   ctr: number; cpm: number; cpc: number; roas: number; cpa: number; cvr: number; aov: number;
   // Conversions/revenue aren't available per-creative for DV360 (Bid Manager
@@ -674,7 +674,7 @@ function TopCreativesTable({ ads, currency }: { ads: EnrichedAd[]; currency: str
 // ─── Shared enrichment / aggregation helpers ─────────────────────────────────
 
 /** Turn raw ad-insight rows into enriched ads with format, language, derived KPIs. */
-function enrichAds(raw: AdInsightRow[], platform: "meta" | "dv360"): EnrichedAd[] {
+function enrichAds(raw: AdInsightRow[], platform: "meta" | "dv360" | "google_ads"): EnrichedAd[] {
   // Conversions/revenue are only real for Meta here; DV360 line items don't
   // carry them at creative grain, so those KPIs are marked unavailable.
   const convAvailable = platform === "meta";
@@ -769,7 +769,8 @@ export default function CreativeReport({ platform, dateRange, customStart, custo
   const { metaAccessToken, metaBusinessId, demoMode } = useAuthStore();
   // Both-platform: pull the merged campaign list. DV360-only: still pull DV360
   // campaigns so we can synthesize ad-level rows from line items below.
-  const { metaCurrency, dv360Currency } = useCampaigns(platform, dateRange, customStart, customEnd);
+  const { campaigns, metaCurrency, dv360Currency } = useCampaigns(platform, dateRange, customStart, customEnd);
+  const gadsCurrency = currencyFor(campaigns, "google_ads");
   const { startDate, endDate } = rangeToDates(dateRange, customStart, customEnd);
 
   const [rawAds, setRawAds] = useState<AdInsightRow[]>([]);
@@ -777,7 +778,7 @@ export default function CreativeReport({ platform, dateRange, customStart, custo
 
   // Meta ad-level fetch — only when Meta is in scope.
   useEffect(() => {
-    if (platform === "dv360") { setRawAds([]); return; }
+    if (platform === "dv360" || platform === "google_ads") { setRawAds([]); return; }
     const token = demoMode ? "demo-meta-token" : metaAccessToken;
     const biz   = demoMode ? "demo-business-123" : metaBusinessId;
     if (!token || !biz) { setRawAds([]); return; }
@@ -817,8 +818,30 @@ export default function CreativeReport({ platform, dateRange, customStart, custo
     }));
   }, [dv360CreativeRows, platform]);
 
-  const showMeta = platform !== "dv360";
+  const showMeta = platform === "meta" || platform === "both";
   const showDv   = platform === "dv360" || platform === "both";
+  const showGads = platform === "google_ads" || platform === "both";
+
+  // Google Ads ad-level rows synthesized from the campaign → ad group → ad tree
+  // already returned by useCampaigns (ad.name carries the RSA headlines joined).
+  const gadsAds: AdInsightRow[] = useMemo(() => {
+    if (!showGads) return [];
+    const out: AdInsightRow[] = [];
+    for (const c of campaigns.filter(c => c.platform === "google_ads")) {
+      for (const ag of c.adSets ?? []) {
+        for (const ad of ag.ads ?? []) {
+          out.push({
+            id: ad.id, name: ad.name,
+            spend: ad.spend ?? 0, impressions: ad.impressions ?? 0, clicks: ad.clicks ?? 0,
+            conversions: ad.conversions ?? 0, conversionValue: 0, reach: 0, videoViews: 0,
+            creativeType: ad.lineItemType || "",
+          });
+        }
+      }
+    }
+    return out;
+  }, [campaigns, showGads]);
+  const gadsEnriched: EnrichedAd[] = useMemo(() => enrichAds(gadsAds, "google_ads"), [gadsAds]);
 
   // DV360 delivery-by-language (FILTER_SITE_LANGUAGE) — real BM breakdown.
   const { rows: dvLangRows, loading: dvLangLoading, pending: dvLangPending } =
@@ -901,6 +924,17 @@ export default function CreativeReport({ platform, dateRange, customStart, custo
           </div>
           <CreativeSections ads={dv360Enriched} currency={dv360Currency} loading={dvCreativesLoading || dvCreativesPending} loadingHint />
           <LanguageDeliveryPanel rows={dvLangRows} loading={dvLangLoading || dvLangPending} currency={dv360Currency} />
+        </div>
+      )}
+
+      {/* ── Google Ads section ── */}
+      {showGads && (
+        <div className="space-y-5">
+          {platform === "both" && <SectionHeader label="Google Ads" sub="Google Ads" />}
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-xs text-yellow-800">
+            Ad-level delivery from the Google Ads API (impressions, clicks, CTR, spend, conversions). Format is inferred from each ad&apos;s type. Reach/frequency aren&apos;t available per-creative via the API and show &quot;—&quot;.
+          </div>
+          <CreativeSections ads={gadsEnriched} currency={gadsCurrency} />
         </div>
       )}
 

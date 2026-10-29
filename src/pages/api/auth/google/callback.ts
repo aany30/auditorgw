@@ -107,6 +107,57 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       params.set("dv360_adv_names", advertiserNames.join("|"));
     }
 
+    // Google Ads — list accessible customer accounts (non-fatal).
+    const developerToken = process.env.GOOGLE_ADS_DEVELOPER_TOKEN;
+    if (developerToken) {
+      try {
+        const gadsRes = await fetch(
+          "https://googleads.googleapis.com/v26/customers:listAccessibleCustomers",
+          {
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              "developer-token": developerToken,
+            },
+          },
+        );
+        if (gadsRes.ok) {
+          const gadsData = await gadsRes.json();
+          const resourceNames: string[] = gadsData.resourceNames || [];
+          const customerIds = resourceNames.map((r: string) =>
+            r.replace("customers/", ""),
+          );
+          if (customerIds.length > 0) {
+            const names: string[] = [];
+            for (const cid of customerIds) {
+              try {
+                const infoRes = await fetch(
+                  `https://googleads.googleapis.com/v26/customers/${cid}`,
+                  {
+                    headers: {
+                      Authorization: `Bearer ${accessToken}`,
+                      "developer-token": developerToken,
+                    },
+                  },
+                );
+                if (infoRes.ok) {
+                  const info = await infoRes.json();
+                  names.push(info.descriptiveName || cid);
+                } else {
+                  names.push(cid);
+                }
+              } catch {
+                names.push(cid);
+              }
+            }
+            params.set("gads_customer_ids", customerIds.join(","));
+            params.set("gads_customer_names", names.join("|"));
+          }
+        }
+      } catch {
+        // Non-fatal — user can enter customer ID manually
+      }
+    }
+
     res.redirect(`/app/dashboard?${params.toString()}`);
   } catch (e) {
     console.error("Google OAuth callback error:", e);

@@ -11,7 +11,7 @@ import type { DateRange } from "@/components/shared/DateRangePicker";
 import AIExecutiveSummary from "@/components/shared/AIExecutiveSummary";
 
 interface Props {
-  platform: "meta" | "dv360" | "both";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
   dateRange: DateRange;
   customStart?: string;
   customEnd?: string;

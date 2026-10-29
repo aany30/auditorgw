@@ -1,13 +1,14 @@
-import { useMemo } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { useMetaBreakdown } from "@/hooks/useMetaBreakdown";
 import { useDV360Breakdown } from "@/hooks/useDV360Breakdown";
+import { useAuthStore } from "@/store/auth";
 import type { DateRange } from "@/components/shared/DateRangePicker";
 import TabSummaryFooter from "@/components/shared/TabSummaryFooter";
 import LoadingState from "@/components/shared/LoadingState";
 
 interface Props {
-  platform: "meta" | "dv360" | "both";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
   dateRange: DateRange;
   customStart?: string;
   customEnd?: string;
@@ -19,6 +20,13 @@ interface DailyRow {
   clicks: number;
   conversions: number;
   conversionValue: number;
+}
+
+interface GoogleAdsConversionAction {
+  name: string;
+  type: string;
+  status: string;
+  [key: string]: unknown;
 }
 
 /** Combined overview when both platforms are active: 3 KPI cards + dual-line chart. */
@@ -179,15 +187,108 @@ function ConversionSection({ header, sub, rows, loading, showRevenue, revenueNot
   );
 }
 
+/** Google Ads conversion actions table. */
+function GoogleAdsConversionActionsSection({ actions, loading }: { actions: GoogleAdsConversionAction[]; loading: boolean }) {
+  const statusColor = (s: string) => {
+    const lower = s.toLowerCase();
+    if (lower === "enabled") return "text-green-700 bg-green-50";
+    if (lower === "removed" || lower === "hidden") return "text-red-700 bg-red-50";
+    return "text-gray-700 bg-gray-50";
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3 pt-2 pb-1 border-b border-gray-200">
+        <h2 className="text-xl font-bold text-gray-900">Google Ads</h2>
+        <span className="text-xs text-gray-400 font-medium">Conversion Actions</span>
+      </div>
+
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        {loading ? (
+          <div className="h-40 flex items-center justify-center text-sm text-gray-400">Loading conversion actions…</div>
+        ) : actions.length === 0 ? (
+          <div className="h-40 flex items-center justify-center text-sm text-gray-400">No conversion actions found.</div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-gray-50 border-b border-gray-200">
+                <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Name</th>
+                <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Type</th>
+                <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {actions.map((a, i) => (
+                <tr key={i} className="hover:bg-gray-50 transition-colors">
+                  <td className="px-5 py-3 font-medium text-gray-900">{a.name}</td>
+                  <td className="px-5 py-3 text-gray-600">{a.type}</td>
+                  <td className="px-5 py-3">
+                    <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${statusColor(a.status)}`}>
+                      {a.status}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function ConversionMonitoringTab({ platform, dateRange, customStart, customEnd }: Props) {
-  const useMeta = platform !== "dv360";
+  const useMeta = platform !== "dv360" && platform !== "google_ads";
   const useDv = platform === "dv360" || platform === "both";
+  const useGoogleAds = platform === "google_ads" || platform === "both";
   const { rows: metaRows, loading: metaLoading } = useMetaBreakdown("daily", dateRange, customStart, customEnd, useMeta);
   const { rows: dvRows, loading: dvLoading } = useDV360Breakdown("daily", dateRange, customStart, customEnd, useDv);
 
+  const {
+    googleAdsCustomerId,
+    googleAdsLoginCustomerId,
+    dv360ClientId,
+    dv360ClientSecret,
+    dv360RefreshToken,
+  } = useAuthStore();
+
+  const [gaConversionActions, setGaConversionActions] = useState<GoogleAdsConversionAction[]>([]);
+  const [gaLoading, setGaLoading] = useState(false);
+
+  useEffect(() => {
+    if (!useGoogleAds || !googleAdsCustomerId) {
+      setGaConversionActions([]);
+      return;
+    }
+    let cancelled = false;
+    setGaLoading(true);
+    fetch("/api/google-ads/conversions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        clientId: dv360ClientId,
+        clientSecret: dv360ClientSecret,
+        refreshToken: dv360RefreshToken,
+        customerId: googleAdsCustomerId,
+        loginCustomerId: googleAdsLoginCustomerId,
+      }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (!cancelled) setGaConversionActions(data.conversionActions ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setGaConversionActions([]);
+      })
+      .finally(() => {
+        if (!cancelled) setGaLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [useGoogleAds, googleAdsCustomerId, googleAdsLoginCustomerId, dv360ClientId, dv360ClientSecret, dv360RefreshToken]);
+
   const metaData = metaRows as DailyRow[];
   const dvData = dvRows as DailyRow[];
-  const loading = (useMeta && metaLoading) || (useDv && dvLoading);
+  const loading = (useMeta && metaLoading) || (useDv && dvLoading) || (useGoogleAds && gaLoading);
 
   if (loading && metaData.length === 0 && dvData.length === 0) return <LoadingState message="Loading conversion data…" />;
 
@@ -233,6 +334,10 @@ export default function ConversionMonitoringTab({ platform, dateRange, customSta
         />
       )}
 
+      {useGoogleAds && (
+        <GoogleAdsConversionActionsSection actions={gaConversionActions} loading={gaLoading} />
+      )}
+
       <TabSummaryFooter
         lines={[
           ...(useMeta ? [
@@ -242,6 +347,9 @@ export default function ConversionMonitoringTab({ platform, dateRange, customSta
             dvHasRevenue
               ? `${platform === "both" ? "DV360: " : ""}${dvConv.toLocaleString("en-IN")} conversions, ${inr(dvSpend)} spend — ROAS ${dvSpend > 0 ? (sum(dvData, "conversionValue") / dvSpend).toFixed(2) : "—"}×.`
               : `${platform === "both" ? "DV360: " : ""}${dvConv.toLocaleString("en-IN")} conversions, ${inr(dvSpend)} spend, CPA ${dvConv > 0 ? inr(dvSpend / dvConv) : "—"} — conversion value/ROAS not available via API.`,
+          ] : []),
+          ...(useGoogleAds ? [
+            `${platform === "both" ? "Google Ads: " : ""}${gaConversionActions.length} conversion action${gaConversionActions.length !== 1 ? "s" : ""} configured.`,
           ] : []),
         ]}
         tabName="Conversion Monitoring"

@@ -30,7 +30,7 @@ import { useAdSetInsights } from "@/hooks/useAdSetInsights";
 import { useMetaDailyVsPrev, type DailyPoint } from "@/hooks/useMetaDailyVsPrev";
 import { usePersistentColumns, usePersistentValue, usePersistentJSON } from "@/hooks/useColumnPrefs";
 import CampaignMultiPicker from "@/components/shared/CampaignMultiPicker";
-import { formatMoney } from "@/lib/currency";
+import { formatMoney, currencyFor } from "@/lib/currency";
 import { rangeToDates } from "@/lib/date-range";
 import type { DateRange } from "@/components/shared/DateRangePicker";
 import type { CampaignData } from "@/types";
@@ -39,7 +39,7 @@ import type { AdInsightRow } from "@/pages/api/reporting/ad-insights/meta";
 import { ChevronRight as ChevronRightIcon, MoreHorizontal, GitCompare, Layers as LayersIcon } from "lucide-react";
 
 interface Props {
-  platform: "meta" | "dv360" | "both";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
   dateRange: DateRange;
   customStart?: string;
   customEnd?: string;
@@ -697,7 +697,7 @@ function usePrevAdSets(platform: "meta" | "both", dateRange: DateRange, customSt
   const prevStart = new Date(new Date(prevEnd).getTime() - (days - 1) * 86_400_000).toISOString().slice(0, 10);
 
   useEffect(() => {
-    if (platform === "dv360" as string) return;
+    if (platform === "dv360" as string || platform === "google_ads" as string) return;
     const token = demoMode ? "demo-meta-token" : metaAccessToken;
     const biz   = demoMode ? "demo-business-123" : metaBusinessId;
     if (!token || !biz) return;
@@ -1564,7 +1564,7 @@ function useAdInsightsFetch(platform: "meta" | "both", dateRange: DateRange, cus
   const { startDate, endDate } = rangeToDates(dateRange, customStart, customEnd);
 
   useEffect(() => {
-    if (platform === "dv360" as string) return;
+    if (platform === "dv360" as string || platform === "google_ads" as string) return;
     const token = demoMode ? "demo-meta-token" : metaAccessToken;
     const biz   = demoMode ? "demo-business-123" : metaBusinessId;
     if (!token || !biz) return;
@@ -1585,7 +1585,7 @@ function useAdInsightsFetch(platform: "meta" | "both", dateRange: DateRange, cus
 // ─── Main component ────────────────────────────────────────────────────────
 
 export default function KeyMetricAnalysisReport({ platform, dateRange, customStart, customEnd }: Props) {
-  const effective: "meta" | "both" = platform === "dv360" ? "meta" : platform;
+  const effective: "meta" | "both" = (platform === "dv360" || platform === "google_ads") ? "meta" : (platform === "meta" ? "meta" : "both");
 
   const { campaigns: campaignsCur, loading: loadingCamp, platformErrors, startDate, endDate } = useCampaigns(platform, dateRange, customStart, customEnd);
   const { adsets: adsetsCur, loading: loadingAdsets, currency } = useAdSetInsights(platform, dateRange, customStart, customEnd);
@@ -1636,6 +1636,33 @@ export default function KeyMetricAnalysisReport({ platform, dateRange, customSta
   const dv360PerfRows     = useMemo(() => bucketDaily(byPlatform.dv360.current,  granularity, [], false), [byPlatform.dv360.current, granularity]);
   const dv360PrevPerfRows = useMemo(() => bucketDaily(byPlatform.dv360.previous, granularity, [], false), [byPlatform.dv360.previous, granularity]);
 
+  // ── Google Ads filter + data ─────────────────────────────────────────
+  const gadsCurrency = currencyFor(campaignsCur, "google_ads");
+  const [gadsCampaignFilter, setGadsCampaignFilter] = useState<string[]>([]);
+  const gadsCampaignsCur = useMemo(() => campaignsCur.filter(c => c.platform === "google_ads"), [campaignsCur]);
+  const filteredGadsCampaigns = useMemo(
+    () => gadsCampaignFilter.length === 0 ? gadsCampaignsCur : gadsCampaignsCur.filter(c => gadsCampaignFilter.includes(c.id)),
+    [gadsCampaignsCur, gadsCampaignFilter]
+  );
+  const gadsRowsCur    = useMemo(() => buildGroupRows([], filteredGadsCampaigns, groupBy), [filteredGadsCampaigns, groupBy]);
+  const gadsTotalsCur  = useMemo(() => totalsOf(gadsRowsCur), [gadsRowsCur]);
+  const gadsTotalsPrev = useMemo(() => totalsFromDailyPoints(byPlatform.google_ads.previous), [byPlatform.google_ads.previous]);
+  // Google Ads has no de-duplicated reach via the API — mark NA (renders "—"), never a proxy.
+  const gadsPerfRows     = useMemo(() => bucketDaily(byPlatform.google_ads.current,  granularity, [], false), [byPlatform.google_ads.current, granularity]);
+  const gadsPrevPerfRows = useMemo(() => bucketDaily(byPlatform.google_ads.previous, granularity, [], false), [byPlatform.google_ads.previous, granularity]);
+  const [gadsHighlightMetrics, setGadsHighlightMetrics] = usePersistentColumns<MetricId>(
+    `key-metrics-gads-highlights:${objectiveIds[0]}`, ["impressions", "clicks", "cpm", "spend"]
+  );
+  const [gadsTemplates, setGadsTemplates] = usePersistentJSON<GraphTemplate[]>(
+    `key-metrics-gads-templates:${objectiveIds[0]}`, primaryObjective.templates
+  );
+  function setGadsSlot(idx: number, t: GraphTemplate) {
+    setGadsTemplates(prev => prev.map((cur, i) => i === idx ? t : cur));
+  }
+  const [gadsPerfCols, setGadsPerfCols] = usePersistentColumns<PerfCol>(
+    `key-metrics-gads-perfcols:${objectiveIds[0]}`, ["impressions", "cpm", "spend", "clicks", "ctr"]
+  );
+
   // ── Highlight metrics (persisted per objective, per platform) ────────
   const [highlightMetrics, setHighlightMetrics] = usePersistentColumns<MetricId>(
     `key-metrics-highlights:${objectiveIds[0]}`, primaryObjective.highlights
@@ -1679,6 +1706,8 @@ export default function KeyMetricAnalysisReport({ platform, dateRange, customSta
 
   const showMeta  = platform === "meta"  || platform === "both";
   const showDV360 = platform === "dv360" || platform === "both";
+  const showGads  = platform === "google_ads" || platform === "both";
+  const gadsLoading = loadingCamp || loadingDaily;
 
   return (
     <div className="space-y-5 section-enter">
@@ -1887,6 +1916,71 @@ export default function KeyMetricAnalysisReport({ platform, dateRange, customSta
               {platformErrors.dv360 && (
                 <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
                   <span className="font-semibold">DV360 data unavailable:</span> {platformErrors.dv360}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ══ GOOGLE ADS SECTION ════════════════════════════════════════════════ */}
+      {showGads && (
+        <div className="space-y-5">
+          <div className={`flex items-center gap-3 ${platform === "both" ? "pt-4 border-t border-gray-200" : "pt-2"}`}>
+            <div className="w-1 h-8 rounded-full bg-yellow-500" />
+            <h2 className="text-xl font-bold text-gray-900">Google Ads</h2>
+            <span className="text-xs bg-yellow-50 border border-yellow-200 text-yellow-700 px-2.5 py-0.5 rounded-full font-semibold">Google Ads</span>
+            {platform === "google_ads" && gadsCampaignsCur.length === 0 && !gadsLoading && (
+              <span className="text-xs text-gray-400">No campaigns in this date range</span>
+            )}
+          </div>
+
+          {gadsLoading ? <SectionSkeleton label="Google Ads" /> : (
+            <>
+              <CampaignMultiPicker
+                options={gadsCampaignsCur.map(c => ({ id: c.id, name: c.name }))}
+                values={gadsCampaignFilter}
+                onChange={setGadsCampaignFilter}
+              />
+
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Highlights</h3>
+                  <KpiSlotPicker
+                    metrics={gadsHighlightMetrics}
+                    onChange={(idx, next) => setGadsHighlightMetrics(prev => prev.map((x, j) => j === idx ? next : x))}
+                  />
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {gadsHighlightMetrics.map((m, i) => (
+                    <div key={`gads-${m}-${i}`} className={`animate-fade-in-up stagger-${Math.min(i + 1, 9)}`}>
+                      <KpiCard metric={m} totals={gadsTotalsCur} prevTotals={gadsTotalsPrev} currency={gadsCurrency} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <h2 className="text-lg font-bold text-gray-900 mb-3">Performance Reports</h2>
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                  {gadsTemplates.map((t, idx) => (
+                    <GraphCard key={idx} template={t} onChangeTemplate={(next) => setGadsSlot(idx, next)}
+                      rows={gadsRowsCur} groupBy={groupBy} currency={gadsCurrency} loading={false} />
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <h2 className="text-lg font-bold text-gray-900">Performance</h2>
+                <PerformanceTable rows={gadsPerfRows} prevRows={gadsPrevPerfRows} granularity={granularity}
+                  currency={gadsCurrency} columns={gadsPerfCols} onColumnsChange={setGadsPerfCols} />
+              </div>
+
+              <p className="text-[11px] text-gray-400 px-1">Reach and frequency aren&apos;t available via the Google Ads API.</p>
+
+              {platformErrors.google_ads && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
+                  <span className="font-semibold">Google Ads data unavailable:</span> {platformErrors.google_ads}
                 </div>
               )}
             </>

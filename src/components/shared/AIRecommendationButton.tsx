@@ -18,7 +18,7 @@ interface FixStep {
 
 interface FixApiResponse {
   title: string;
-  platform: "meta" | "dv360" | "both";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
   steps: FixStep[];
   source: "ai" | "fallback";
   creditsUsedUsd?: number;
@@ -28,7 +28,7 @@ export interface AIRecommendationButtonProps {
   metric: string;
   value: string | number;
   status: "bad" | "warn" | "critical" | "moderate";
-  platform?: "meta" | "dv360" | "both";
+  platform?: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
   threshold?: string;
   auditContext: {
     module: string;

@@ -8,7 +8,7 @@ import type { ApplyContext } from "@/lib/apply/apply-context";
 export interface FixContext {
   /** Stable metric ID (e.g. "budget_overspending", "emq_low"). */
   metric: string;
-  platform?: "meta" | "dv360" | "both";
+  platform?: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
   threshold?: string;
   /** Per-campaign data when the failure is per-campaign. */
   campaignContext?: CampaignData;

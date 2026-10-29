@@ -17,7 +17,7 @@ import { useSort } from "@/hooks/useSort";
 import type { DateRange } from "@/components/shared/DateRangePicker";
 
 interface Props {
-  platform: "meta" | "dv360" | "both";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
   dateRange: DateRange;
   customStart?: string;
   customEnd?: string;

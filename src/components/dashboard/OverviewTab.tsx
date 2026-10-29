@@ -16,7 +16,7 @@ import SortTh from "@/components/shared/SortTh";
 import { useSort } from "@/hooks/useSort";
 
 interface OverviewTabProps {
-  platform: "meta" | "dv360" | "both";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
   dateRange: DateRange;
   customStart?: string;
   customEnd?: string;
@@ -174,7 +174,7 @@ export default function OverviewTab({ platform, dateRange, customStart, customEn
                             metric={r.issue}
                             value={r.impact}
                             status={r.priority === "Critical" ? "critical" : r.priority === "High" ? "critical" : "warn"}
-                            platform={r.platform?.toLowerCase() as "meta" | "dv360"}
+                            platform={r.platform?.toLowerCase() as "meta" | "dv360" | "google_ads"}
                             auditContext={{ module: "Overview", siblingMetrics: { priority: r.priority, confidence: r.confidence, impact: r.impact } }}
                             compact
                           />

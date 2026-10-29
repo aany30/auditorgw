@@ -26,7 +26,7 @@ import ApplyActionButton from "@/components/apply/ApplyActionButton";
 import type { SetFrequencyCapAction } from "@/lib/apply/types";
 
 interface Props {
-  platform: "meta" | "dv360" | "both";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
   dateRange: DateRange;
   customStart?: string;
   customEnd?: string;
@@ -742,10 +742,30 @@ function PlatformDivider({ label, sub }: { label: string; sub: string }) {
 export default function AudienceSaturationTab({ platform, dateRange, customStart, customEnd }: Props) {
   const [active, setActive] = useState("saturation");
   const { adsets, loading, error, currency } = useAdSetInsights(platform, dateRange, customStart, customEnd);
-  const showMeta = platform !== "dv360";
+  const showMeta = platform === "meta" || platform === "both";
   const showDv360 = platform === "dv360" || platform === "both";
   const { rows: dvRows, loading: dvLoading, pending: dvPending, reachAvailable, revenueAvailable } =
     useDV360Saturation(dateRange, customStart, customEnd, showDv360);
+
+  // Google Ads exposes no de-duplicated reach or frequency via the API, so the
+  // fatigue/saturation model (built on frequency + reach %) cannot be computed.
+  // Rendered after all hooks to respect the rules of hooks.
+  if (platform === "google_ads") {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-3">
+          <Zap className="w-8 h-8 text-blue-600" />
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900">Saturation &amp; Expansion</h1>
+            <p className="text-gray-600 mt-1">Frequency, reach%, and fatigue scoring per ad set.</p>
+          </div>
+        </div>
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-800">
+          Reach and frequency aren&apos;t available via the Google Ads API, so saturation and fatigue scoring can&apos;t be computed for Google Ads. Use Meta or DV360 for this audit.
+        </div>
+      </div>
+    );
+  }
 
   if (showMeta && loading && adsets.length === 0) return <LoadingState message="Loading saturation data…" />;
 

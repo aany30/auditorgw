@@ -18,6 +18,44 @@ export function resolveMetaCreds(body: Record<string, unknown>): MetaCreds | nul
   return { accessToken, businessId };
 }
 
+interface GoogleAdsCreds {
+  clientId: string;
+  clientSecret: string;
+  refreshToken: string;
+  customerId: string;
+  developerToken: string;
+  loginCustomerId?: string;
+}
+
+export function resolveGoogleAdsCreds(body: Record<string, unknown>): GoogleAdsCreds | null {
+  const clientId = (body.clientId as string) || process.env.DEFAULT_DV360_CLIENT_ID || "";
+  const clientSecret = (body.clientSecret as string) || process.env.DEFAULT_DV360_CLIENT_SECRET || "";
+  const refreshToken = (body.refreshToken as string) || process.env.DEFAULT_DV360_REFRESH_TOKEN || "";
+  const customerId = (body.customerId as string) || process.env.DEFAULT_GOOGLE_ADS_CUSTOMER_ID || "";
+  const developerToken = process.env.GOOGLE_ADS_DEVELOPER_TOKEN || "";
+  const loginCustomerId = (body.loginCustomerId as string) || process.env.DEFAULT_GOOGLE_ADS_LOGIN_CUSTOMER_ID || undefined;
+  if (!clientId || !clientSecret || !refreshToken || !customerId || !developerToken) return null;
+  return { clientId, clientSecret, refreshToken, customerId, developerToken, loginCustomerId };
+}
+
+interface SnapchatCreds {
+  clientId: string;
+  clientSecret: string;
+  refreshToken: string;
+  adAccountId: string;
+  orgId?: string;
+}
+
+export function resolveSnapchatCreds(body: Record<string, unknown>): SnapchatCreds | null {
+  const clientId = (body.clientId as string) || process.env.SNAPCHAT_CLIENT_ID || "";
+  const clientSecret = (body.clientSecret as string) || process.env.SNAPCHAT_CLIENT_SECRET || "";
+  const refreshToken = (body.refreshToken as string) || process.env.SNAPCHAT_REFRESH_TOKEN || "";
+  const adAccountId = (body.adAccountId as string) || process.env.DEFAULT_SNAPCHAT_AD_ACCOUNT_ID || "";
+  const orgId = (body.orgId as string) || process.env.DEFAULT_SNAPCHAT_ORG_ID || undefined;
+  if (!clientId || !clientSecret || !refreshToken || !adAccountId) return null;
+  return { clientId, clientSecret, refreshToken, adAccountId, orgId };
+}
+
 export function resolveDV360Creds(body: Record<string, unknown>): DV360Creds | null {
   const clientId = (body.clientId as string) || process.env.DEFAULT_DV360_CLIENT_ID || "";
   const clientSecret = (body.clientSecret as string) || process.env.DEFAULT_DV360_CLIENT_SECRET || "";

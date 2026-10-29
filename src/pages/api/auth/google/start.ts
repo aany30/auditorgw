@@ -8,6 +8,7 @@
  *   - display-video          — read DV360 entities (campaigns, IOs, LIs, Floodlight)
  *   - doubleclickbidmanager  — run Bid Manager performance reports
  *   - dfatrafficking         — read CM360 Floodlight config and attribution data
+ *   - adwords               — read/manage Google Ads campaigns and reporting
  *
  * Env vars (in .env.local):
  *   GOOGLE_CLIENT_ID=...       (from Google Cloud Console)
@@ -24,6 +25,7 @@ const SCOPES = [
   "https://www.googleapis.com/auth/dfatrafficking",
   "https://www.googleapis.com/auth/youtube.readonly",
   "https://www.googleapis.com/auth/yt-analytics.readonly",
+  "https://www.googleapis.com/auth/adwords",
 ].join(" ");
 
 export default function handler(req: NextApiRequest, res: NextApiResponse) {

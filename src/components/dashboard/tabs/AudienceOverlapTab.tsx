@@ -35,7 +35,7 @@ const MAX_AUDIENCES = 10;
 const SLOT_LABELS = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"];
 
 interface Props {
-  platform: "meta" | "dv360" | "both";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
   dateRange: DateRange;
   customStart?: string;
   customEnd?: string;

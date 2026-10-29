@@ -25,7 +25,7 @@ import { isDemoCredential } from "@/lib/demo-data";
  * and syncs the OTHER platform's fields into memory before we write ours, so
  * the persist flush cannot lose them regardless of hydration timing.
  */
-function rescueOtherPlatformFromStorage(otherPlatform: "meta" | "dv360") {
+function rescueOtherPlatformFromStorage(otherPlatform: "meta" | "dv360" | "google_ads" | "snapchat") {
   if (typeof window === "undefined") return;
   try {
     const raw = window.localStorage.getItem("auth-store");
@@ -46,7 +46,7 @@ function rescueOtherPlatformFromStorage(otherPlatform: "meta" | "dv360") {
           metaCurrency: stored.metaCurrency ?? null,
         });
       }
-    } else {
+    } else if (otherPlatform === "dv360") {
       if (stored.dv360RefreshToken && !current.dv360RefreshToken) {
         useAuthStore.setState({
           dv360ClientId: stored.dv360ClientId ?? null,
@@ -55,6 +55,25 @@ function rescueOtherPlatformFromStorage(otherPlatform: "meta" | "dv360") {
           dv360AdvertiserId: stored.dv360AdvertiserId ?? null,
           dv360PartnerId: stored.dv360PartnerId ?? null,
           dv360Currency: stored.dv360Currency ?? null,
+        });
+      }
+    } else if (otherPlatform === "google_ads") {
+      if (stored.googleAdsCustomerId && !current.googleAdsCustomerId) {
+        useAuthStore.setState({
+          googleAdsCustomerId: stored.googleAdsCustomerId,
+          googleAdsLoginCustomerId: stored.googleAdsLoginCustomerId ?? null,
+          googleAdsCurrency: stored.googleAdsCurrency ?? null,
+        });
+      }
+    } else if (otherPlatform === "snapchat") {
+      if (stored.snapchatRefreshToken && !current.snapchatRefreshToken) {
+        useAuthStore.setState({
+          snapchatClientId: stored.snapchatClientId ?? null,
+          snapchatClientSecret: stored.snapchatClientSecret ?? null,
+          snapchatRefreshToken: stored.snapchatRefreshToken,
+          snapchatAdAccountId: stored.snapchatAdAccountId ?? null,
+          snapchatOrgId: stored.snapchatOrgId ?? null,
+          snapchatCurrency: stored.snapchatCurrency ?? null,
         });
       }
     }
@@ -250,13 +269,29 @@ interface AuthState {
   dv360AdvertiserId: string | null;
   dv360PartnerId: string | null;
 
+  // Google Ads credentials — shares OAuth with DV360 (same refresh token / client ID / secret).
+  // Only the customer ID is Google-Ads-specific.
+  googleAdsCustomerId: string | null;
+  googleAdsLoginCustomerId: string | null;
+
+  // Snapchat Ads credentials — separate OAuth app from Google/Meta.
+  snapchatClientId: string | null;
+  snapchatClientSecret: string | null;
+  snapchatRefreshToken: string | null;
+  snapchatAdAccountId: string | null;
+  snapchatOrgId: string | null;
+
   // Account currencies, cached once detected so a later rate-limited campaign
   // fetch can't lose the correct symbol (Account Structure fetches reliably;
   // reporting tabs fire many concurrent calls and the campaign fetch can 429).
   metaCurrency: string | null;
   dv360Currency: string | null;
+  googleAdsCurrency: string | null;
+  snapchatCurrency: string | null;
   setMetaCurrency: (c: string) => void;
   setDv360Currency: (c: string) => void;
+  setGoogleAdsCurrency: (c: string) => void;
+  setSnapchatCurrency: (c: string) => void;
 
   // Meta quota chip — mirror of the last-seen X-Business-Use-Case-Usage header
   // from Meta, per ad account. Updated by every Meta API response handler
@@ -325,6 +360,16 @@ interface AuthState {
   setCustomDateRange: (range: CustomDateRange) => void;
   clearMetaCredentials: () => void;
   clearDV360Credentials: () => void;
+  setGoogleAdsCredentials: (creds: { customerId: string; loginCustomerId?: string }) => void;
+  clearGoogleAdsCredentials: () => void;
+  setSnapchatCredentials: (creds: {
+    clientId: string;
+    clientSecret: string;
+    refreshToken: string;
+    adAccountId: string;
+    orgId?: string;
+  }) => void;
+  clearSnapchatCredentials: () => void;
   clearAllCredentials: () => void;
   addMetaPixelId: (pixelId: string) => void;
   removeMetaPixelId: (pixelId: string) => void;
@@ -345,6 +390,8 @@ interface AuthState {
   // Utility Methods
   isMetaConnected: () => boolean;
   isDV360Connected: () => boolean;
+  isGoogleAdsConnected: () => boolean;
+  isSnapchatConnected: () => boolean;
   getDateRangeLabel: () => string;
 
   // Demo mode — session-only, NOT persisted to localStorage.
@@ -378,10 +425,21 @@ export const useAuthStore = create<AuthState>()(
       dv360RefreshToken: null,
       dv360AdvertiserId: null,
       dv360PartnerId: null,
+      googleAdsCustomerId: null,
+      googleAdsLoginCustomerId: null,
+      snapchatClientId: null,
+      snapchatClientSecret: null,
+      snapchatRefreshToken: null,
+      snapchatAdAccountId: null,
+      snapchatOrgId: null,
       metaCurrency: null,
       dv360Currency: null,
+      googleAdsCurrency: null,
+      snapchatCurrency: null,
       setMetaCurrency: (c: string) => { if (c && c !== get().metaCurrency) set({ metaCurrency: c }); },
       setDv360Currency: (c: string) => { if (c && c !== get().dv360Currency) set({ dv360Currency: c }); },
+      setGoogleAdsCurrency: (c: string) => { if (c && c !== get().googleAdsCurrency) set({ googleAdsCurrency: c }); },
+      setSnapchatCurrency: (c: string) => { if (c && c !== get().snapchatCurrency) set({ snapchatCurrency: c }); },
       metaQuota: {},
       setMetaQuota: (accountId, snapshot) =>
         set((state) => ({ metaQuota: { ...state.metaQuota, [accountId]: snapshot } })),
@@ -422,16 +480,15 @@ export const useAuthStore = create<AuthState>()(
         }),
 
       setMetaCredentials: (token, businessId, pixelIds) => {
-        // Defensive: re-read the OTHER platform's persisted credentials from
-        // localStorage before writing, so a stale in-memory state (persist
-        // hydration hasn't landed yet) can't blank DV360 through the shallow
-        // merge + persist-write cycle. Cheap: one JSON.parse per connect.
         rescueOtherPlatformFromStorage("dv360");
+        rescueOtherPlatformFromStorage("google_ads");
+        rescueOtherPlatformFromStorage("snapchat");
         set({ metaAccessToken: token, metaBusinessId: businessId, metaPixelIds: pixelIds });
       },
 
       setMetaPixelList: (pixels) => {
         rescueOtherPlatformFromStorage("dv360");
+        rescueOtherPlatformFromStorage("google_ads");
         set({ metaPixelList: pixels, selectedMetaPixelId: pixels[0]?.id || null });
       },
 
@@ -440,6 +497,8 @@ export const useAuthStore = create<AuthState>()(
 
       setDV360Credentials: ({ clientId, clientSecret, refreshToken, advertiserId, partnerId }) => {
         rescueOtherPlatformFromStorage("meta");
+        rescueOtherPlatformFromStorage("google_ads");
+        rescueOtherPlatformFromStorage("snapchat");
         set({
           dv360ClientId: clientId,
           dv360ClientSecret: clientSecret,
@@ -448,6 +507,46 @@ export const useAuthStore = create<AuthState>()(
           dv360PartnerId: partnerId || null,
         });
       },
+
+      setGoogleAdsCredentials: ({ customerId, loginCustomerId }) => {
+        rescueOtherPlatformFromStorage("meta");
+        rescueOtherPlatformFromStorage("dv360");
+        rescueOtherPlatformFromStorage("snapchat");
+        set({
+          googleAdsCustomerId: customerId,
+          googleAdsLoginCustomerId: loginCustomerId || null,
+        });
+      },
+
+      clearGoogleAdsCredentials: () =>
+        set({
+          googleAdsCustomerId: null,
+          googleAdsLoginCustomerId: null,
+          googleAdsCurrency: null,
+        }),
+
+      setSnapchatCredentials: ({ clientId, clientSecret, refreshToken, adAccountId, orgId }) => {
+        rescueOtherPlatformFromStorage("meta");
+        rescueOtherPlatformFromStorage("dv360");
+        rescueOtherPlatformFromStorage("google_ads");
+        set({
+          snapchatClientId: clientId,
+          snapchatClientSecret: clientSecret,
+          snapchatRefreshToken: refreshToken,
+          snapchatAdAccountId: adAccountId,
+          snapchatOrgId: orgId || null,
+        });
+      },
+
+      clearSnapchatCredentials: () =>
+        set({
+          snapchatClientId: null,
+          snapchatClientSecret: null,
+          snapchatRefreshToken: null,
+          snapchatAdAccountId: null,
+          snapchatOrgId: null,
+          snapchatCurrency: null,
+        }),
 
       setDateRange: (range) => set({ dateRange: range }),
       setCustomDateRange: (range) => set({ customDateRange: range }),
@@ -514,6 +613,15 @@ export const useAuthStore = create<AuthState>()(
           dv360AdvertiserId: null,
           dv360PartnerId: null,
           dv360Currency: null,
+          googleAdsCustomerId: null,
+          googleAdsLoginCustomerId: null,
+          googleAdsCurrency: null,
+          snapchatClientId: null,
+          snapchatClientSecret: null,
+          snapchatRefreshToken: null,
+          snapchatAdAccountId: null,
+          snapchatOrgId: null,
+          snapchatCurrency: null,
           // NOTE: totalAiCreditsUsd is intentionally NOT reset here. Each email's
           // usage lives in aiCreditsByEmail and is restored on re-login, so a
           // user's credit total is never lost by logging out.
@@ -540,6 +648,26 @@ export const useAuthStore = create<AuthState>()(
         if (!state.dv360ClientId || !state.dv360ClientSecret || !state.dv360RefreshToken || !state.dv360AdvertiserId) return false;
         if (isDemoCredential(state.dv360RefreshToken)) return false;
         return true;
+      },
+      isGoogleAdsConnected: () => {
+        const s = get();
+        return !!(
+          s.dv360RefreshToken &&
+          s.dv360ClientId &&
+          s.dv360ClientSecret &&
+          s.googleAdsCustomerId &&
+          !isDemoCredential(s.dv360RefreshToken)
+        );
+      },
+      isSnapchatConnected: () => {
+        const s = get();
+        return !!(
+          s.snapchatRefreshToken &&
+          s.snapchatClientId &&
+          s.snapchatClientSecret &&
+          s.snapchatAdAccountId &&
+          !isDemoCredential(s.snapchatRefreshToken)
+        );
       },
 
       getDateRangeLabel: () => {
@@ -643,10 +771,11 @@ export const useAuthStore = create<AuthState>()(
       },
       // Bump this version any time DEFAULT_NAMING_CONVENTIONS / META_BENCHMARKS
       // change in a way that should override persisted user state.
-      version: 5,
+      version: 6,
       // v4: wipe persisted demo placeholder tokens. v5: Google Ads/GA4/GTM
       // integration removed — drop all google credential keys and google
       // benchmark fields from persisted state; initialize DV360 fields.
+      // v6: Add Google Ads customer ID fields.
       migrate: (persistedState: unknown, fromVersion: number) => {
         let state = (persistedState as Partial<AuthState> & Record<string, unknown>) || {};
         if (fromVersion < 3) {
@@ -685,6 +814,14 @@ export const useAuthStore = create<AuthState>()(
             dv360RefreshToken: null,
             dv360AdvertiserId: null,
             dv360PartnerId: null,
+          };
+        }
+        if (fromVersion < 6) {
+          state = {
+            ...state,
+            googleAdsCustomerId: null,
+            googleAdsLoginCustomerId: null,
+            googleAdsCurrency: null,
           };
         }
         return state as AuthState;

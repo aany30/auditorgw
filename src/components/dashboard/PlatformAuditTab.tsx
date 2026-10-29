@@ -7,7 +7,7 @@ import ConnectCta from "@/components/shared/ConnectCta";
 import type { CampaignData } from "@/types";
 
 interface Props {
-  platform: "meta" | "dv360" | "both";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
   dateRange: string;
   customStart?: string;
   customEnd?: string;
@@ -25,7 +25,7 @@ export default function PlatformAuditTab({ platform, dateRange, customStart, cus
     id: string;
     label: string;
     description: string;
-    render: (p: { campaigns: CampaignData[]; loading: boolean; platform: "meta" | "dv360" | "both" }) => ReactNode;
+    render: (p: { campaigns: CampaignData[]; loading: boolean; platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both" }) => ReactNode;
   }> = [];
 
   if (metaOn) {

@@ -1,3 +1,5 @@
+export type Platform = "meta" | "dv360" | "google_ads" | "snapchat";
+
 // API Response Types
 export interface MetaPixelData {
   pixelId: string;
@@ -116,7 +118,7 @@ export interface CampaignData {
   name: string;
   objective?: string;
   status: string;
-  platform: "meta" | "dv360";
+  platform: Platform;
   createdTime?: string;
   /** ISO timestamp of the last significant edit (Meta `updated_time`). Used to estimate learning-phase triggers. */
   updatedTime?: string;
@@ -293,7 +295,7 @@ export interface NamingComponent {
 export interface NamingComplianceResult {
   campaignId: string;
   campaignName: string;
-  platform: "meta" | "dv360";
+  platform: Platform;
   status: "compliant" | "non-compliant";
   /** % of REQUIRED components missing (0-100). >65 → non-compliant. */
   missingPct: number;

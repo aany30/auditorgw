@@ -19,7 +19,7 @@ interface AnnualFrequency {
 
 const EMPTY: AnnualFrequency = { reach: 0, frequency: 0, impressions: 0, monthly: [], currency: "USD", loading: false };
 
-export function useAnnualFrequency(platform: "meta" | "dv360" | "both"): AnnualFrequency {
+export function useAnnualFrequency(platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both"): AnnualFrequency {
   const { metaAccessToken, metaBusinessId, demoMode } = useAuthStore();
   const [state, setState] = useState<AnnualFrequency>(EMPTY);
 

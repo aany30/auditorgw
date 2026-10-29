@@ -23,7 +23,7 @@ interface FixRequest {
   metric: string;
   value: string | number;
   status: "bad" | "warn" | "critical" | "moderate";
-  platform?: "meta" | "dv360" | "both";
+  platform?: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
   threshold?: string;
   campaignContext?: Record<string, unknown>;
   accountContext?: Record<string, unknown>;

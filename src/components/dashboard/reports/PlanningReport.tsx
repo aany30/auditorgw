@@ -44,7 +44,7 @@ import SmartNumberInput from "@/components/shared/SmartNumberInput";
 import { rangeToDates } from "@/lib/date-range";
 
 interface Props {
-  platform: "meta" | "dv360" | "both";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
   dateRange: DateRange;
   customStart?: string;
   customEnd?: string;
@@ -140,7 +140,7 @@ function GapInsight({ campaign, planned, delivered, pacing, dateRange, platform,
   delivered: Record<string, number>;
   pacing: Record<string, number | null>;
   dateRange: string;
-  platform: "meta" | "dv360" | "both";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
   align?: "start" | "end";
   label?: string;
 }) {
@@ -317,7 +317,7 @@ function DeepDiveDropdown({ items, focusId, setFocusId, platform }: {
   items: DeepDiveItem[];
   focusId: string;
   setFocusId: (id: string) => void;
-  platform?: "meta" | "dv360";
+  platform?: "meta" | "dv360" | "google_ads";
 }) {
   const labels: Record<string, string> = platform === "dv360"
     ? { campaign: "Campaign", adset: "IO", ad: "Line Item", adgroup: "Ad Group", creative: "Creative" }
@@ -410,7 +410,7 @@ function ExtraDeepDivePanel({
   byId: Map<string, CampaignData>;
   currency: string;
   metaLifetime: Record<string, any>;
-  aiPlatform: "meta" | "dv360";
+  aiPlatform: "meta" | "dv360" | "google_ads";
   dateRange: DateRange;
   onRemove: () => void;
   entityDeliveredMap: Map<string, Delivered>;
@@ -632,7 +632,7 @@ export function PlanningSection({ campaigns, loading, currency, storageSuffix, d
   currency: string;
   storageSuffix: string;
   dateRange: DateRange;
-  aiPlatform: "meta" | "dv360";
+  aiPlatform: "meta" | "dv360" | "google_ads";
   lineItemReach?: LIReachMap;
 }) {
   const byId = useMemo(() => new Map(campaigns.map((c) => [c.id, c])), [campaigns]);
@@ -1742,7 +1742,7 @@ function pacingBadge(planned: number, delivered: number): { text: string; cls: s
   return { text: `${pct}%`, cls };
 }
 
-interface AggTable { key: string; label: string; sub?: string; count: number; delivered: Delivered; gcur: string; platform?: "meta" | "dv360" }
+interface AggTable { key: string; label: string; sub?: string; count: number; delivered: Delivered; gcur: string; platform?: "meta" | "dv360" | "google_ads" }
 // A dated capture of planned-vs-delivered for the current view, so a plan can be
 // saved today and re-saved later when delivery changes — kept as a history.
 interface AggSnapshot {
@@ -1769,17 +1769,18 @@ const CHART_RANGES: { label: string; value: DateRange }[] = [
   { label: "90 Days", value: "90d" },
 ];
 
-const CHART_PLATFORMS: { label: string; value: "both" | "meta" | "dv360" }[] = [
+const CHART_PLATFORMS: { label: string; value: "both" | "meta" | "dv360" | "google_ads" }[] = [
   { label: "Both", value: "both" },
   { label: "Meta", value: "meta" },
   { label: "DV360", value: "dv360" },
+  { label: "Google Ads", value: "google_ads" },
 ];
 
 export function DailyTrendCharts({ dateRange: parentRange, customStart, customEnd, platform: parentPlatform }: {
-  dateRange: DateRange; customStart?: string; customEnd?: string; platform: "meta" | "dv360" | "both";
+  dateRange: DateRange; customStart?: string; customEnd?: string; platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
 }) {
   const [localRange, setLocalRange] = useState<DateRange | null>(null);
-  const [localPlatform, setLocalPlatform] = useState<"both" | "meta" | "dv360" | null>(null);
+  const [localPlatform, setLocalPlatform] = useState<"both" | "meta" | "dv360" | "google_ads" | null>(null);
   const [localCustomStart, setLocalCustomStart] = useState(customStart || "");
   const [localCustomEnd, setLocalCustomEnd] = useState(customEnd || "");
   const dateRange = localRange ?? parentRange;
@@ -2099,7 +2100,7 @@ function AggComboPanel({
   const derivedDv360Values = useHier ? dv360Hier.map((n) => n.dimensionValue) : dv360Values;
   const metaDelivered = computeDelivered("meta", derivedMetaValues, useHier ? metaHier : undefined);
   const dv360Delivered = computeDelivered("dv360", derivedDv360Values, useHier ? dv360Hier : undefined);
-  const platform: "meta" | "dv360" | "both" = hasMeta && hasDv ? "both" : hasMeta ? "meta" : "dv360";
+  const platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both" = hasMeta && hasDv ? "both" : hasMeta ? "meta" : "dv360";
   const combinedPlanned: Record<string, number> = {};
   const combinedDelivered: Record<string, number> = {};
   const pacing: Record<string, number | null> = {};
@@ -3133,7 +3134,7 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
       pacing[m.key] = p > 0 ? Math.round((deliveredRec[m.key] / p) * 100) : null;
     }
     const plats = new Set(tables.map((t) => t.platform).filter(Boolean));
-    const platform: "meta" | "dv360" | "both" = plats.size === 1 ? ([...plats][0] as "meta" | "dv360") : "both";
+    const platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both" = plats.size === 1 ? ([...plats][0] as "meta" | "dv360") : "both";
     return { planned: plannedRec, delivered: deliveredRec, pacing, platform };
   }, [tables, planned]);
 
@@ -3799,7 +3800,7 @@ ${deepDivePlanPagesAll}
 
   // Main-row selectors are multi-select — pick several values (e.g. Facebook +
   // Instagram + WhatsApp) to see them combined into one aggregated row.
-  const channelDropdown = (platform: "meta" | "dv360") => {
+  const channelDropdown = (platform: "meta" | "dv360" | "google_ads") => {
     const isMeta = platform === "meta";
     const sel = isMeta ? metaChannelHier : dv360ChannelHier;
     const setSel = isMeta ? setMetaChannelHier : setDv360ChannelHier;
@@ -3823,7 +3824,7 @@ ${deepDivePlanPagesAll}
     );
   };
 
-  const objectiveDropdown = (platform: "meta" | "dv360") => {
+  const objectiveDropdown = (platform: "meta" | "dv360" | "google_ads") => {
     const isMeta = platform === "meta";
     const sel = isMeta ? metaObjectiveHier : dv360ObjectiveHier;
     const setSel = isMeta ? setMetaObjectiveHier : setDv360ObjectiveHier;
@@ -3841,7 +3842,7 @@ ${deepDivePlanPagesAll}
     );
   };
 
-  const creativeDropdown = (platform: "meta" | "dv360") => {
+  const creativeDropdown = (platform: "meta" | "dv360" | "google_ads") => {
     const isMeta = platform === "meta";
     const sel = isMeta ? metaCreativeHier : dv360CreativeHier;
     const setSel = isMeta ? setMetaCreativeHier : setDv360CreativeHier;
@@ -3867,7 +3868,7 @@ ${deepDivePlanPagesAll}
     );
   };
 
-  const audienceDropdown = (platform: "meta" | "dv360") => {
+  const audienceDropdown = (platform: "meta" | "dv360" | "google_ads") => {
     const isMeta = platform === "meta";
     const sel = isMeta ? metaAudienceHier : dv360AudienceHier;
     const setSel = isMeta ? setMetaAudienceHier : setDv360AudienceHier;

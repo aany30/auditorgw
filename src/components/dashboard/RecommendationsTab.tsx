@@ -18,7 +18,7 @@ import SortTh from "@/components/shared/SortTh";
 import TabSummaryFooter from "@/components/shared/TabSummaryFooter";
 
 interface Props {
-  platform?: "meta" | "dv360" | "both";
+  platform?: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
   dateRange?: DateRange;
   customStart?: string;
   customEnd?: string;

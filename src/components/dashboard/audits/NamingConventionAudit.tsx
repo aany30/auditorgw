@@ -44,7 +44,7 @@ export default function NamingConventionAudit({ campaigns }: AuditProps) {
   const handleChildRename = async (
     nodeId: string,
     currentName: string,
-    parentPlatform: "meta" | "dv360",
+    parentPlatform: "meta" | "dv360" | "google_ads",
     kind: "insertionOrder" | "lineItem" = "lineItem",
   ) => {
     const newName = (childDraft[nodeId] ?? currentName).trim();
@@ -320,13 +320,15 @@ export default function NamingConventionAudit({ campaigns }: AuditProps) {
                 // Split into Meta vs DV360 groups, render with platform header rows
                 const metaRows = filtered.filter(({ campaign }) => campaign.platform === "meta");
                 const dv360Rows = filtered.filter(({ campaign }) => campaign.platform === "dv360");
+                const gadsRows = filtered.filter(({ campaign }) => campaign.platform === "google_ads");
 
-                const PLATFORM_OPTIONS: Record<"meta" | "dv360", string[]> = {
+                const PLATFORM_OPTIONS: Record<"meta" | "dv360" | "google_ads", string[]> = {
                   meta: ["Meta", "Facebook", "Instagram"],
                   dv360: ["DV360", "YouTube", "Display", "CTV"],
+                  google_ads: ["Campaign", "Ad Group", "Ad", "Keyword"],
                 };
 
-                const renderRow = ({ campaign, result }: typeof filtered[0], platformKey: "meta" | "dv360") => {
+                const renderRow = ({ campaign, result }: typeof filtered[0], platformKey: "meta" | "dv360" | "google_ads") => {
                   const key = rowKey(campaign);
                   const isFail = result.status === "non-compliant";
                   const isOpen = expandedId === key;
@@ -603,17 +605,19 @@ export default function NamingConventionAudit({ campaigns }: AuditProps) {
                   );
                 }; // end renderRow
 
-                const PlatformHeader = ({ platform, count }: { platform: string; count: number }) => (
-                  <tr className="bg-gray-100 border-b border-gray-300">
-                    <td colSpan={6} className="px-4 py-2 font-bold text-sm text-gray-800 flex items-center gap-2">
-                      <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${platform === "meta" ? "bg-blue-100 text-blue-800" : "bg-green-100 text-green-800"}`}>
-                        {platform === "meta" ? "Meta" : "DV360"}
-                      </span>
-                      <span>{platform === "meta" ? "Meta Ads" : "DV360"}</span>
-                      <span className="text-xs font-normal text-gray-500 ml-1">({count} campaign{count !== 1 ? "s" : ""})</span>
-                    </td>
-                  </tr>
-                );
+                const PlatformHeader = ({ platform, count }: { platform: string; count: number }) => {
+                  const label = platform === "meta" ? "Meta" : platform === "dv360" ? "DV360" : "Google Ads";
+                  const chip = platform === "meta" ? "bg-blue-100 text-blue-800" : platform === "dv360" ? "bg-green-100 text-green-800" : "bg-yellow-100 text-yellow-800";
+                  return (
+                    <tr className="bg-gray-100 border-b border-gray-300">
+                      <td colSpan={6} className="px-4 py-2 font-bold text-sm text-gray-800 flex items-center gap-2">
+                        <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${chip}`}>{label}</span>
+                        <span>{label}</span>
+                        <span className="text-xs font-normal text-gray-500 ml-1">({count} campaign{count !== 1 ? "s" : ""})</span>
+                      </td>
+                    </tr>
+                  );
+                };
 
                 return (
                   <>
@@ -627,6 +631,12 @@ export default function NamingConventionAudit({ campaigns }: AuditProps) {
                       <>
                         <PlatformHeader platform="dv360" count={dv360Rows.length} />
                         {dv360Rows.map((row) => renderRow(row, "dv360"))}
+                      </>
+                    )}
+                    {gadsRows.length > 0 && (
+                      <>
+                        <PlatformHeader platform="google_ads" count={gadsRows.length} />
+                        {gadsRows.map((row) => renderRow(row, "google_ads"))}
                       </>
                     )}
                   </>
@@ -709,7 +719,7 @@ function ChildRow({ id, name, status, type, editing, draft, renameStatus, onEdit
 interface ChildRenameInlineProps {
   id: string;
   name: string;
-  platform: "meta" | "dv360";
+  platform: "meta" | "dv360" | "google_ads";
   kind?: "insertionOrder" | "lineItem";
   metaAccessToken: string | null;
   dv360?: {

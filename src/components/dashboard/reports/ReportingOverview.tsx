@@ -24,11 +24,11 @@ import { useCampaigns } from "@/hooks/useCampaigns";
 import { useAdSetInsights } from "@/hooks/useAdSetInsights";
 import { useMetaDailyVsPrev, type DailyPoint } from "@/hooks/useMetaDailyVsPrev";
 import { usePersistentColumns, usePersistentValue } from "@/hooks/useColumnPrefs";
-import { formatMoney } from "@/lib/currency";
+import { formatMoney, currencyFor } from "@/lib/currency";
 import type { DateRange } from "@/components/shared/DateRangePicker";
 
 interface Props {
-  platform: "meta" | "dv360" | "both";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
   dateRange: DateRange;
   customStart?: string;
   customEnd?: string;
@@ -243,18 +243,20 @@ function totalsOf(rows: DailyPoint[]) {
 }
 
 /** Combined chart shown at the top of "both" mode: 4 aggregate KPIs + dual-line Meta vs DV360. */
-function CombinedOverview({ meta, dv360, metaCurrency }: {
+function CombinedOverview({ meta, dv360, googleAds, metaCurrency }: {
   meta:  { current: DailyPoint[]; previous: DailyPoint[] };
   dv360: { current: DailyPoint[]; previous: DailyPoint[] };
+  googleAds?: { current: DailyPoint[]; previous: DailyPoint[] };
   metaCurrency: string;
 }) {
   const metaT = totalsOf(meta.current);
   const dvT   = totalsOf(dv360.current);
+  const gaT   = totalsOf(googleAds?.current ?? []);
   const combined = {
-    spend:       metaT.spend       + dvT.spend,
-    impressions: metaT.impressions + dvT.impressions,
-    clicks:      metaT.clicks      + dvT.clicks,
-    conversions: metaT.conversions + dvT.conversions,
+    spend:       metaT.spend       + dvT.spend       + gaT.spend,
+    impressions: metaT.impressions + dvT.impressions + gaT.impressions,
+    clicks:      metaT.clicks      + dvT.clicks      + gaT.clicks,
+    conversions: metaT.conversions + dvT.conversions + gaT.conversions,
   };
 
   const chartData = useMemo(() => {
@@ -286,7 +288,7 @@ function CombinedOverview({ meta, dv360, metaCurrency }: {
     <div className="border border-gray-200 rounded-xl overflow-hidden">
       <div className="px-5 py-3 border-b border-gray-100 bg-gray-50 flex items-center gap-2">
         <span className="text-sm font-bold text-gray-600 uppercase tracking-wide">Combined Overview</span>
-        <span className="text-xs text-gray-400">Meta + DV360</span>
+        <span className="text-xs text-gray-400">Meta + DV360{(googleAds?.current.length ?? 0) > 0 ? " + Google Ads" : ""}</span>
       </div>
 
       <div className="bg-white p-5 space-y-5">
@@ -533,10 +535,11 @@ function PlatformBlock({ name, accent, cur, prev, currency, reach = 0 }: {
 }
 
 export default function ReportingOverview({ platform, dateRange, customStart, customEnd }: Props) {
-  const { platformErrors, startDate, endDate, metaCurrency, dv360Currency } = useCampaigns(platform, dateRange, customStart, customEnd);
+  const { campaigns, platformErrors, startDate, endDate, metaCurrency, dv360Currency } = useCampaigns(platform, dateRange, customStart, customEnd);
   // Single-platform views format in that platform's currency; the "both" view
   // formats each PlatformBlock in its own currency (passed explicitly below).
-  const currency = platform === "dv360" ? dv360Currency : metaCurrency;
+  const gadsCurrency = currencyFor(campaigns, "google_ads");
+  const currency = platform === "dv360" ? dv360Currency : platform === "google_ads" ? gadsCurrency : metaCurrency;
   const { current, previous, byPlatform, loading, prevStartDate, prevEndDate } = useMetaDailyVsPrev(platform, dateRange, customStart, customEnd);
   const { adsets } = useAdSetInsights(platform, dateRange, customStart, customEnd);
 
@@ -659,6 +662,7 @@ export default function ReportingOverview({ platform, dateRange, customStart, cu
             // Per-platform split so the LLM never blends Meta + DV360 into one number.
             ...(platform === "meta" || platform === "both" ? { meta: { spend: Math.round(totalsOf(byPlatform.meta.current).spend), impressions: totalsOf(byPlatform.meta.current).impressions } } : {}),
             ...(platform === "dv360" || platform === "both" ? { dv360: { spend: Math.round(totalsOf(byPlatform.dv360.current).spend), impressions: totalsOf(byPlatform.dv360.current).impressions } } : {}),
+            ...(platform === "google_ads" || platform === "both" ? { google_ads: { spend: Math.round(totalsOf(byPlatform.google_ads.current).spend), impressions: totalsOf(byPlatform.google_ads.current).impressions } } : {}),
           }}
           platform={platform}
           inline
@@ -675,6 +679,11 @@ export default function ReportingOverview({ platform, dateRange, customStart, cu
           <span className="font-semibold">Meta data unavailable:</span> {platformErrors.meta}
         </div>
       )}
+      {platformErrors.google_ads && (platform === "google_ads" || platform === "both") && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
+          <span className="font-semibold">Google Ads data unavailable:</span> {platformErrors.google_ads}
+        </div>
+      )}
 
       {/* ── Both mode: combined overview + two separate platform blocks ── */}
       {platform === "both" ? (
@@ -686,6 +695,7 @@ export default function ReportingOverview({ platform, dateRange, customStart, cu
               <CombinedOverview
                 meta={byPlatform.meta}
                 dv360={byPlatform.dv360}
+                googleAds={byPlatform.google_ads}
                 metaCurrency={metaCurrency}
               />
               <PlatformBlock
@@ -703,6 +713,15 @@ export default function ReportingOverview({ platform, dateRange, customStart, cu
                 prev={byPlatform.dv360.previous}
                 currency={dv360Currency}
               />
+              {byPlatform.google_ads.current.length > 0 && (
+                <PlatformBlock
+                  name="Google Ads"
+                  accent="emerald"
+                  cur={byPlatform.google_ads.current}
+                  prev={byPlatform.google_ads.previous}
+                  currency={gadsCurrency}
+                />
+              )}
             </>
           )}
         </div>
@@ -712,6 +731,11 @@ export default function ReportingOverview({ platform, dateRange, customStart, cu
           {platform === "dv360" && (
             <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs text-blue-800">
               Reach and frequency are not available for DV360 — those cards show 0.
+            </div>
+          )}
+          {platform === "google_ads" && (
+            <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs text-blue-800">
+              Reach and frequency aren&apos;t available via the Google Ads API — those cards show 0.
             </div>
           )}
 

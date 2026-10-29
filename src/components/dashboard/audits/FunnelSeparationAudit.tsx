@@ -40,9 +40,12 @@ interface FunnelMixAI {
 function bucket(objective?: string): "TOF" | "MOF" | "BOF" | "Unknown" {
   if (!objective) return "Unknown";
   const o = objective.toLowerCase();
-  if (o.includes("aware") || o.includes("reach") || o.includes("video") || o.includes("store")) return "TOF";
-  if (o.includes("engagement") || o.includes("traffic") || o.includes("consideration") || o.includes("link_click") || o.includes("link click") || o === "link_clicks") return "MOF";
-  if (o.includes("conversion") || o.includes("sales") || o.includes("lead") || o.includes("catalog") || o.includes("app")) return "BOF";
+  // TOF — awareness/reach/views (Meta/DV360) + Google Ads Display & Video.
+  if (o.includes("aware") || o.includes("reach") || o.includes("video") || o.includes("store") || o.includes("display")) return "TOF";
+  // MOF — engagement/traffic/consideration (Meta/DV360) + Google Ads Demand Gen / Discovery.
+  if (o.includes("engagement") || o.includes("traffic") || o.includes("consideration") || o.includes("link_click") || o.includes("link click") || o === "link_clicks" || o.includes("demand gen") || o.includes("discovery")) return "MOF";
+  // BOF — sales/conversions/leads (Meta/DV360) + Google Ads Search, Shopping, Performance Max, Hotel, Travel, Local.
+  if (o.includes("conversion") || o.includes("sales") || o.includes("lead") || o.includes("catalog") || o.includes("app") || o.includes("search") || o.includes("shopping") || o.includes("performance max") || o.includes("hotel") || o.includes("travel") || o.includes("local")) return "BOF";
   return "Unknown";
 }
 
@@ -212,7 +215,10 @@ function PlatformFunnelSection({
 export default function FunnelSeparationAudit({ campaigns, accountTotal, dateRange, customStart, customEnd }: AuditProps) {
   const metaCampaigns = useMemo(() => campaigns.filter((c) => c.platform === "meta"), [campaigns]);
   const dv360Campaigns = useMemo(() => campaigns.filter((c) => c.platform === "dv360"), [campaigns]);
-  const hasBoth = metaCampaigns.length > 0 && dv360Campaigns.length > 0;
+  const gadsCampaigns = useMemo(() => campaigns.filter((c) => c.platform === "google_ads"), [campaigns]);
+  const platformsPresent =
+    Number(metaCampaigns.length > 0) + Number(dv360Campaigns.length > 0) + Number(gadsCampaigns.length > 0);
+  const hasBoth = platformsPresent > 1;
 
   // Overall counts for KPI cards
   const counts = { TOF: 0, MOF: 0, BOF: 0, Unknown: 0 };
@@ -342,6 +348,11 @@ export default function FunnelSeparationAudit({ campaigns, accountTotal, dateRan
           {dv360Campaigns.length > 0 && (
             <div className={hasBoth ? "pt-6" : ""}>
               <PlatformFunnelSection label="DV360" campaigns={dv360Campaigns} allCampaigns={campaigns} />
+            </div>
+          )}
+          {gadsCampaigns.length > 0 && (
+            <div className={hasBoth ? "pt-6" : ""}>
+              <PlatformFunnelSection label="Google Ads" campaigns={gadsCampaigns} allCampaigns={campaigns} />
             </div>
           )}
         </div>
