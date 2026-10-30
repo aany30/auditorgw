@@ -133,7 +133,7 @@ function detectFormat(row: AdInsightRow): CFormat {
 // ─── Sub-types ────────────────────────────────────────────────────────────────
 
 interface EnrichedAd {
-  id: string; name: string; format: CFormat; language: string; platform: "meta" | "dv360" | "google_ads";
+  id: string; name: string; format: CFormat; language: string; platform: "meta" | "dv360" | "google_ads" | "snapchat";
   spend: number; impressions: number; clicks: number; conversions: number; conversionValue: number;
   ctr: number; cpm: number; cpc: number; roas: number; cpa: number; cvr: number; aov: number;
   // Conversions/revenue aren't available per-creative for DV360 (Bid Manager
@@ -674,7 +674,7 @@ function TopCreativesTable({ ads, currency }: { ads: EnrichedAd[]; currency: str
 // ─── Shared enrichment / aggregation helpers ─────────────────────────────────
 
 /** Turn raw ad-insight rows into enriched ads with format, language, derived KPIs. */
-function enrichAds(raw: AdInsightRow[], platform: "meta" | "dv360" | "google_ads"): EnrichedAd[] {
+function enrichAds(raw: AdInsightRow[], platform: "meta" | "dv360" | "google_ads" | "snapchat"): EnrichedAd[] {
   // Conversions/revenue are only real for Meta here; DV360 line items don't
   // carry them at creative grain, so those KPIs are marked unavailable.
   const convAvailable = platform === "meta";
@@ -771,6 +771,7 @@ export default function CreativeReport({ platform, dateRange, customStart, custo
   // campaigns so we can synthesize ad-level rows from line items below.
   const { campaigns, metaCurrency, dv360Currency } = useCampaigns(platform, dateRange, customStart, customEnd);
   const gadsCurrency = currencyFor(campaigns, "google_ads");
+  const snapCurrency = currencyFor(campaigns, "snapchat");
   const { startDate, endDate } = rangeToDates(dateRange, customStart, customEnd);
 
   const [rawAds, setRawAds] = useState<AdInsightRow[]>([]);
@@ -821,6 +822,7 @@ export default function CreativeReport({ platform, dateRange, customStart, custo
   const showMeta = platform === "meta" || platform === "both";
   const showDv   = platform === "dv360" || platform === "both";
   const showGads = platform === "google_ads" || platform === "both";
+  const showSnap = platform === "snapchat" || platform === "both";
 
   // Google Ads ad-level rows synthesized from the campaign → ad group → ad tree
   // already returned by useCampaigns (ad.name carries the RSA headlines joined).
@@ -842,6 +844,26 @@ export default function CreativeReport({ platform, dateRange, customStart, custo
     return out;
   }, [campaigns, showGads]);
   const gadsEnriched: EnrichedAd[] = useMemo(() => enrichAds(gadsAds, "google_ads"), [gadsAds]);
+
+  // Snapchat ad-level rows synthesized from campaigns → ad squads → ads.
+  const snapAds: AdInsightRow[] = useMemo(() => {
+    if (!showSnap) return [];
+    const out: AdInsightRow[] = [];
+    for (const c of campaigns.filter(c => c.platform === "snapchat")) {
+      for (const sq of c.adSets ?? []) {
+        for (const ad of sq.ads ?? []) {
+          out.push({
+            id: ad.id, name: ad.name,
+            spend: ad.spend ?? 0, impressions: ad.impressions ?? 0, clicks: ad.clicks ?? 0,
+            conversions: ad.conversions ?? 0, conversionValue: 0, reach: 0, videoViews: 0,
+            creativeType: ad.lineItemType || "",
+          });
+        }
+      }
+    }
+    return out;
+  }, [campaigns, showSnap]);
+  const snapEnriched: EnrichedAd[] = useMemo(() => enrichAds(snapAds, "snapchat"), [snapAds]);
 
   // DV360 delivery-by-language (FILTER_SITE_LANGUAGE) — real BM breakdown.
   const { rows: dvLangRows, loading: dvLangLoading, pending: dvLangPending } =
@@ -935,6 +957,17 @@ export default function CreativeReport({ platform, dateRange, customStart, custo
             Ad-level delivery from the Google Ads API (impressions, clicks, CTR, spend, conversions). Format is inferred from each ad&apos;s type. Reach/frequency aren&apos;t available per-creative via the API and show &quot;—&quot;.
           </div>
           <CreativeSections ads={gadsEnriched} currency={gadsCurrency} />
+        </div>
+      )}
+
+      {/* ── Snapchat section ── */}
+      {showSnap && (
+        <div className="space-y-5">
+          {platform === "both" && <SectionHeader label="Snapchat" sub="Snapchat" />}
+          <div className="bg-pink-50 border border-pink-200 rounded-lg p-3 text-xs text-pink-800">
+            Ad-level delivery from the Snapchat Marketing API (impressions, swipes, spend, conversions). Format is inferred from each ad&apos;s type. Reach/frequency aren&apos;t available per-creative via the API and show &quot;—&quot;.
+          </div>
+          <CreativeSections ads={snapEnriched} currency={snapCurrency} />
         </div>
       )}
 

@@ -174,7 +174,7 @@ export default function OverviewTab({ platform, dateRange, customStart, customEn
                             metric={r.issue}
                             value={r.impact}
                             status={r.priority === "Critical" ? "critical" : r.priority === "High" ? "critical" : "warn"}
-                            platform={r.platform?.toLowerCase() as "meta" | "dv360" | "google_ads"}
+                            platform={r.platform?.toLowerCase() as "meta" | "dv360" | "google_ads" | "snapchat"}
                             auditContext={{ module: "Overview", siblingMetrics: { priority: r.priority, confidence: r.confidence, impact: r.impact } }}
                             compact
                           />
