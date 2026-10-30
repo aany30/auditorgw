@@ -226,6 +226,7 @@ export default function Dashboard() {
     clearSnapchatCredentials,
     googleAdsCustomerId,
     snapchatAdAccountId,
+    snapchatRefreshToken,
     setMetaCredentials,
     setMetaPixelList,
     setDV360Credentials,
@@ -501,11 +502,11 @@ export default function Dashboard() {
     // (OAuth found no advertisers, user must paste the ID). Don't bounce them
     // back to landing — let the "Paste your Advertiser ID" prompt show.
     const dv360Pending = !!dv360RefreshToken;
-    const snapPending = !!snapchatAdAccountId || !!(router.query.snap_refresh);
+    const snapPending = !!snapchatRefreshToken || !!snapchatAdAccountId || !!(router.query.snap_refresh);
     if (!isMetaConnected() && !isDV360Connected() && !isGoogleAdsConnected() && !isSnapchatConnected() && !dv360Pending && !snapPending && !demoMode) {
       router.replace("/");
     }
-  }, [mounted, hydrated, router.isReady, router.query.demo, isMetaConnected, isDV360Connected, isGoogleAdsConnected, isSnapchatConnected, dv360RefreshToken, snapchatAdAccountId, demoMode, router, hasServerDefaults]);
+  }, [mounted, hydrated, router.isReady, router.query.demo, isMetaConnected, isDV360Connected, isGoogleAdsConnected, isSnapchatConnected, dv360RefreshToken, snapchatRefreshToken, snapchatAdAccountId, demoMode, router, hasServerDefaults]);
 
   const handleLogout = () => {
     clearAllCredentials();
