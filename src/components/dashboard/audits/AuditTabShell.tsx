@@ -47,6 +47,9 @@ export default function AuditTabShell({
     dv360RefreshToken,
     dv360AdvertiserId,
     dv360PartnerId,
+    snapchatRefreshToken,
+    snapchatAdAccountId,
+    snapchatOrgId,
   } = useAuthStore();
   const [campaigns, setCampaigns] = useState<CampaignData[]>([]);
   const [loading, setLoading] = useState(false);
@@ -86,6 +89,49 @@ export default function AuditTabShell({
           });
           if (r.ok) all.push(...(await r.json()));
         }
+        if (
+          (platform === "snapchat" || platform === "both") &&
+          snapchatRefreshToken && snapchatAdAccountId
+        ) {
+          const r = await fetch("/api/snapchat/entities", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              refreshToken: snapchatRefreshToken,
+              adAccountId: snapchatAdAccountId,
+              orgId: snapchatOrgId,
+            }),
+          });
+          if (r.ok) {
+            // Snap Marketing API returns a wrapped `{campaigns: [{campaign: {...}}]}`
+            // envelope; defensively unwrap and map to the CampaignData shape the
+            // audit components consume. No synthetic metrics — spend/impressions
+            // are omitted when the entities endpoint doesn't include stats.
+            const data: unknown = await r.json();
+            const rawCampaigns = Array.isArray((data as { campaigns?: unknown }).campaigns)
+              ? ((data as { campaigns: unknown[] }).campaigns)
+              : [];
+            const snapCampaigns = rawCampaigns.map((entry) => {
+              const c = (entry && typeof entry === "object" && "campaign" in entry)
+                ? (entry as { campaign: Record<string, unknown> }).campaign
+                : (entry as Record<string, unknown>);
+              return {
+                id: String(c.id ?? ""),
+                name: String(c.name ?? ""),
+                status: String(c.status ?? ""),
+                objective: String(c.objective ?? ""),
+                platform: "snapchat" as const,
+                spend: 0,
+                impressions: 0,
+                clicks: 0,
+                conversions: 0,
+                conversionValue: 0,
+                currency: "USD",
+              } as unknown as CampaignData;
+            });
+            all.push(...snapCampaigns);
+          }
+        }
       } catch (e) {
         console.error(e);
       } finally {
@@ -111,6 +157,9 @@ export default function AuditTabShell({
     dv360RefreshToken,
     dv360AdvertiserId,
     dv360PartnerId,
+    snapchatRefreshToken,
+    snapchatAdAccountId,
+    snapchatOrgId,
   ]);
 
   const filteredCampaigns = useMemo(() => {

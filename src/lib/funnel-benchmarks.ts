@@ -48,6 +48,26 @@ export const META_BENCHMARKS: BenchmarkSnapshot = {
 };
 
 /**
+ * Snapchat Marketing API funnel benchmarks — published Snap Ads medians
+ * (impression → swipe-up → page view → add to cart → purchase). Values are
+ * illustrative platform medians; swap for an advertiser-specific snapshot
+ * from the Industry or My Past tabs when a tighter target is needed.
+ */
+export const SNAPCHAT_BENCHMARKS: BenchmarkSnapshot = {
+  id: "snap-ecom-default",
+  label: "Snap Recommended (E-commerce)",
+  source: "meta",
+  fetchedAt: "2026-01-01T00:00:00Z",
+  values: {
+    Impression: 100,
+    SwipeUp: 1.5,
+    PageView: 1.4,
+    AddToCart: 0.35,
+    Purchase: 0.1,
+  },
+};
+
+/**
  * Default benchmark set used before the user picks anything.
  */
 export const DEFAULT_BENCHMARKS = META_BENCHMARKS;

@@ -262,7 +262,7 @@ function buildPdfHtml(opts: {
   <div class="cover">
     <div>
       <div class="cover-logo">📊 Auditor — ${PDF_TYPE_LABELS[pdfType]}</div>
-      <div class="cover-sub">Campaign Intelligence · ${opts.platform === "meta" ? "Meta Ads" : opts.platform === "dv360" ? "DV360" : "Meta + DV360"}</div>
+      <div class="cover-sub">Campaign Intelligence · ${opts.platform === "meta" ? "Meta Ads" : opts.platform === "dv360" ? "DV360" : opts.platform === "snapchat" ? "Snapchat Ads" : opts.platform === "google_ads" ? "Google Ads" : "All platforms"}</div>
     </div>
     <div class="cover-meta">
       <div><strong>Period:</strong> ${startDate} → ${endDate}</div>
@@ -307,7 +307,8 @@ function buildCampaignCsv(campaigns: any[], currency: string, startDate: string,
   ];
   const rows = campaigns.map(c => {
     const sp = c.spend||0, im = c.impressions||0, cl = c.clicks||0, cv = c.conversions||0, rev = c.conversionValue||0;
-    return [c.name, c.platform==="meta"?"Meta":"DV360", c.status||"—", c.objective||"—",
+    const platLabel = c.platform === "meta" ? "Meta" : c.platform === "snapchat" ? "Snapchat" : c.platform === "google_ads" ? "Google Ads" : "DV360";
+    return [c.name, platLabel, c.status||"—", c.objective||"—",
       sp.toFixed(2), im, cl, im>0?((cl/im)*100).toFixed(2):"",
       cv, rev.toFixed(2), sp>0&&rev>0?(rev/sp).toFixed(2):"",
       im>0?(sp/im*1000).toFixed(2):"", cl>0?(sp/cl).toFixed(2):"", cv>0?(sp/cv).toFixed(2):"",
@@ -365,12 +366,16 @@ const SECTIONS = [
 
 export default function ExportReport({ platform, dateRange, customStart, customEnd }: Props) {
   const { campaigns, loading, startDate, endDate } = useCampaigns(platform, dateRange, customStart, customEnd);
-  const enabled = platform !== "dv360";
+  // Meta-only breakdowns: skip for non-meta single-platform modes (DV360 / Snapchat / Google Ads).
+  const enabled = platform === "meta" || platform === "both";
   const pubBreakdown = useMetaBreakdown("publisher_platform", dateRange, customStart, customEnd, enabled);
   const ageBreakdown = useMetaBreakdown("age",  dateRange, customStart, customEnd, enabled);
   const genBreakdown = useMetaBreakdown("gender", dateRange, customStart, customEnd, enabled);
 
-  const currency = currencyFor(campaigns, platform === "dv360" ? "dv360" : "meta");
+  const currency = currencyFor(
+    campaigns,
+    platform === "dv360" ? "dv360" : platform === "snapchat" ? "snapchat" : platform === "google_ads" ? "google_ads" : "meta",
+  );
   const cur = (n: number) => formatMoney(n, currency, 0);
 
   const [flash, setFlash]       = useState<string | null>(null);

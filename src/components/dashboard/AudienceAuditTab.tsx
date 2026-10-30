@@ -23,6 +23,7 @@ export default function AudienceAuditTab({ platform, dateRange, customStart, cus
   const dv360On = isDV360Connected() || demoMode;
   const showMeta = metaOn && (platform === "meta" || platform === "both");
   const showDV360 = dv360On && (platform === "dv360" || platform === "both");
+  const showSnap = platform === "snapchat" || platform === "both";
 
   const { audiences, loading: audLoading, error: audError } = useDV360Audiences(showDV360);
   const { sorted: sortedAudiences, sort: audSort, toggle: audToggle } = useSort(audiences, "name", "asc");
@@ -160,6 +161,44 @@ export default function AudienceAuditTab({ platform, dateRange, customStart, cus
         </>
       )}
 
+      {/* ── Snapchat Section ──────────────────────────────────────────── */}
+      {showSnap && platform === "both" && (
+        <div className="flex items-center gap-3 pt-4 pb-1 border-b border-gray-200">
+          <h2 className="text-xl font-bold text-gray-900">Snapchat</h2>
+          <span className="text-xs text-gray-400 font-medium">Snap Ads</span>
+        </div>
+      )}
+
+      {showSnap && (
+        <>
+          <AuditTabShell
+            platform="snapchat"
+            dateRange={dateRange}
+            customStart={customStart}
+            customEnd={customEnd}
+            selectedObjectives={selectedObjectives}
+            title="Snap Audience Audit"
+            description="Intent classification derived from live Snap campaign objectives"
+            Icon={Users}
+            defaultSubTab="intent"
+            subTabs={[
+              { id: "intent", label: "Intent Analysis", description: "Cold/Warm/Hot mix", render: (p) => <IntentAnalysisAudit {...p} /> },
+              { id: "quality", label: "Audience Quality", description: "High-intent share", render: (p) => <AudienceQualityAudit {...p} /> },
+            ]}
+          />
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-xs text-blue-800">
+            <div className="flex items-start gap-2">
+              <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+              <div>
+                <span className="inline-block mr-2 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-pink-100 text-pink-800">Snapchat</span>
+                Snap Audience Match, Lookalike, and Custom Audience sizes are not exposed via the Snap Marketing
+                API — manage and inspect audiences in Snap Ads Manager under Audiences.
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
       <TabSummaryFooter
         lines={[
           ...(showMeta ? [
@@ -172,7 +211,7 @@ export default function AudienceAuditTab({ platform, dateRange, customStart, cus
           ] : []),
         ]}
         tabName="Audience Audit"
-        context={{ platform, dateRange, subTabs: ["intent", "quality"], dv360Audiences: audiences.length }}
+        context={{ platform, dateRange, subTabs: ["intent", "quality"], dv360Audiences: audiences.length, snapchatIncluded: showSnap }}
         platform={platform === "both" ? "meta" : platform}
         dateRange={String(dateRange ?? "30d")}
       />
