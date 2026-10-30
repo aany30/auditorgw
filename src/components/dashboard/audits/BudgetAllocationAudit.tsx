@@ -549,7 +549,7 @@ function TipCell({ tip, campaignContext, isDemo, platform, campaign, currency, b
     : "campaign"
   ) as "campaign" | "adset" | "insertion_order";
 
-  const tipApplyContext: ApplyContext | undefined = isDemo ? undefined : {
+  const tipApplyContext: ApplyContext | undefined = isDemo || platform === "snapchat" ? undefined : {
     platform: platform as "meta" | "dv360" | "google_ads",
     entityType,
     entityId: campaign.id,
@@ -2217,15 +2217,97 @@ function GoogleAdsCampaignDrill({ campaign, currency }: { campaign: CampaignData
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Snapchat section — minimal campaign-level budget table reusing SpendTable
+// ─────────────────────────────────────────────────────────────────────────────
+function SnapchatBudgetSection({ campaigns, currency }: { campaigns: CampaignData[]; currency: string }) {
+  const cur = (n: number) => formatMoney(n, currency, 0);
+  const [statusFilter, setStatusFilter] = useState<"all" | "active">("all");
+  const visible = useMemo(
+    () => (statusFilter === "active" ? campaigns.filter(isActive) : campaigns),
+    [campaigns, statusFilter]
+  );
+
+  const totals = useMemo(() => {
+    let spend = 0, impressions = 0, clicks = 0, conversions = 0;
+    for (const c of visible) {
+      spend += c.spend || 0;
+      impressions += c.impressions || 0;
+      clicks += c.clicks || 0;
+      conversions += c.conversions || 0;
+    }
+    return { spend, impressions, clicks, conversions };
+  }, [visible]);
+
+  const rows = useMemo(
+    () => visible.map((c) => {
+      const spend = c.spend || 0;
+      const tip = computeGadsTip(c, currency); // same shape — delivering vs paused vs no delivery
+      return {
+        c, name: c.name, status: c.status || "—",
+        statusOrder: isActive(c) ? 0 : 1,
+        objective: c.objective || "—",
+        budget: c.lifetimeBudget ?? c.dailyBudget ?? 0,
+        budgetType: c.lifetimeBudget !== undefined ? "lifetime" : c.dailyBudget !== undefined ? "daily" : "none",
+        spend, impressions: c.impressions || 0, clicks: c.clicks || 0, tip, tipSeverity: tip.sevRank,
+      };
+    }),
+    [visible, currency]
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="inline-flex rounded-lg border border-gray-200">
+          {(["all", "active"] as const).map((f) => (
+            <button key={f} onClick={() => setStatusFilter(f)} className={`px-3 py-1.5 text-xs font-semibold transition ${statusFilter === f ? "bg-pink-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}>
+              {f === "all" ? `All campaigns (${campaigns.length})` : `Active only (${campaigns.filter(isActive).length})`}
+            </button>
+          ))}
+        </div>
+        <span className="inline-flex items-center gap-1 text-[11px] text-gray-500">
+          Spend from the Snapchat Marketing API for the selected window
+        </span>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3">
+        <div className="bg-white rounded-lg border border-gray-200 p-4">
+          <div className="text-[11px] text-gray-500">Spend</div>
+          <div className="text-xl font-bold text-gray-900 mt-0.5">{cur(totals.spend)}</div>
+          <div className="text-[10px] text-gray-400 mt-0.5">Real, for the selected window</div>
+        </div>
+      </div>
+
+      <SpendTable
+        rows={rows}
+        currency={currency}
+        totalSpend={totals.spend}
+        totalImpressions={totals.impressions}
+        totalClicks={totals.clicks}
+        totalCount={visible.length}
+        isDemo={false}
+        platform="snapchat"
+        subtitle="Real per-campaign delivery from the Snapchat Marketing API for the selected window."
+      />
+
+      <p className="text-[11px] text-gray-400 leading-relaxed px-1">
+        Every figure is real data from the Snapchat Marketing API for the selected window.
+      </p>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Main export — renders per-platform sections
 // ─────────────────────────────────────────────────────────────────────────────
 export default function BudgetAllocationAudit({ campaigns, dateRange, customStart, customEnd, platform = "meta" }: AuditProps) {
   const metaCampaigns = campaigns.filter((c) => c.platform === "meta");
   const dv360Campaigns = campaigns.filter((c) => c.platform === "dv360");
   const gadsCampaigns = campaigns.filter((c) => c.platform === "google_ads");
+  const snapCampaigns = campaigns.filter((c) => c.platform === "snapchat");
   const metaCurrency = currencyFor(campaigns, "meta");
   const dv360Currency = currencyFor(campaigns, "dv360");
   const gadsCurrency = currencyFor(campaigns, "google_ads");
+  const snapCurrency = currencyFor(campaigns, "snapchat");
 
   if (campaigns.length === 0) {
     return (
@@ -2238,7 +2320,8 @@ export default function BudgetAllocationAudit({ campaigns, dateRange, customStar
   const showMeta = (platform === "meta" || platform === "both") && metaCampaigns.length > 0;
   const showDV360 = (platform === "dv360" || platform === "both") && dv360Campaigns.length > 0;
   const showGads = (platform === "google_ads" || platform === "both") && gadsCampaigns.length > 0;
-  const multi = Number(showMeta) + Number(showDV360) + Number(showGads) > 1;
+  const showSnap = (platform === "snapchat" || platform === "both") && snapCampaigns.length > 0;
+  const multi = Number(showMeta) + Number(showDV360) + Number(showGads) + Number(showSnap) > 1;
 
   return (
     <div className="space-y-8">
@@ -2279,6 +2362,20 @@ export default function BudgetAllocationAudit({ campaigns, dateRange, customStar
             </div>
           )}
           <GoogleAdsBudgetSection campaigns={gadsCampaigns} currency={gadsCurrency} />
+        </section>
+      )}
+
+      {showGads && showSnap && <hr className="border-gray-200" />}
+
+      {showSnap && (
+        <section>
+          {multi && (
+            <div className="flex items-center gap-2 mb-4">
+              <div className="w-1 h-6 bg-pink-500 rounded-full" />
+              <h2 className="text-base font-bold text-gray-900">Snapchat — Budget Allocation</h2>
+            </div>
+          )}
+          <SnapchatBudgetSection campaigns={snapCampaigns} currency={snapCurrency} />
         </section>
       )}
     </div>
