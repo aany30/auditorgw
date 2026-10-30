@@ -216,8 +216,9 @@ export default function FunnelSeparationAudit({ campaigns, accountTotal, dateRan
   const metaCampaigns = useMemo(() => campaigns.filter((c) => c.platform === "meta"), [campaigns]);
   const dv360Campaigns = useMemo(() => campaigns.filter((c) => c.platform === "dv360"), [campaigns]);
   const gadsCampaigns = useMemo(() => campaigns.filter((c) => c.platform === "google_ads"), [campaigns]);
+  const snapCampaigns = useMemo(() => campaigns.filter((c) => c.platform === "snapchat"), [campaigns]);
   const platformsPresent =
-    Number(metaCampaigns.length > 0) + Number(dv360Campaigns.length > 0) + Number(gadsCampaigns.length > 0);
+    Number(metaCampaigns.length > 0) + Number(dv360Campaigns.length > 0) + Number(gadsCampaigns.length > 0) + Number(snapCampaigns.length > 0);
   const hasBoth = platformsPresent > 1;
 
   // Overall counts for KPI cards
@@ -353,6 +354,11 @@ export default function FunnelSeparationAudit({ campaigns, accountTotal, dateRan
           {gadsCampaigns.length > 0 && (
             <div className={hasBoth ? "pt-6" : ""}>
               <PlatformFunnelSection label="Google Ads" campaigns={gadsCampaigns} allCampaigns={campaigns} />
+            </div>
+          )}
+          {snapCampaigns.length > 0 && (
+            <div className={hasBoth ? "pt-6" : ""}>
+              <PlatformFunnelSection label="Snapchat" campaigns={snapCampaigns} allCampaigns={campaigns} />
             </div>
           )}
         </div>
@@ -576,6 +582,26 @@ export default function FunnelSeparationAudit({ campaigns, accountTotal, dateRan
           customStart={customStart}
           customEnd={customEnd}
           platformLabel={hasBoth ? "DV360" : undefined}
+        />
+      )}
+      {gadsCampaigns.length > 0 && (
+        <FunnelStagePerformance
+          campaigns={gadsCampaigns}
+          accountTotal={gadsCampaigns.length}
+          dateRange={dateRange}
+          customStart={customStart}
+          customEnd={customEnd}
+          platformLabel={hasBoth ? "Google Ads" : undefined}
+        />
+      )}
+      {snapCampaigns.length > 0 && (
+        <FunnelStagePerformance
+          campaigns={snapCampaigns}
+          accountTotal={snapCampaigns.length}
+          dateRange={dateRange}
+          customStart={customStart}
+          customEnd={customEnd}
+          platformLabel={hasBoth ? "Snapchat" : undefined}
         />
       )}
     </div>

@@ -238,7 +238,7 @@ function GoogleAdsConversionActionsSection({ actions, loading }: { actions: Goog
 }
 
 export default function ConversionMonitoringTab({ platform, dateRange, customStart, customEnd }: Props) {
-  const useMeta = platform !== "dv360" && platform !== "google_ads";
+  const useMeta = platform === "meta" || platform === "both";
   const useDv = platform === "dv360" || platform === "both";
   const useGoogleAds = platform === "google_ads" || platform === "both";
   const { rows: metaRows, loading: metaLoading } = useMetaBreakdown("daily", dateRange, customStart, customEnd, useMeta);

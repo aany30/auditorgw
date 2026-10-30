@@ -193,8 +193,9 @@ function campaignRecs(campaigns: any[]): Recommendation[] {
       from: "ACTIVE",
       to: "PAUSED",
     } : undefined;
+    const platformLabel = c.platform === "meta" ? "Meta" : c.platform === "dv360" ? "DV360" : c.platform === "google_ads" ? "Google Ads" : c.platform === "snapchat" ? "Snapchat" : "Meta";
     recs.push({
-      id: `camp-zero-conv-${c.id}`, priority: "High", platform: "Meta", category: "Funnel",
+      id: `camp-zero-conv-${c.id}`, priority: "High", platform: platformLabel as any, category: "Funnel",
       issue: `"${c.name}" spending with zero conversions`,
       details: `${((c.spend / totalSpend) * 100).toFixed(0)}% of total spend on this campaign has produced no conversions. Likely a tracking break or genuine under-performance.`,
       action: "Review conversion tracking; if correct, pause and reallocate.",
@@ -544,8 +545,10 @@ export default function RecommendationsTab({ platform = "both", dateRange = "30d
   const isDemo =
     (!metaAccessToken || isDemoCredential(metaAccessToken)) &&
     (!dv360RefreshToken || isDemoCredential(dv360RefreshToken));
-  const isMetaEnabled = platform !== "dv360";
+  const isMetaEnabled = platform === "meta" || platform === "both";
   const isDvEnabled = platform === "dv360" || platform === "both";
+  const isGadsEnabled = platform === "google_ads" || platform === "both";
+  const isSnapEnabled = platform === "snapchat" || platform === "both";
   const { campaigns, loading: campsLoading } = useCampaigns(platform, dateRange, customStart, customEnd);
   const { rows: pubRows,    loading: pubLoading }    = useMetaBreakdown("publisher_platform", dateRange, customStart, customEnd, isMetaEnabled);
   const { rows: ageRows,    loading: ageLoading }    = useMetaBreakdown("age",    dateRange, customStart, customEnd, isMetaEnabled);

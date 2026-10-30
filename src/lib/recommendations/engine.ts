@@ -12,7 +12,7 @@ import type { ApplyAction } from "../apply/types";
 export interface Recommendation {
   id: string;
   priority: "Critical" | "High" | "Medium" | "Low";
-  platform: "Meta" | "DV360" | "Both";
+  platform: "Meta" | "DV360" | "Google Ads" | "Snapchat" | "Both";
   category:
     | "Pixel Health" | "EMQ" | "Funnel" | "Attribution" | "Floodlight" | "CAPI"
     | "Anomaly" | "Ecommerce" | "Event Manager" | "DV360"
