@@ -1081,6 +1081,41 @@ export default function Dashboard() {
             </div>
           )}
 
+          {/* Snapchat needs Ad Account ID — OAuth completed but the Marketing API
+              couldn't auto-fetch an ad account (common when the user's org has
+              no ad accounts yet, or scope limitations). */}
+          {!demoMode && snapchatRefreshToken && !snapchatAdAccountId && (
+            <div className="bg-yellow-50 border-b border-yellow-200 px-8 py-4">
+              <p className="text-sm font-semibold text-yellow-900 mb-1">Paste your Snapchat Ad Account ID</p>
+              <p className="text-xs text-yellow-700 mb-2">
+                Open <a href="https://ads.snapchat.com" target="_blank" rel="noreferrer" className="underline">ads.snapchat.com</a> → Business Settings → Ad Accounts. The ID is a UUID like <code className="text-xs">a1b2c3d4-e5f6-7890-abcd-ef1234567890</code>.
+              </p>
+              <form
+                className="flex gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const input = (e.target as HTMLFormElement).elements.namedItem("snapId") as HTMLInputElement;
+                  const val = input.value.trim();
+                  if (val) {
+                    const s = useAuthStore.getState();
+                    setSnapchatCredentials({
+                      clientId: s.snapchatClientId!,
+                      clientSecret: s.snapchatClientSecret!,
+                      refreshToken: s.snapchatRefreshToken!,
+                      adAccountId: val,
+                      orgId: s.snapchatOrgId || undefined,
+                    });
+                  }
+                }}
+              >
+                <input name="snapId" placeholder="e.g. a1b2c3d4-e5f6-7890-abcd-ef1234567890" className="px-3 py-1.5 border border-yellow-300 rounded-lg text-sm bg-white w-96 focus:outline-none focus:ring-2 focus:ring-yellow-200" />
+                <button type="submit" className="px-3 py-1.5 bg-yellow-500 text-black rounded-lg text-sm font-medium hover:bg-yellow-600">
+                  Save
+                </button>
+              </form>
+            </div>
+          )}
+
           <div className="p-8">{renderTabContent()}</div>
         </main>
       </div>

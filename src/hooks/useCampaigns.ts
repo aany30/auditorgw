@@ -141,19 +141,26 @@ export function useCampaigns(
     dv360PartnerId,
     googleAdsCustomerId,
     googleAdsLoginCustomerId,
+    snapchatClientId,
+    snapchatClientSecret,
+    snapchatRefreshToken,
+    snapchatAdAccountId,
+    snapchatOrgId,
     demoMode,
     metaCurrency: storedMetaCurrency,
     dv360Currency: storedDv360Currency,
     googleAdsCurrency: storedGoogleAdsCurrency,
+    snapchatCurrency: storedSnapchatCurrency,
     setMetaCurrency,
     setDv360Currency,
     setGoogleAdsCurrency,
+    setSnapchatCurrency,
   } = useAuthStore();
 
   const [campaigns, setCampaigns] = useState<CampaignData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [platformErrors, setPlatformErrors] = useState<{ meta?: string; dv360?: string; google_ads?: string }>({});
+  const [platformErrors, setPlatformErrors] = useState<{ meta?: string; dv360?: string; google_ads?: string; snapchat?: string }>({});
   // Track whether we seeded from the SWR cache so we don't flash a spinner.
   const swrSeeded = useRef(false);
   // DV360 delivery arrives via an async Bid Manager report that is often still
@@ -204,7 +211,7 @@ export function useCampaigns(
       if (reloadTick === 0 && !swrSeeded.current) setLoading(true);
       setError(null);
       setPlatformErrors({});
-      const errs: { meta?: string; dv360?: string; google_ads?: string } = {};
+      const errs: { meta?: string; dv360?: string; google_ads?: string; snapchat?: string } = {};
       const all: CampaignData[] = [];
       const hasServerDefaults = !!process.env.NEXT_PUBLIC_HAS_DEFAULT_CREDS;
       try {
@@ -283,6 +290,30 @@ export function useCampaigns(
             errs.google_ads = body.error || `Google Ads API error (HTTP ${r.status})`;
           }
         }
+        // Snapchat fetch
+        const canFetchSnap = (platform === "snapchat" || platform === "both") &&
+          (snapchatRefreshToken && snapchatClientId && snapchatClientSecret && snapchatAdAccountId || hasServerDefaults);
+        if (canFetchSnap) {
+          const r = await fetch("/api/naming/campaigns/snapchat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              clientId: snapchatClientId || undefined,
+              clientSecret: snapchatClientSecret || undefined,
+              refreshToken: snapchatRefreshToken || undefined,
+              adAccountId: snapchatAdAccountId || undefined,
+              orgId: snapchatOrgId || undefined,
+              startDate,
+              endDate,
+            }),
+          });
+          if (r.ok) {
+            all.push(...(await r.json()));
+          } else {
+            const body = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
+            errs.snapchat = body.error || `Snapchat API error (HTTP ${r.status})`;
+          }
+        }
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Fetch failed");
       } finally {
@@ -290,7 +321,7 @@ export function useCampaigns(
           setCampaigns(all);
           setPlatformErrors(errs);
           // Keep legacy `error` populated for existing consumers.
-          const first = errs.meta || errs.dv360 || errs.google_ads;
+          const first = errs.meta || errs.dv360 || errs.google_ads || errs.snapchat;
           if (first) setError(first);
           // Cache each platform's detected currency (sticky) so a later
           // rate-limited fetch that drops a platform still renders the right
@@ -298,9 +329,11 @@ export function useCampaigns(
           const m = all.find((c) => c.platform === "meta" && c.currency)?.currency;
           const d = all.find((c) => c.platform === "dv360" && c.currency)?.currency;
           const g = all.find((c) => c.platform === "google_ads" && c.currency)?.currency;
+          const s = all.find((c) => c.platform === "snapchat" && c.currency)?.currency;
           if (m) setMetaCurrency(m);
           if (d) setDv360Currency(d);
           if (g) setGoogleAdsCurrency(g);
+          if (s) setSnapchatCurrency(s);
 
           fetchInFlight.current = false;
           // DV360 re-poll: DV360 delivery comes from async Bid Manager reports that
@@ -344,6 +377,11 @@ export function useCampaigns(
     dv360AdvertiserId,
     googleAdsCustomerId,
     googleAdsLoginCustomerId,
+    snapchatClientId,
+    snapchatClientSecret,
+    snapchatRefreshToken,
+    snapchatAdAccountId,
+    snapchatOrgId,
     demoMode,
     reloadTick,
     strictWindow,
@@ -356,10 +394,12 @@ export function useCampaigns(
   const detectedMeta = campaigns.find((c) => c.platform === "meta" && c.currency)?.currency;
   const detectedDv360 = campaigns.find((c) => c.platform === "dv360" && c.currency)?.currency;
   const detectedGads = campaigns.find((c) => c.platform === "google_ads" && c.currency)?.currency;
+  const detectedSnap = campaigns.find((c) => c.platform === "snapchat" && c.currency)?.currency;
 
   const metaCurrency = detectedMeta || storedMetaCurrency || "USD";
   const dv360Currency = detectedDv360 || storedDv360Currency || "USD";
   const googleAdsCurrency = detectedGads || storedGoogleAdsCurrency || "USD";
+  const snapchatCurrency = detectedSnap || storedSnapchatCurrency || "USD";
 
-  return { campaigns, loading, error, platformErrors, startDate, endDate, metaCurrency, dv360Currency, googleAdsCurrency };
+  return { campaigns, loading, error, platformErrors, startDate, endDate, metaCurrency, dv360Currency, googleAdsCurrency, snapchatCurrency };
 }
