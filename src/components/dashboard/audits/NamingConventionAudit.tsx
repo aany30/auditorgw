@@ -44,9 +44,13 @@ export default function NamingConventionAudit({ campaigns }: AuditProps) {
   const handleChildRename = async (
     nodeId: string,
     currentName: string,
-    parentPlatform: "meta" | "dv360" | "google_ads",
+    parentPlatform: "meta" | "dv360" | "google_ads" | "snapchat",
     kind: "insertionOrder" | "lineItem" = "lineItem",
   ) => {
+    if (parentPlatform === "snapchat") {
+      setChildStatus((s) => ({ ...s, [nodeId]: { error: "Snapchat rename not supported yet" } }));
+      return;
+    }
     const newName = (childDraft[nodeId] ?? currentName).trim();
     if (!newName) {
       setChildStatus((s) => ({ ...s, [nodeId]: { error: "Name cannot be empty" } }));
@@ -321,14 +325,16 @@ export default function NamingConventionAudit({ campaigns }: AuditProps) {
                 const metaRows = filtered.filter(({ campaign }) => campaign.platform === "meta");
                 const dv360Rows = filtered.filter(({ campaign }) => campaign.platform === "dv360");
                 const gadsRows = filtered.filter(({ campaign }) => campaign.platform === "google_ads");
+                const snapRows = filtered.filter(({ campaign }) => campaign.platform === "snapchat");
 
-                const PLATFORM_OPTIONS: Record<"meta" | "dv360" | "google_ads", string[]> = {
+                const PLATFORM_OPTIONS: Record<"meta" | "dv360" | "google_ads" | "snapchat", string[]> = {
                   meta: ["Meta", "Facebook", "Instagram"],
                   dv360: ["DV360", "YouTube", "Display", "CTV"],
                   google_ads: ["Campaign", "Ad Group", "Ad", "Keyword"],
+                  snapchat: ["Snapchat", "Snap", "Stories", "Spotlight"],
                 };
 
-                const renderRow = ({ campaign, result }: typeof filtered[0], platformKey: "meta" | "dv360" | "google_ads") => {
+                const renderRow = ({ campaign, result }: typeof filtered[0], platformKey: "meta" | "dv360" | "google_ads" | "snapchat") => {
                   const key = rowKey(campaign);
                   const isFail = result.status === "non-compliant";
                   const isOpen = expandedId === key;
@@ -490,7 +496,7 @@ export default function NamingConventionAudit({ campaigns }: AuditProps) {
                               {renameStatus[key] === "success" && (
                                 <div className="bg-green-50 border border-green-200 rounded p-2 text-xs text-green-900 flex items-center gap-1.5">
                                   <CheckCircle2 className="w-3.5 h-3.5 text-green-600" />
-                                  Renamed in {campaign.platform === "meta" ? "Meta Ads Manager" : "DV360"}. Refresh the page to see the updated name.
+                                  Renamed in {campaign.platform === "meta" ? "Meta Ads Manager" : campaign.platform === "dv360" ? "DV360" : campaign.platform === "google_ads" ? "Google Ads" : "Snapchat Ads Manager"}. Refresh the page to see the updated name.
                                 </div>
                               )}
                               {typeof renameStatus[key] === "object" && (
@@ -606,8 +612,8 @@ export default function NamingConventionAudit({ campaigns }: AuditProps) {
                 }; // end renderRow
 
                 const PlatformHeader = ({ platform, count }: { platform: string; count: number }) => {
-                  const label = platform === "meta" ? "Meta" : platform === "dv360" ? "DV360" : "Google Ads";
-                  const chip = platform === "meta" ? "bg-blue-100 text-blue-800" : platform === "dv360" ? "bg-green-100 text-green-800" : "bg-yellow-100 text-yellow-800";
+                  const label = platform === "meta" ? "Meta" : platform === "dv360" ? "DV360" : platform === "google_ads" ? "Google Ads" : "Snapchat";
+                  const chip = platform === "meta" ? "bg-blue-100 text-blue-800" : platform === "dv360" ? "bg-green-100 text-green-800" : platform === "google_ads" ? "bg-yellow-100 text-yellow-800" : "bg-pink-100 text-pink-800";
                   return (
                     <tr className="bg-gray-100 border-b border-gray-300">
                       <td colSpan={6} className="px-4 py-2 font-bold text-sm text-gray-800 flex items-center gap-2">
@@ -637,6 +643,12 @@ export default function NamingConventionAudit({ campaigns }: AuditProps) {
                       <>
                         <PlatformHeader platform="google_ads" count={gadsRows.length} />
                         {gadsRows.map((row) => renderRow(row, "google_ads"))}
+                      </>
+                    )}
+                    {snapRows.length > 0 && (
+                      <>
+                        <PlatformHeader platform="snapchat" count={snapRows.length} />
+                        {snapRows.map((row) => renderRow(row, "snapchat"))}
                       </>
                     )}
                   </>
@@ -719,7 +731,7 @@ function ChildRow({ id, name, status, type, editing, draft, renameStatus, onEdit
 interface ChildRenameInlineProps {
   id: string;
   name: string;
-  platform: "meta" | "dv360" | "google_ads";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat";
   kind?: "insertionOrder" | "lineItem";
   metaAccessToken: string | null;
   dv360?: {
