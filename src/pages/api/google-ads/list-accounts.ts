@@ -1,12 +1,13 @@
 /**
  * POST /api/google-ads/list-accounts
  *
- * Lists every Google Ads account the token can reach via listAccessibleCustomers.
+ * Lists every Google Ads account the token can reach.
  * MCC (manager) accounts are returned with their child (leaf) accounts nested
  * under them so the UI can display a hierarchical picker.
  *
- * Uses GAQL queries (not REST GET) to fetch account names reliably for both
- * normal accounts and MCC accounts.
+ * Uses the GoogleAdsApiClient (GAQL searchStream) for fetching account info
+ * and children — the REST GET endpoint 404s for accounts reached through a
+ * manager, while searchStream honours login-customer-id.
  *
  * Body: { clientId, clientSecret, refreshToken }
  * Returns: { accounts: [{ id, name, isManager, children?: [{ id, name }] }] }
@@ -14,10 +15,11 @@
 
 import type { NextApiRequest, NextApiResponse } from "next";
 import { getGoogleAccessToken } from "@/lib/api-clients/google-token-cache";
+import { GoogleAdsApiClient } from "@/lib/api-clients/google-ads";
 
 export const config = { maxDuration: 120 };
 
-const GADS_BASE = "https://googleads.googleapis.com/v19";
+const GADS_BASE = "https://googleads.googleapis.com/v26";
 
 interface AccountInfo {
   id: string;
@@ -43,63 +45,49 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   try {
     const accessToken = await getGoogleAccessToken(clientId, clientSecret, refreshToken);
-    const authHeaders: Record<string, string> = {
-      Authorization: `Bearer ${accessToken}`,
-      "developer-token": developerToken,
-    };
 
     // Step 1: Get all accessible customer IDs
     const listRes = await fetch(`${GADS_BASE}/customers:listAccessibleCustomers`, {
-      headers: authHeaders,
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "developer-token": developerToken,
+      },
     });
     if (!listRes.ok) {
       const err = await listRes.text();
-      return res.status(listRes.status).json({ error: err.slice(0, 300) || "Google Ads API error" });
+      return res.status(502).json({ error: `Google Ads listAccessibleCustomers failed (${listRes.status}): ${err.slice(0, 300)}` });
     }
 
     const listData = await listRes.json();
     const resourceNames: string[] = listData.resourceNames || [];
     const customerIds = resourceNames.map((r: string) => r.replace("customers/", ""));
 
-    // Step 2: Fetch name + isManager for each customer using GAQL.
-    // GAQL reliably returns descriptive_name for both normal and MCC accounts,
-    // unlike the REST GET endpoint which often omits it.
+    // Step 2: For each customer, use GoogleAdsApiClient (GAQL) to get name + isManager.
+    // GAQL searchStream works reliably for both normal and MCC accounts,
+    // using login-customer-id = the account itself.
     const infoMap = new Map<string, { name: string; isManager: boolean }>();
     await Promise.all(
       customerIds.map(async (cid) => {
-        const info = await fetchCustomerInfo(cid, cid, authHeaders);
-        if (info) {
-          infoMap.set(cid, info);
+        try {
+          const client = new GoogleAdsApiClient({
+            clientId, clientSecret, refreshToken, developerToken,
+            customerId: cid,
+            loginCustomerId: cid,
+          });
+          const info = await client.getCustomerInfo();
+          const children = await client.listChildAccounts();
+          const isMcc = children.some((c) => c.isManager === false && c.id !== cid);
+          infoMap.set(cid, {
+            name: info.descriptiveName || cid,
+            isManager: isMcc || children.length > 1,
+          });
+        } catch {
+          infoMap.set(cid, { name: cid, isManager: false });
         }
       })
     );
 
-    // Step 2b: For customers that failed, retry using each known MCC as login-customer-id
-    const missingIds = customerIds.filter((id) => !infoMap.has(id));
-    const managerIdsKnown = [...infoMap.entries()]
-      .filter(([, v]) => v.isManager)
-      .map(([id]) => id);
-
-    if (missingIds.length > 0 && managerIdsKnown.length > 0) {
-      await Promise.all(
-        missingIds.map(async (cid) => {
-          for (const mccId of managerIdsKnown) {
-            const info = await fetchCustomerInfo(cid, mccId, authHeaders);
-            if (info) {
-              infoMap.set(cid, info);
-              return;
-            }
-          }
-          infoMap.set(cid, { name: cid, isManager: false });
-        })
-      );
-    } else {
-      for (const cid of missingIds) {
-        infoMap.set(cid, { name: cid, isManager: false });
-      }
-    }
-
-    // Step 3: For each MCC account, fetch child accounts via GAQL
+    // Step 3: For each MCC, fetch child leaf accounts
     const accounts: AccountInfo[] = [];
     const managerIds = customerIds.filter((id) => infoMap.get(id)?.isManager);
     const leafIds = customerIds.filter((id) => !infoMap.get(id)?.isManager);
@@ -107,15 +95,29 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     await Promise.all(
       managerIds.map(async (mccId) => {
-        const children = await fetchMccChildren(mccId, authHeaders);
-        const mccInfo = infoMap.get(mccId)!;
-        accounts.push({
-          id: mccId,
-          name: mccInfo.name,
-          isManager: true,
-          children,
-        });
-        for (const c of children) childrenClaimed.add(c.id);
+        try {
+          const client = new GoogleAdsApiClient({
+            clientId, clientSecret, refreshToken, developerToken,
+            customerId: mccId,
+            loginCustomerId: mccId,
+          });
+          const allChildren = await client.listChildAccounts();
+          const leafChildren = allChildren
+            .filter((c) => !c.isManager && c.id !== mccId)
+            .map((c) => ({ id: c.id, name: c.name }));
+
+          const mccInfo = infoMap.get(mccId)!;
+          accounts.push({
+            id: mccId,
+            name: mccInfo.name,
+            isManager: true,
+            children: leafChildren.sort((a, b) => a.name.localeCompare(b.name)),
+          });
+          for (const c of leafChildren) childrenClaimed.add(c.id);
+        } catch {
+          const mccInfo = infoMap.get(mccId)!;
+          accounts.push({ id: mccId, name: mccInfo.name, isManager: true, children: [] });
+        }
       })
     );
 
@@ -127,7 +129,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     }
 
-    // Sort: MCC accounts first (alphabetical), then standalone leaves
+    // Sort: MCC accounts first, then standalone leaves, alphabetical
     accounts.sort((a, b) => {
       if (a.isManager !== b.isManager) return a.isManager ? -1 : 1;
       return a.name.localeCompare(b.name);
@@ -137,97 +139,5 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Unknown error";
     return res.status(500).json({ error: msg });
-  }
-}
-
-async function fetchCustomerInfo(
-  customerId: string,
-  loginCustomerId: string,
-  authHeaders: Record<string, string>,
-): Promise<{ name: string; isManager: boolean } | null> {
-  try {
-    const gaql = `SELECT customer.id, customer.descriptive_name, customer.manager FROM customer LIMIT 1`;
-    const searchRes = await fetch(
-      `${GADS_BASE}/customers/${customerId}/googleAds:searchStream`,
-      {
-        method: "POST",
-        headers: {
-          ...authHeaders,
-          "Content-Type": "application/json",
-          "login-customer-id": loginCustomerId,
-        },
-        body: JSON.stringify({ query: gaql }),
-      },
-    );
-
-    if (!searchRes.ok) return null;
-
-    const streamData = await searchRes.json();
-    for (const batch of streamData) {
-      for (const row of batch.results || []) {
-        const c = row.customer;
-        if (!c) continue;
-        return {
-          name: c.descriptiveName || String(c.id || customerId),
-          isManager: !!c.manager,
-        };
-      }
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-async function fetchMccChildren(
-  mccId: string,
-  authHeaders: Record<string, string>,
-): Promise<{ id: string; name: string }[]> {
-  try {
-    const gaql = `
-      SELECT
-        customer_client.id,
-        customer_client.descriptive_name,
-        customer_client.manager,
-        customer_client.status
-      FROM customer_client
-      WHERE customer_client.manager = FALSE
-        AND customer_client.status = 'ENABLED'
-    `;
-
-    const searchRes = await fetch(
-      `${GADS_BASE}/customers/${mccId}/googleAds:searchStream`,
-      {
-        method: "POST",
-        headers: {
-          ...authHeaders,
-          "Content-Type": "application/json",
-          "login-customer-id": mccId,
-        },
-        body: JSON.stringify({ query: gaql }),
-      },
-    );
-
-    if (!searchRes.ok) return [];
-
-    const streamData = await searchRes.json();
-    const children: { id: string; name: string }[] = [];
-
-    for (const batch of streamData) {
-      const results = batch.results || [];
-      for (const row of results) {
-        const cc = row.customerClient;
-        if (!cc) continue;
-        children.push({
-          id: String(cc.id || ""),
-          name: cc.descriptiveName || String(cc.id || ""),
-        });
-      }
-    }
-
-    children.sort((a, b) => a.name.localeCompare(b.name));
-    return children;
-  } catch {
-    return [];
   }
 }

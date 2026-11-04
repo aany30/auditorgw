@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { ChevronDown, Check, LogOut, Link2, Unlink, AlertCircle, RefreshCw } from "lucide-react";
+import { ChevronDown, Check, LogOut, Link2, Unlink, AlertCircle } from "lucide-react";
 import { useAuthStore } from "@/store/auth";
 
 const GOOGLE_SVG = (
@@ -388,12 +388,11 @@ interface GoogleAdsRowProps {
   onDisconnect: () => void;
   onClose: () => void;
   onPasteId: (id: string) => void;
-  onRefresh: () => void;
 }
 
 function GoogleAdsRow({
   connected, authenticated, activeId, mccAccounts, flatOptions,
-  onSwitch, onDisconnect, onClose, onPasteId, onRefresh,
+  onSwitch, onDisconnect, onClose, onPasteId,
 }: GoogleAdsRowProps) {
   const [expanded, setExpanded] = useState(false);
   const [expandedMcc, setExpandedMcc] = useState<Set<string>>(new Set());
@@ -463,15 +462,6 @@ function GoogleAdsRow({
               }`}
             >
               {needsSelection ? "Pick" : "Switch"} <ChevronDown className={`w-3 h-3 inline transition ${expanded ? "rotate-180" : ""}`} />
-            </button>
-          )}
-          {(connected || authenticated) && (
-            <button
-              onClick={onRefresh}
-              className="p-1.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded transition"
-              title="Refresh accounts"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
             </button>
           )}
           {(connected || authenticated) ? (
@@ -916,10 +906,6 @@ export default function AccountSelector({ onResolveGoogleAds }: AccountSelectorP
             onPasteId={(id) => {
               if (onResolveGoogleAds) onResolveGoogleAds(id);
               else setGoogleAdsCredentials({ customerId: id });
-            }}
-            onRefresh={() => {
-              setGadsMccAccounts([]);
-              setGadsCustomerOptions([]);
             }}
           />
 
