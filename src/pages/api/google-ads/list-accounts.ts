@@ -5,6 +5,9 @@
  * MCC (manager) accounts are returned with their child (leaf) accounts nested
  * under them so the UI can display a hierarchical picker.
  *
+ * Uses GAQL queries (not REST GET) to fetch account names reliably for both
+ * normal accounts and MCC accounts.
+ *
  * Body: { clientId, clientSecret, refreshToken }
  * Returns: { accounts: [{ id, name, isManager, children?: [{ id, name }] }] }
  */
@@ -58,59 +61,40 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const resourceNames: string[] = listData.resourceNames || [];
     const customerIds = resourceNames.map((r: string) => r.replace("customers/", ""));
 
-    // Step 2: Fetch info for each customer (name + isManager) in parallel.
-    // Some child accounts require `login-customer-id` set to their MCC, so
-    // we first try a plain fetch; if it fails we'll retry in Step 2b with
-    // each discovered MCC as the login customer.
+    // Step 2: Fetch name + isManager for each customer using GAQL.
+    // GAQL reliably returns descriptive_name for both normal and MCC accounts,
+    // unlike the REST GET endpoint which often omits it.
     const infoMap = new Map<string, { name: string; isManager: boolean }>();
-    const failedIds: string[] = [];
     await Promise.all(
       customerIds.map(async (cid) => {
-        try {
-          const infoRes = await fetch(`${GADS_BASE}/customers/${cid}`, { headers: authHeaders });
-          if (infoRes.ok) {
-            const info = await infoRes.json();
-            infoMap.set(cid, {
-              name: info.descriptiveName || cid,
-              isManager: !!info.manager,
-            });
-          } else {
-            failedIds.push(cid);
-          }
-        } catch {
-          failedIds.push(cid);
+        const info = await fetchCustomerInfo(cid, cid, authHeaders);
+        if (info) {
+          infoMap.set(cid, info);
         }
       })
     );
 
-    // Step 2b: Retry failed IDs using each known MCC as login-customer-id
+    // Step 2b: For customers that failed, retry using each known MCC as login-customer-id
+    const missingIds = customerIds.filter((id) => !infoMap.has(id));
     const managerIdsKnown = [...infoMap.entries()]
       .filter(([, v]) => v.isManager)
       .map(([id]) => id);
 
-    if (failedIds.length > 0 && managerIdsKnown.length > 0) {
+    if (missingIds.length > 0 && managerIdsKnown.length > 0) {
       await Promise.all(
-        failedIds.map(async (cid) => {
+        missingIds.map(async (cid) => {
           for (const mccId of managerIdsKnown) {
-            try {
-              const infoRes = await fetch(`${GADS_BASE}/customers/${cid}`, {
-                headers: { ...authHeaders, "login-customer-id": mccId },
-              });
-              if (infoRes.ok) {
-                const info = await infoRes.json();
-                infoMap.set(cid, {
-                  name: info.descriptiveName || cid,
-                  isManager: !!info.manager,
-                });
-                return;
-              }
-            } catch { /* try next MCC */ }
+            const info = await fetchCustomerInfo(cid, mccId, authHeaders);
+            if (info) {
+              infoMap.set(cid, info);
+              return;
+            }
           }
           infoMap.set(cid, { name: cid, isManager: false });
         })
       );
     } else {
-      for (const cid of failedIds) {
+      for (const cid of missingIds) {
         infoMap.set(cid, { name: cid, isManager: false });
       }
     }
@@ -123,7 +107,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     await Promise.all(
       managerIds.map(async (mccId) => {
-        const children = await fetchMccChildren(mccId, authHeaders, developerToken);
+        const children = await fetchMccChildren(mccId, authHeaders);
         const mccInfo = infoMap.get(mccId)!;
         accounts.push({
           id: mccId,
@@ -156,10 +140,48 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 }
 
+async function fetchCustomerInfo(
+  customerId: string,
+  loginCustomerId: string,
+  authHeaders: Record<string, string>,
+): Promise<{ name: string; isManager: boolean } | null> {
+  try {
+    const gaql = `SELECT customer.id, customer.descriptive_name, customer.manager FROM customer LIMIT 1`;
+    const searchRes = await fetch(
+      `${GADS_BASE}/customers/${customerId}/googleAds:searchStream`,
+      {
+        method: "POST",
+        headers: {
+          ...authHeaders,
+          "Content-Type": "application/json",
+          "login-customer-id": loginCustomerId,
+        },
+        body: JSON.stringify({ query: gaql }),
+      },
+    );
+
+    if (!searchRes.ok) return null;
+
+    const streamData = await searchRes.json();
+    for (const batch of streamData) {
+      for (const row of batch.results || []) {
+        const c = row.customer;
+        if (!c) continue;
+        return {
+          name: c.descriptiveName || String(c.id || customerId),
+          isManager: !!c.manager,
+        };
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchMccChildren(
   mccId: string,
   authHeaders: Record<string, string>,
-  developerToken: string,
 ): Promise<{ id: string; name: string }[]> {
   try {
     const gaql = `
