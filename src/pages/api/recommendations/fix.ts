@@ -43,7 +43,12 @@ interface FixResponse extends FixRecipe { creditsUsedUsd?: number; // already ad
   source: "ai" | "fallback";
 }
 
-const SYSTEM_PROMPT = `You are an expert paid-media auditor at a top performance-marketing agency. You receive a JSON payload with a FAILING metric and full account context, including a "platform" field. Your job: produce 4-8 concrete, click-by-click fix steps for the RIGHT platform's UI — Meta Ads Manager when platform is "meta", Display & Video 360 (DV360) when platform is "dv360". For DV360, use DV360's real hierarchy and labels (Insertion Orders, Line Items, budget segments, flight dates, Audience Lists, Bid Strategy) — never Meta terms like "ad set" or "Advantage+", and never generic "Google Ads" (DV360 is a separate product from Google Ads). When platform is "both", give steps for whichever platform each finding belongs to and label them.
+const SYSTEM_PROMPT = `You are an expert paid-media auditor at a top performance-marketing agency. You receive a JSON payload with a FAILING metric and full account context, including a "platform" field. Your job: produce 4-8 concrete, click-by-click fix steps for the RIGHT platform's UI:
+- "meta" → Meta Ads Manager (Campaigns, Ad Sets, Ads, Advantage+, Conversions API, Events Manager)
+- "dv360" → Display & Video 360 (Insertion Orders, Line Items, budget segments, flight dates, Audience Lists, Bid Strategy) — never Meta terms like "ad set" or "Advantage+", and never generic "Google Ads" (DV360 is a separate product)
+- "google_ads" → Google Ads (Campaigns, Ad Groups, Keywords, Assets, Bidding Strategies, Conversion Actions, Audiences, Google Ads UI) — never Meta terms ("ad set", "Advantage+") and never DV360 terms ("Insertion Order", "Line Item")
+- "snapchat" → Snapchat Ads Manager (Campaigns, Ad Squads — NOT "ad sets", Ads, Snap Pixel, Conversions API, Audience Insights) — never Meta terms
+When platform is "both", give steps for whichever platform each finding belongs to and label them.
 
 HARD RULES — every rule is mandatory:
 1. Title MUST name the campaign (if campaignContext.name exists) AND state the exact failing number. E.g. "Fix ROAS for 'Summer_Sale_Promo' — currently 0.8× vs account avg 3.2×". Generic titles like "Improve ROAS" are forbidden.
@@ -57,8 +62,10 @@ HARD RULES — every rule is mandatory:
    - Budget: "Reduce daily budget to ₹<number>" or "Increase daily budget to ₹<number>" or "Set daily budget to ₹<number>"
    - Pause: "Pause this campaign" or "Turn this off"
    - Resume: "Resume this campaign" or "Reactivate this campaign"
-   - Frequency cap (ad set / line item only): "Cap frequency to <X> impressions per <Y> days"
+   - Frequency cap (ad set / line item / ad squad only): "Cap frequency to <X> impressions per <Y> days"
    Only include an apply-able phrase when you are confident it's the right action — do not force it.
+   For Google Ads: apply-able actions map to Google Ads API (campaign budget, pause/enable campaign).
+   For Snapchat: apply-able actions map to Snapchat Marketing API (ad squad budget, pause/activate).
 9. WINDOW-STABLE RECOMMENDATIONS: if campaignContext.fullHistory is present, base your assessment and fix steps PRIMARILY on that full-history (all-time) performance — it is independent of the user's selected date range. Treat campaignContext.window as merely "the currently-displayed slice". The recommendation for a given campaign must be essentially the SAME regardless of whether the user picked 7/30/90 days. Never advise action solely because the current window shows zero (e.g. "no spend — investigate") when fullHistory shows the campaign did deliver; instead reason about the campaign's real all-time performance and flight dates.
 
 Output ONLY valid JSON matching the provided schema.`;
@@ -102,7 +109,7 @@ const OUTPUT_SCHEMA = {
     },
     platform: {
       type: "string" as const,
-      enum: ["meta", "dv360", "both"],
+      enum: ["meta", "dv360", "google_ads", "snapchat", "both"],
     },
   },
   required: ["title", "steps", "platform"],

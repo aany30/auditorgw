@@ -103,11 +103,10 @@ export default function CredentialInput({ platform, onClose, onComplete }: Crede
     setIsLoading(true);
     try {
       if (!metaForm.accessToken.trim()) throw new Error("Access token is required");
-      if (!metaForm.businessId.trim()) throw new Error("Business ID is required");
-      // Pixel IDs are optional — they're auto-derived from the ad account
-      // when missing, so users don't need to look them up upfront.
+      // Ad account and pixel IDs are auto-fetched from the token, so the user picks
+      // the ad account from the dashboard's Manage Accounts dropdown afterward.
       const pixelIds = metaForm.pixelIds.split(",").map((id) => id.trim()).filter(Boolean);
-      setMetaCredentials(metaForm.accessToken.trim(), metaForm.businessId.trim(), pixelIds);
+      setMetaCredentials(metaForm.accessToken.trim(), "", pixelIds);
       setMetaForm({ accessToken: "", businessId: "", pixelIds: "" });
       setSavedSuccess(true);
     } catch (err) {
@@ -239,23 +238,6 @@ export default function CredentialInput({ platform, onClose, onComplete }: Crede
 
           <div>
             <label className="block text-gray-700 text-sm font-semibold mb-2">
-              Ad Account ID
-              <span className="ml-1 text-xs font-normal text-gray-500">— from Ads Manager URL (act_XXXXXXX)</span>
-            </label>
-            <input
-              type="text"
-              value={metaForm.businessId}
-              onChange={(e) => setMetaForm({ ...metaForm, businessId: e.target.value })}
-              placeholder="e.g., 123456789012345 or act_123456789012345"
-              className={inputClass}
-            />
-            <p className="text-gray-500 text-xs mt-1">
-              Find this in Ads Manager → Settings → Ad Account ID (the number after "act_").
-            </p>
-          </div>
-
-          <div>
-            <label className="block text-gray-700 text-sm font-semibold mb-2">
               Pixel IDs (comma-separated)
               <span className="ml-1 text-xs font-normal text-gray-500">— optional</span>
             </label>
@@ -277,7 +259,7 @@ export default function CredentialInput({ platform, onClose, onComplete }: Crede
             <button
               type="button"
               onClick={testMetaConnection}
-              disabled={testing || !metaForm.accessToken || !metaForm.businessId}
+              disabled={testing || !metaForm.accessToken}
               className="flex-1 bg-gray-100 hover:bg-gray-200 disabled:bg-gray-50 disabled:text-gray-400 text-gray-700 font-semibold py-2.5 px-4 rounded-lg transition flex items-center justify-center gap-2"
             >
               {testing ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}

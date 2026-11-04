@@ -701,7 +701,7 @@ function CoverPage(p: PdfReportPagesProps) {
   const objective: ReportObjective = p.objective ?? "sales";
   const heading = OBJECTIVE_TITLE[objective];
 
-  const platformLabel = p.platform === "meta" ? "Meta (FB/IG)" : p.platform === "dv360" ? "DV360" : "Meta + DV360";
+  const platformLabel = p.platform === "meta" ? "Meta (FB/IG)" : p.platform === "dv360" ? "DV360" : p.platform === "google_ads" ? "Google Ads" : p.platform === "snapchat" ? "Snapchat" : "All Platforms";
 
   const filters = [
     { Icon: Calendar as IconType, color: INDIGO, label: "Period", value: `${p.startDate} – ${p.endDate}` },
@@ -1537,7 +1537,7 @@ function BbdOverviewPage(p: PdfReportPagesProps & { pageNum: number; total: numb
   // Platform-Wise Performance: group campaigns by platform.
   const platforms: Record<string, { spend: number; impressions: number; reach: number; clicks: number; videoViews: number; }> = {};
   for (const c of cs) {
-    const key = c.platform === "meta" ? "Meta" : c.platform === "dv360" ? "Google (DV360)" : (c.platform || "Other");
+    const key = c.platform === "meta" ? "Meta" : c.platform === "dv360" ? "Google (DV360)" : c.platform === "google_ads" ? "Google Ads" : c.platform === "snapchat" ? "Snapchat" : (c.platform || "Other");
     if (!platforms[key]) platforms[key] = { spend: 0, impressions: 0, reach: 0, clicks: 0, videoViews: 0 };
     platforms[key].spend += c.spend || 0;
     platforms[key].impressions += c.impressions || 0;

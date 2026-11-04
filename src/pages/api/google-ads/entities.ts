@@ -49,6 +49,12 @@ export default async function handler(
         .status(403)
         .json({ error: "Reconnect Google with the adwords scope." });
     }
+    if (message.includes("REQUESTED_METRICS_FOR_MANAGER")) {
+      return res.status(400).json({
+        error: "This Google Ads account is a Manager (MCC) account. Please select a client account from the Manage Accounts dropdown.",
+        code: "MANAGER_ACCOUNT",
+      });
+    }
     console.error("Google Ads entities fetch failed:", message);
     return res.status(502).json({ error: message });
   }

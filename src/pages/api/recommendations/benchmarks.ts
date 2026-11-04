@@ -36,6 +36,7 @@ Rules:
 - PageView (or view_item) is always 100% — it's the baseline.
 - Each subsequent stage drops. Stage N value is a % of the original PageView, not of the previous stage.
 - Be conservative — use medians, not best-in-class.
+- The "platform" field tells you the ad platform context. Use platform-appropriate funnel stage names: Meta uses PageView/ViewContent/AddToCart/Purchase; Google Ads uses page_view/view_item/add_to_cart/purchase; DV360 uses Floodlight activities; Snapchat uses Snap Pixel events (PAGE_VIEW, VIEW_CONTENT, ADD_CART, PURCHASE). Benchmark values are industry-specific, not platform-specific.
 - Output ONLY valid JSON matching the provided schema. No prose outside the JSON.
 
 Example for "E-commerce — Apparel":

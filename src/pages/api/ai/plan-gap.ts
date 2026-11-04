@@ -18,7 +18,7 @@ interface GapRequest {
   delivered: Record<string, number>;
   pacing?: Record<string, number | null>;
   dateRange?: string;
-  platform?: "meta" | "dv360";
+  platform?: "meta" | "dv360" | "google_ads" | "snapchat";
   isDemo?: boolean;
 }
 
@@ -44,6 +44,8 @@ Rules:
 - Give 2-4 recommendations, each a real lever (reallocate budget, cap frequency, shift to reach-priced inventory, fix creative for CTR, pause an over-pacing line, etc.), not vague advice.
 - If planned is 0/missing for a metric, don't invent a target — say that metric's gap can't be assessed.
 - For DV360, reach/frequency come from Bid Manager and conversion revenue may be missing; don't assume Meta-style optimisation levers.
+- For Google Ads, use Google Ads terminology (Campaigns, Ad Groups, Keywords, Bidding Strategies) — never Meta ("ad set") or DV360 ("Insertion Order") terms.
+- For Snapchat, use Snapchat Ads Manager terminology (Ad Squads, not "ad sets"; Snap Pixel, not "Meta Pixel").
 - Keep it tight: insight ≤3 sentences, ≤4 recommendation lines.`;
 
 // Compute a decent 2-3 sentence summary without the API (no key / demo).
@@ -97,7 +99,7 @@ export default async function handler(
       messages: [
         {
           role: "user",
-          content: `Explain the planned vs delivered gap for this ${body.platform === "dv360" ? "DV360" : "Meta"} campaign (${body.dateRange ?? "selected period"}). ${body.platform === "dv360" ? "This is a DV360 campaign — reach/frequency come from Floodlight/Bid Manager and conversion revenue may be unavailable; don't assume Meta-style optimisation levers." : ""}\n\n${JSON.stringify(
+          content: `Explain the planned vs delivered gap for this ${body.platform === "dv360" ? "DV360" : body.platform === "google_ads" ? "Google Ads" : body.platform === "snapchat" ? "Snapchat" : "Meta"} campaign (${body.dateRange ?? "selected period"}). ${body.platform === "dv360" ? "This is a DV360 campaign — reach/frequency come from Floodlight/Bid Manager and conversion revenue may be unavailable; don't assume Meta-style optimisation levers." : body.platform === "google_ads" ? "This is a Google Ads campaign — use Google Ads terminology (Ad Groups, Keywords, Bidding Strategies), not Meta or DV360 terms." : body.platform === "snapchat" ? "This is a Snapchat campaign — use Snapchat Ads Manager terminology (Ad Squads, Snap Pixel), not Meta terms." : ""}\n\n${JSON.stringify(
             { campaign: body.campaign, platform: body.platform ?? "meta", planned: body.planned, delivered: body.delivered, pacing: body.pacing },
             null, 2
           )}`,

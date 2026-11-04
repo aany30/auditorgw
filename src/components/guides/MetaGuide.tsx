@@ -18,7 +18,7 @@ export default function MetaGuide({ onClose }: Props) {
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-900">
         <p className="font-semibold mb-0.5">~5 minutes total · Manual paste, no OAuth setup needed</p>
         <p className="text-blue-800">
-          You'll collect 3 things: an Access Token, your Ad Account ID, and your Pixel ID(s). CAPI works automatically once these are saved.
+          You only need an Access Token (Pixel ID(s) optional). Your ad accounts are detected automatically from the token — you pick which one to audit from the dashboard. CAPI works automatically once saved.
         </p>
       </div>
 
@@ -254,32 +254,6 @@ export default function MetaGuide({ onClose }: Props) {
 
       <GuideSection
         number={3}
-        title="Find your Ad Account ID"
-        summary="The unique ID for your Meta Ads account (not your Business Manager ID)"
-        yieldsLabel="Ad Account ID"
-        subSteps={[
-          {
-            steps: [
-              <>
-                Open <GuideLink href="https://adsmanager.facebook.com">Ads Manager</GuideLink> in a new tab.
-              </>,
-              <>
-                Look at the URL or click <GuideButton>Account Overview</GuideButton> — you'll see a number like <GuideCode>act_123456789012345</GuideCode>. The digits after <GuideCode>act_</GuideCode> are your Ad Account ID.
-              </>,
-              <>
-                Or: Ads Manager → top-left account selector → the number under your account name.
-              </>,
-              <>
-                <strong>Note:</strong> This is different from your Business Manager ID. Campaigns and reporting data require the Ad Account ID.
-              </>,
-              <>Copy and paste into the form below (with or without the <GuideCode>act_</GuideCode> prefix).</>,
-            ],
-          },
-        ]}
-      />
-
-      <GuideSection
-        number={4}
         title="Find your Pixel ID(s)"
         summary="One or more pixels you want to audit"
         yieldsLabel="Pixel ID"
@@ -304,7 +278,7 @@ export default function MetaGuide({ onClose }: Props) {
       />
 
       <GuideSection
-        number={5}
+        number={4}
         title="CAPI (Conversion API) — what you need to know"
         summary="Auditing CAPI needs nothing extra. Implementation is separate."
         yieldsLabel="No extra setup"
@@ -342,9 +316,9 @@ export default function MetaGuide({ onClose }: Props) {
 
       {/* Inline credential form */}
       <div className="border-t-2 border-gray-200 pt-5 mt-6">
-        <h4 className="text-lg font-bold text-gray-900 mb-1">6 · Paste & Verify</h4>
+        <h4 className="text-lg font-bold text-gray-900 mb-1">5 · Paste & Verify</h4>
         <p className="text-sm text-gray-600 mb-4">
-          Paste the Access Token, Business ID, and Pixel ID(s) you collected above.
+          Paste the Access Token (and optional Pixel ID(s)) you collected above. Your ad accounts load automatically — pick one from the dashboard's Manage Accounts dropdown.
         </p>
         <CredentialInput platform="meta" onComplete={onClose} />
       </div>

@@ -170,7 +170,7 @@ export default async function handler(
   const fmt = (n: number) => cur + Math.round(n).toLocaleString("en-IN");
   const t = body.totals;
 
-  const platformLabel = body.platform === "both" ? "Meta + DV360" : body.platform === "dv360" ? "DV360" : "Meta";
+  const platformLabel = body.platform === "both" ? "Meta + DV360 + Google Ads + Snapchat" : body.platform === "dv360" ? "DV360" : body.platform === "google_ads" ? "Google Ads" : body.platform === "snapchat" ? "Snapchat" : "Meta";
 
   const userPayload = `Generate a ${body.reportType === "awareness" ? "brand awareness" : "sales & performance"} business report for the following campaign data.
 

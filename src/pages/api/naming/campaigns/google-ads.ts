@@ -39,7 +39,7 @@ function channelTypeToObjective(ct: string): string {
 
 export default async function handler(
   req: NextApiRequest,
-  res: NextApiResponse<CampaignData[] | { error: string }>,
+  res: NextApiResponse<CampaignData[] | { error: string; code?: string }>,
 ) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
@@ -131,6 +131,12 @@ export default async function handler(
     return res.status(200).json(out);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
+    if (message.includes("REQUESTED_METRICS_FOR_MANAGER")) {
+      return res.status(400).json({
+        error: "This Google Ads account is a Manager (MCC) account. Please select a client account from the Manage Accounts dropdown.",
+        code: "MANAGER_ACCOUNT",
+      });
+    }
     console.error("Google Ads campaigns fetch failed:", message);
     return res.status(502).json({ error: message });
   }

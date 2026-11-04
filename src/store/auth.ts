@@ -281,6 +281,22 @@ interface AuthState {
   snapchatAdAccountId: string | null;
   snapchatOrgId: string | null;
 
+  // Available account options per platform (persisted so users can switch later)
+  metaAdAccountOptions: { id: string; name: string }[];
+  dv360AdvertiserOptions: { id: string; name: string; partnerId?: string }[];
+  gadsCustomerOptions: { id: string; name: string; loginCustomerId?: string }[];
+  snapAdAccountOptions: { id: string; name: string }[];
+  setMetaAdAccountOptions: (opts: { id: string; name: string }[]) => void;
+  setDv360AdvertiserOptions: (opts: { id: string; name: string; partnerId?: string }[]) => void;
+  dv360Partners: { id: string; name: string }[];
+  setDv360Partners: (partners: { id: string; name: string }[]) => void;
+  setGadsCustomerOptions: (opts: { id: string; name: string; loginCustomerId?: string }[]) => void;
+  setSnapAdAccountOptions: (opts: { id: string; name: string }[]) => void;
+  switchMetaAdAccount: (id: string) => void;
+  switchDv360Advertiser: (id: string) => void;
+  switchGoogleAdsCustomer: (id: string) => void;
+  switchSnapchatAdAccount: (id: string) => void;
+
   // Account currencies, cached once detected so a later rate-limited campaign
   // fetch can't lose the correct symbol (Account Structure fetches reliably;
   // reporting tabs fire many concurrent calls and the campaign fetch can 429).
@@ -392,6 +408,9 @@ interface AuthState {
   isDV360Connected: () => boolean;
   isGoogleAdsConnected: () => boolean;
   isSnapchatConnected: () => boolean;
+  hasMetaToken: () => boolean;
+  hasGoogleToken: () => boolean;
+  hasSnapchatToken: () => boolean;
   getDateRangeLabel: () => string;
 
   // Demo mode — session-only, NOT persisted to localStorage.
@@ -432,6 +451,31 @@ export const useAuthStore = create<AuthState>()(
       snapchatRefreshToken: null,
       snapchatAdAccountId: null,
       snapchatOrgId: null,
+      metaAdAccountOptions: [],
+      dv360AdvertiserOptions: [],
+      dv360Partners: [],
+      gadsCustomerOptions: [],
+      snapAdAccountOptions: [],
+      setMetaAdAccountOptions: (opts) => set({ metaAdAccountOptions: opts }),
+      setDv360AdvertiserOptions: (opts) => set({ dv360AdvertiserOptions: opts }),
+      setDv360Partners: (partners) => set({ dv360Partners: partners }),
+      setGadsCustomerOptions: (opts) => set({ gadsCustomerOptions: opts }),
+      setSnapAdAccountOptions: (opts) => set({ snapAdAccountOptions: opts }),
+      switchMetaAdAccount: (id) => {
+        // Pixels are account-specific, so drop the previous account's pixel IDs —
+        // the new account's pixels are auto-derived from its ad account when empty.
+        set({ metaBusinessId: id, metaCurrency: null, metaPixelIds: [] });
+      },
+      switchDv360Advertiser: (id) => {
+        set({ dv360AdvertiserId: id, dv360Currency: null });
+      },
+      switchGoogleAdsCustomer: (id) => {
+        const opt = get().gadsCustomerOptions.find((o) => o.id === id);
+        set({ googleAdsCustomerId: id, googleAdsLoginCustomerId: opt?.loginCustomerId ?? null, googleAdsCurrency: null });
+      },
+      switchSnapchatAdAccount: (id) => {
+        set({ snapchatAdAccountId: id, snapchatCurrency: null });
+      },
       metaCurrency: null,
       dv360Currency: null,
       googleAdsCurrency: null,
@@ -483,7 +527,7 @@ export const useAuthStore = create<AuthState>()(
         rescueOtherPlatformFromStorage("dv360");
         rescueOtherPlatformFromStorage("google_ads");
         rescueOtherPlatformFromStorage("snapchat");
-        set({ metaAccessToken: token, metaBusinessId: businessId, metaPixelIds: pixelIds });
+        set({ metaAccessToken: token, metaBusinessId: businessId || null, metaPixelIds: pixelIds });
       },
 
       setMetaPixelList: (pixels) => {
@@ -587,6 +631,7 @@ export const useAuthStore = create<AuthState>()(
           metaPixelList: [],
           selectedMetaPixelId: null,
           metaCurrency: null,
+          metaAdAccountOptions: [],
         }),
 
       clearDV360Credentials: () =>
@@ -607,6 +652,7 @@ export const useAuthStore = create<AuthState>()(
           metaPixelList: [],
           selectedMetaPixelId: null,
           metaCurrency: null,
+          metaAdAccountOptions: [],
           dv360ClientId: null,
           dv360ClientSecret: null,
           dv360RefreshToken: null,
@@ -668,6 +714,18 @@ export const useAuthStore = create<AuthState>()(
           s.snapchatAdAccountId &&
           !isDemoCredential(s.snapchatRefreshToken)
         );
+      },
+      hasMetaToken: () => {
+        const s = get();
+        return !!(s.metaAccessToken && !isDemoCredential(s.metaAccessToken));
+      },
+      hasGoogleToken: () => {
+        const s = get();
+        return !!(s.dv360RefreshToken && s.dv360ClientId && s.dv360ClientSecret && !isDemoCredential(s.dv360RefreshToken));
+      },
+      hasSnapchatToken: () => {
+        const s = get();
+        return !!(s.snapchatRefreshToken && s.snapchatClientId && s.snapchatClientSecret && !isDemoCredential(s.snapchatRefreshToken));
       },
 
       getDateRangeLabel: () => {
@@ -771,7 +829,7 @@ export const useAuthStore = create<AuthState>()(
       },
       // Bump this version any time DEFAULT_NAMING_CONVENTIONS / META_BENCHMARKS
       // change in a way that should override persisted user state.
-      version: 6,
+      version: 10,
       // v4: wipe persisted demo placeholder tokens. v5: Google Ads/GA4/GTM
       // integration removed — drop all google credential keys and google
       // benchmark fields from persisted state; initialize DV360 fields.
@@ -822,6 +880,34 @@ export const useAuthStore = create<AuthState>()(
             googleAdsCustomerId: null,
             googleAdsLoginCustomerId: null,
             googleAdsCurrency: null,
+          };
+        }
+        if (fromVersion < 7) {
+          state = {
+            ...state,
+            dv360AdvertiserOptions: state.dv360AdvertiserOptions ?? [],
+            gadsCustomerOptions: state.gadsCustomerOptions ?? [],
+            snapAdAccountOptions: state.snapAdAccountOptions ?? [],
+          };
+        }
+        if (fromVersion < 8) {
+          state = {
+            ...state,
+            metaAdAccountOptions: state.metaAdAccountOptions ?? [],
+          };
+        }
+        if (fromVersion < 9) {
+          state = {
+            ...state,
+            dv360AdvertiserOptions: [],
+            dv360Partners: [],
+          };
+        }
+        if (fromVersion < 10) {
+          state = {
+            ...state,
+            dv360AdvertiserOptions: [],
+            dv360Partners: [],
           };
         }
         return state as AuthState;

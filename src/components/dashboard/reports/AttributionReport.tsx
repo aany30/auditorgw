@@ -21,6 +21,8 @@ import SharedSortTh from "@/components/shared/SortTh";
 import { useSort } from "@/hooks/useSort";
 import { useCampaigns } from "@/hooks/useCampaigns";
 import { useDV360Attribution } from "@/hooks/useDV360Attribution";
+import { useGoogleAdsAttribution } from "@/hooks/useGoogleAdsAttribution";
+import { useSnapchatAttribution } from "@/hooks/useSnapchatAttribution";
 import { currencyFor, formatMoney } from "@/lib/currency";
 import type { DateRange } from "@/components/shared/DateRangePicker";
 import type { CampaignData } from "@/types";
@@ -764,6 +766,240 @@ function Dv360AttributionSection({ enabled }: { enabled: boolean }) {
   );
 }
 
+// ─── §5 Google Ads Conversion Actions ────────────────────────────────────────
+
+function GoogleAdsAttributionSection({ enabled }: { enabled: boolean }) {
+  const gads = useGoogleAdsAttribution(enabled);
+
+  if (!enabled) return null;
+  if (gads.loading) {
+    return <div className="h-40 flex items-center justify-center text-sm text-gray-400">Loading Google Ads conversion actions…</div>;
+  }
+  if (gads.error) {
+    return (
+      <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
+        <span className="font-semibold">Google Ads attribution unavailable:</span> {gads.error}
+      </div>
+    );
+  }
+
+  const actions = gads.conversionActions || [];
+  const totalConversions = actions.reduce((s, a) => s + (a.conversions || 0), 0);
+  const totalValue = actions.reduce((s, a) => s + (a.conversionsValue || 0), 0);
+
+  const typeLabel = (t: string) =>
+    t.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  const statusColor = (s: string) =>
+    s === "ENABLED" ? "text-green-700 bg-green-50 border-green-200"
+    : s === "PAUSED" ? "text-amber-700 bg-amber-50 border-amber-200"
+    : "text-gray-600 bg-gray-50 border-gray-200";
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 flex items-start gap-2 text-xs text-blue-800">
+        <Info className="w-4 h-4 shrink-0 mt-0.5" />
+        <span>
+          Google Ads uses <strong>conversion actions</strong> to track conversions. Each action has its own
+          counting type (one-per-click vs every), category, and attribution model configured in the Google Ads UI.
+          The default attribution model is <strong>Data-Driven</strong> for eligible accounts, otherwise <strong>Last Click</strong>.
+          Attribution window defaults are 30-day click / 1-day view.
+        </span>
+      </div>
+
+      {/* Summary cards */}
+      <div className="grid grid-cols-3 gap-3">
+        {[
+          { label: "Conversion Actions", value: String(actions.length), color: "#6366f1" },
+          { label: "Total Conversions", value: Math.round(totalConversions).toLocaleString("en-IN"), color: "#10b981" },
+          { label: "Conversion Value", value: totalValue > 0 ? `${Math.round(totalValue).toLocaleString("en-IN")}` : "—", color: "#f59e0b" },
+        ].map(m => (
+          <div key={m.label} className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 text-center">
+            <div className="text-2xl font-bold tabular-nums" style={{ color: m.color }}>{m.value}</div>
+            <div className="text-[11px] text-gray-500 mt-1 font-medium">{m.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Conversion actions table */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+          <div>
+            <h3 className="font-bold text-gray-900 text-sm">Conversion Actions</h3>
+            <p className="text-xs text-gray-500 mt-0.5">All active and paused conversion actions from Google Ads API</p>
+          </div>
+          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200 shrink-0">
+            Google Ads API
+          </span>
+        </div>
+        {actions.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-[11px] uppercase text-gray-500 border-b border-gray-100">
+                  <th className="text-left px-5 py-2 font-semibold">Action Name</th>
+                  <th className="text-left px-5 py-2 font-semibold">Type</th>
+                  <th className="text-left px-5 py-2 font-semibold">Category</th>
+                  <th className="text-left px-5 py-2 font-semibold">Counting</th>
+                  <th className="text-right px-5 py-2 font-semibold">Conversions</th>
+                  <th className="text-right px-5 py-2 font-semibold">All Conv.</th>
+                  <th className="text-right px-5 py-2 font-semibold">Value</th>
+                  <th className="text-center px-5 py-2 font-semibold">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {actions.map((a) => (
+                  <tr key={a.id} className="border-b border-gray-50 hover:bg-gray-50">
+                    <td className="px-5 py-2.5 text-gray-900 font-medium max-w-[260px] truncate" title={a.name}>{a.name}</td>
+                    <td className="px-5 py-2.5 text-gray-600 text-xs">{typeLabel(a.type)}</td>
+                    <td className="px-5 py-2.5 text-gray-600 text-xs">{a.category ? typeLabel(a.category) : "—"}</td>
+                    <td className="px-5 py-2.5 text-gray-600 text-xs">{a.countingType ? typeLabel(a.countingType) : "—"}</td>
+                    <td className="px-5 py-2.5 text-right tabular-nums text-gray-900 font-semibold">{Math.round(a.conversions || 0).toLocaleString("en-IN")}</td>
+                    <td className="px-5 py-2.5 text-right tabular-nums text-gray-700">{Math.round(a.allConversions || 0).toLocaleString("en-IN")}</td>
+                    <td className="px-5 py-2.5 text-right tabular-nums text-gray-700">{(a.conversionsValue || 0) > 0 ? Math.round(a.conversionsValue).toLocaleString("en-IN") : "—"}</td>
+                    <td className="px-5 py-2.5 text-center">
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${statusColor(a.status)}`}>
+                        {a.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot className="bg-gray-50 border-t border-gray-200">
+                <tr className="font-semibold text-gray-900">
+                  <td className="px-5 py-2.5" colSpan={4}>Total</td>
+                  <td className="px-5 py-2.5 text-right tabular-nums">{Math.round(totalConversions).toLocaleString("en-IN")}</td>
+                  <td className="px-5 py-2.5 text-right tabular-nums">{Math.round(actions.reduce((s, a) => s + (a.allConversions || 0), 0)).toLocaleString("en-IN")}</td>
+                  <td className="px-5 py-2.5 text-right tabular-nums">{totalValue > 0 ? Math.round(totalValue).toLocaleString("en-IN") : "—"}</td>
+                  <td />
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        ) : (
+          <div className="px-5 py-6 text-sm text-gray-400">No conversion actions found for this Google Ads account.</div>
+        )}
+      </div>
+
+      <div className="bg-gray-50 border border-gray-200 rounded-lg px-4 py-3 text-xs text-gray-600">
+        <strong>Note:</strong> Google Ads attribution model and lookback window are set per conversion action in the Google Ads UI
+        (Conversions → Edit → Attribution model / Lookback window). Most accounts default to Data-Driven attribution
+        with a 30-day click-through and 1-day view-through window.
+      </div>
+    </div>
+  );
+}
+
+// ─── §6 Snapchat Attribution ─────────────────────────────────────────────────
+
+function SnapchatAttributionSection({ enabled, dateRange, customStart, customEnd }: {
+  enabled: boolean; dateRange: DateRange; customStart?: string; customEnd?: string;
+}) {
+  const snap = useSnapchatAttribution(enabled, dateRange, customStart, customEnd);
+
+  if (!enabled) return null;
+  if (snap.loading) {
+    return <div className="h-40 flex items-center justify-center text-sm text-gray-400">Loading Snapchat conversion data…</div>;
+  }
+  if (snap.error) {
+    return (
+      <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
+        <span className="font-semibold">Snapchat attribution unavailable:</span> {snap.error}
+      </div>
+    );
+  }
+
+  const campaigns = snap.campaigns || [];
+  const totals = snap.totals || { spend: 0, impressions: 0, swipes: 0, conversions: 0 };
+  const cvr = totals.swipes > 0 ? (totals.conversions / totals.swipes) * 100 : 0;
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-3 flex items-start gap-2 text-xs text-yellow-800">
+        <Info className="w-4 h-4 shrink-0 mt-0.5" />
+        <span>
+          Snapchat attributes conversions via the <strong>Snap Pixel</strong> and <strong>Conversions API (CAPI)</strong>.
+          The default attribution window is <strong>28-day swipe-up (click) / 1-day view</strong>. Attribution settings
+          are configured at the ad account level in Snapchat Ads Manager and cannot be queried via the Marketing API.
+        </span>
+      </div>
+
+      {/* Summary */}
+      <div className="grid grid-cols-4 gap-3">
+        {[
+          { label: "Campaigns", value: String(campaigns.length), color: "#FBBF24" },
+          { label: "Swipe-Ups", value: fmtBig(totals.swipes), color: "#6366f1" },
+          { label: "Conversions", value: fmtBig(totals.conversions), color: "#10b981" },
+          { label: "CVR", value: cvr > 0 ? `${cvr.toFixed(2)}%` : "—", color: "#8b5cf6" },
+        ].map(m => (
+          <div key={m.label} className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 text-center">
+            <div className="text-2xl font-bold tabular-nums" style={{ color: m.color }}>{m.value}</div>
+            <div className="text-[11px] text-gray-500 mt-1 font-medium">{m.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Campaign conversions table */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+          <div>
+            <h3 className="font-bold text-gray-900 text-sm">Campaign Conversions</h3>
+            <p className="text-xs text-gray-500 mt-0.5">Purchase conversions by campaign — from Snapchat Marketing API stats</p>
+          </div>
+          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-yellow-50 text-yellow-700 border border-yellow-200 shrink-0">
+            Snapchat API
+          </span>
+        </div>
+        {campaigns.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-[11px] uppercase text-gray-500 border-b border-gray-100">
+                  <th className="text-left px-5 py-2 font-semibold">Campaign</th>
+                  <th className="text-right px-5 py-2 font-semibold">Impressions</th>
+                  <th className="text-right px-5 py-2 font-semibold">Swipe-Ups</th>
+                  <th className="text-right px-5 py-2 font-semibold">Conversions</th>
+                  <th className="text-right px-5 py-2 font-semibold">CVR</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...campaigns].sort((a, b) => b.conversions - a.conversions).map((c) => {
+                  const campCvr = c.swipes > 0 ? (c.conversions / c.swipes) * 100 : 0;
+                  return (
+                    <tr key={c.id} className="border-b border-gray-50 hover:bg-gray-50">
+                      <td className="px-5 py-2.5 text-gray-900 max-w-[300px] truncate" title={c.name}>{c.name}</td>
+                      <td className="px-5 py-2.5 text-right tabular-nums text-gray-700">{fmtBig(c.impressions)}</td>
+                      <td className="px-5 py-2.5 text-right tabular-nums text-gray-700">{fmtBig(c.swipes)}</td>
+                      <td className="px-5 py-2.5 text-right tabular-nums text-gray-900 font-semibold">{Math.round(c.conversions).toLocaleString("en-IN")}</td>
+                      <td className="px-5 py-2.5 text-right tabular-nums text-gray-600">{campCvr > 0 ? `${campCvr.toFixed(2)}%` : "—"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot className="bg-gray-50 border-t border-gray-200">
+                <tr className="font-semibold text-gray-900">
+                  <td className="px-5 py-2.5">Total</td>
+                  <td className="px-5 py-2.5 text-right tabular-nums">{fmtBig(totals.impressions)}</td>
+                  <td className="px-5 py-2.5 text-right tabular-nums">{fmtBig(totals.swipes)}</td>
+                  <td className="px-5 py-2.5 text-right tabular-nums">{Math.round(totals.conversions).toLocaleString("en-IN")}</td>
+                  <td className="px-5 py-2.5 text-right tabular-nums">{cvr > 0 ? `${cvr.toFixed(2)}%` : "—"}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        ) : (
+          <div className="px-5 py-6 text-sm text-gray-400">No Snapchat campaign data for this date range.</div>
+        )}
+      </div>
+
+      <div className="bg-gray-50 border border-gray-200 rounded-lg px-4 py-3 text-xs text-gray-600">
+        <strong>Attribution model:</strong> Snapchat uses a <strong>last-touch</strong> attribution model.
+        Default windows are 28-day swipe-up and 1-day view-through. These can be adjusted in Snapchat Ads Manager
+        at the ad account level but are not exposed via the Marketing API.
+      </div>
+    </div>
+  );
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 export default function AttributionReport({ platform, dateRange, customStart, customEnd }: Props) {
@@ -778,8 +1014,10 @@ export default function AttributionReport({ platform, dateRange, customStart, cu
   const totalConversions = metaCampaigns.reduce((s, c) => s + (c.conversions || 0), 0);
   const totalSpend       = metaCampaigns.reduce((s, c) => s + (c.spend || 0), 0);
 
-  const showMeta = platform !== "dv360";
+  const showMeta = platform === "meta" || platform === "both";
   const showDv   = platform === "dv360" || platform === "both";
+  const showGads = platform === "google_ads" || platform === "both";
+  const showSnap = platform === "snapchat" || platform === "both";
 
   return (
     <div className="space-y-6 section-enter">
@@ -792,8 +1030,11 @@ export default function AttributionReport({ platform, dateRange, customStart, cu
             <p className="text-gray-600 mt-1">
               {showMeta
                 ? `${metaCampaigns.length} Meta campaign${metaCampaigns.length !== 1 ? "s" : ""} · ${Math.round(totalConversions).toLocaleString()} conversions`
-                : "DV360 Floodlight attribution"}
-              {platform === "both" ? " · plus DV360 Floodlight" : ""}
+                : platform === "dv360" ? "DV360 Floodlight attribution"
+                : platform === "google_ads" ? "Google Ads conversion actions"
+                : platform === "snapchat" ? "Snapchat Pixel attribution"
+                : "Multi-platform attribution"}
+              {platform === "both" ? " · plus DV360, Google Ads & Snapchat" : ""}
             </p>
           </div>
         </div>
@@ -862,6 +1103,22 @@ export default function AttributionReport({ platform, dateRange, customStart, cu
         <div className="space-y-4">
           {platform === "both" && <SectionHeader label="DV360" sub="Display & Video 360" />}
           <Dv360AttributionSection enabled={showDv} />
+        </div>
+      )}
+
+      {/* ── Google Ads section ── */}
+      {showGads && (
+        <div className="space-y-4">
+          {platform === "both" && <SectionHeader label="Google Ads" sub="Conversion Actions" />}
+          <GoogleAdsAttributionSection enabled={showGads} />
+        </div>
+      )}
+
+      {/* ── Snapchat section ── */}
+      {showSnap && (
+        <div className="space-y-4">
+          {platform === "both" && <SectionHeader label="Snapchat" sub="Snap Pixel Attribution" />}
+          <SnapchatAttributionSection enabled={showSnap} dateRange={dateRange} customStart={customStart} customEnd={customEnd} />
         </div>
       )}
 

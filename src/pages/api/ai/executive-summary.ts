@@ -45,9 +45,9 @@ HARD RULES — violating any of these makes the output useless:
 
 Format:
 - Headline: under 90 chars, names the biggest takeaway with a number.
-- Overview: 3-4 sentences, big picture with actual totals. When data spans both Meta and DV360, give each platform at least one sentence.
-- Key Findings: 4-6 bullets, each with specific metric + value from the data. When both platforms are present, cover BOTH — do not let one platform dominate all bullets.
-- Recommendations: 4-6 bullets, each naming what to do, where, and why based on THIS account's numbers. When both platforms are present, include at least one platform-specific action for each.
+- Overview: 3-4 sentences, big picture with actual totals. When data spans multiple platforms (Meta, DV360, Google Ads, Snapchat), give each platform at least one sentence.
+- Key Findings: 4-6 bullets, each with specific metric + value from the data. When multiple platforms are present, cover each — do not let one platform dominate all bullets.
+- Recommendations: 4-6 bullets, each naming what to do, where, and why based on THIS account's numbers. When multiple platforms are present, include at least one platform-specific action for each. Use correct UI terminology: Meta Ads Manager, DV360 (Insertion Orders/Line Items), Google Ads (Ad Groups/Keywords/Bidding), Snapchat Ads Manager (Ad Squads, not "ad sets").
 - Output ONLY valid JSON. No prose outside JSON.`;
 
 const OUTPUT_SCHEMA = {
@@ -120,12 +120,12 @@ export default async function handler(
   try {
     const client = new Anthropic({ apiKey });
 
-    const platformLabel = platform === "both" ? "Meta + DV360" : platform === "dv360" ? "DV360" : "Meta";
+    const platformLabel = platform === "both" ? "Meta + DV360 + Google Ads + Snapchat" : platform === "dv360" ? "DV360" : platform === "google_ads" ? "Google Ads" : platform === "snapchat" ? "Snapchat" : "Meta";
     const userPayload = {
       tabName,
       platform: platformLabel,
       platformNote: platform === "both"
-        ? "Data spans BOTH Meta and DV360. Keep them separate — don't sum or average across platforms, don't mix currencies (each platform has its own). If the snapshot only contains one platform's data, say the other platform's data wasn't provided rather than inventing it."
+        ? "Data may span multiple platforms (Meta, DV360, Google Ads, Snapchat). Keep them separate — don't sum or average across platforms, don't mix currencies (each platform has its own). If the snapshot only contains some platforms' data, say the others' data wasn't provided rather than inventing it."
         : undefined,
       dateRange: dateRange ?? "last 30 days",
       data: context,

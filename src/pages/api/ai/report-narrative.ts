@@ -167,7 +167,7 @@ export default async function handler(
   const fmt = (n: number) => cur + Math.round(n).toLocaleString("en-IN");
   const int = (n: number) => Math.round(n).toLocaleString("en-IN");
   const t = body.totals;
-  const platformLabel = body.platform === "both" ? "Meta + DV360" : body.platform === "dv360" ? "DV360" : "Meta";
+  const platformLabel = body.platform === "both" ? "Meta + DV360 + Google Ads + Snapchat" : body.platform === "dv360" ? "DV360" : body.platform === "google_ads" ? "Google Ads" : body.platform === "snapchat" ? "Snapchat" : "Meta";
 
   const areaFocus = body.focusAreas?.length
     ? `\nFOCUS AREAS: concentrate the analysis on ${body.focusAreas.join(", ")}. ${body.focusAreas.includes("reporting") ? "Reporting = performance/audience/creative/placement. " : ""}${body.focusAreas.includes("audit") ? "Audit = pixel health, event match quality, funnel, attribution. " : ""}${body.focusAreas.includes("tracking") ? "Tracking = CAPI, account structure, frequency/saturation, conversion monitoring. " : ""}Only produce sectionInsights for the chosen areas.\n`

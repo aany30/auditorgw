@@ -77,19 +77,37 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     let advertiserIds: string[] = [];
     let advertiserNames: string[] = [];
+    let partnerIds: string[] = [];
     try {
-      const advRes = await fetch(
-        "https://displayvideo.googleapis.com/v4/advertisers?" +
+      // Step 1: discover ALL the user's DV360 partners
+      const partnerRes = await fetch(
+        "https://displayvideo.googleapis.com/v4/partners?" +
           new URLSearchParams({ pageSize: "50" }).toString(),
         { headers: { Authorization: `Bearer ${accessToken}` } }
       );
-      if (advRes.ok) {
-        const advData = await advRes.json();
-        const advertisers = advData.advertisers || [];
-        advertiserIds = advertisers.map((a: { advertiserId: string }) => a.advertiserId);
-        advertiserNames = advertisers.map((a: { displayName?: string; advertiserId: string }) =>
-          a.displayName || a.advertiserId
-        );
+      if (partnerRes.ok) {
+        const partnerData = await partnerRes.json();
+        const partners: { partnerId: string }[] = partnerData.partners || [];
+        partnerIds = partners.map((p) => p.partnerId);
+      }
+      // Step 2: list advertisers under EVERY partner
+      for (const pid of partnerIds) {
+        try {
+          const advRes = await fetch(
+            "https://displayvideo.googleapis.com/v4/advertisers?" +
+              new URLSearchParams({ partnerId: pid, pageSize: "100" }).toString(),
+            { headers: { Authorization: `Bearer ${accessToken}` } }
+          );
+          if (advRes.ok) {
+            const advData = await advRes.json();
+            for (const a of advData.advertisers || []) {
+              advertiserIds.push(a.advertiserId);
+              advertiserNames.push(a.displayName || a.advertiserId);
+            }
+          }
+        } catch {
+          // skip this partner
+        }
       }
     } catch {
       // Non-fatal — user can paste advertiser ID manually
@@ -101,6 +119,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       dv360_client_secret: clientSecret,
     });
     if (loginEmail) params.set("login_email", loginEmail);
+    if (partnerIds.length > 0) params.set("dv360_partner_id", partnerIds[0]);
 
     if (advertiserIds.length > 0) {
       params.set("dv360_adv_ids", advertiserIds.join(","));
@@ -127,7 +146,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             r.replace("customers/", ""),
           );
           if (customerIds.length > 0) {
-            const names: string[] = [];
+            const leafIds: string[] = [];
+            const leafNames: string[] = [];
             for (const cid of customerIds) {
               try {
                 const infoRes = await fetch(
@@ -141,16 +161,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 );
                 if (infoRes.ok) {
                   const info = await infoRes.json();
-                  names.push(info.descriptiveName || cid);
+                  if (!info.manager) {
+                    leafIds.push(cid);
+                    leafNames.push(info.descriptiveName || cid);
+                  }
                 } else {
-                  names.push(cid);
+                  leafIds.push(cid);
+                  leafNames.push(cid);
                 }
               } catch {
-                names.push(cid);
+                leafIds.push(cid);
+                leafNames.push(cid);
               }
             }
-            params.set("gads_customer_ids", customerIds.join(","));
-            params.set("gads_customer_names", names.join("|"));
+            if (leafIds.length > 0) {
+              params.set("gads_customer_ids", leafIds.join(","));
+              params.set("gads_customer_names", leafNames.join("|"));
+            }
           }
         }
       } catch {

@@ -37,26 +37,57 @@ async function testMeta(accessToken: string, businessId: string, pixelIds: strin
     return results;
   }
 
-  // Test 2: Business access
-  try {
-    const r = await fetch(
-      `https://graph.facebook.com/v18.0/${businessId}?fields=id,name&access_token=${encodeURIComponent(accessToken)}`
-    );
-    if (!r.ok) {
-      const body = await r.text();
-      results.push({
-        ok: false,
-        platform: "Meta Business",
-        message: "Cannot access Business ID",
-        details: body.slice(0, 200),
-        hint: "Ensure your token has business_management permission and you're an admin/employee of this business.",
-      });
-    } else {
-      const b = await r.json();
-      results.push({ ok: true, platform: "Meta Business", message: `Connected to "${b.name}"` });
+  // Test 2: Ad account access. With a specific Ad Account ID, verify that one.
+  // Without one, list the ad accounts the token can reach (the app auto-fetches
+  // these, so the user picks from the dashboard dropdown afterward).
+  if (businessId) {
+    try {
+      const r = await fetch(
+        `https://graph.facebook.com/v18.0/${businessId}?fields=id,name&access_token=${encodeURIComponent(accessToken)}`
+      );
+      if (!r.ok) {
+        const body = await r.text();
+        results.push({
+          ok: false,
+          platform: "Meta Ad Account",
+          message: "Cannot access Ad Account ID",
+          details: body.slice(0, 200),
+          hint: "Ensure your token has ads_management permission and access to this ad account.",
+        });
+      } else {
+        const b = await r.json();
+        results.push({ ok: true, platform: "Meta Ad Account", message: `Connected to "${b.name}"` });
+      }
+    } catch (e: any) {
+      results.push({ ok: false, platform: "Meta Ad Account", message: "Network error", details: e.message });
     }
-  } catch (e: any) {
-    results.push({ ok: false, platform: "Meta Business", message: "Network error", details: e.message });
+  } else {
+    try {
+      const r = await fetch(
+        `https://graph.facebook.com/v18.0/me/adaccounts?fields=account_id,name&limit=200&access_token=${encodeURIComponent(accessToken)}`
+      );
+      if (!r.ok) {
+        const body = await r.text();
+        results.push({
+          ok: false,
+          platform: "Meta Ad Accounts",
+          message: "Cannot list ad accounts",
+          details: body.slice(0, 200),
+          hint: "Ensure your token has ads_management + ads_read permissions.",
+        });
+      } else {
+        const d = await r.json();
+        const count = (d.data || []).length;
+        results.push({
+          ok: count > 0,
+          platform: "Meta Ad Accounts",
+          message: count > 0 ? `Found ${count} ad account${count === 1 ? "" : "s"}` : "No ad accounts found for this token",
+          hint: count > 0 ? undefined : "This token has no ad accounts. Check it was generated for the right user/business.",
+        });
+      }
+    } catch (e: any) {
+      results.push({ ok: false, platform: "Meta Ad Accounts", message: "Network error", details: e.message });
+    }
   }
 
   // Test 3: Pixel access
@@ -184,8 +215,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   if (platform === "meta") {
     const { accessToken, businessId, pixelIds } = req.body;
-    if (!accessToken || !businessId) {
-      return res.status(400).json({ error: "accessToken and businessId required" });
+    if (!accessToken) {
+      return res.status(400).json({ error: "accessToken required" });
     }
     const results = await testMeta(accessToken, businessId, (pixelIds || []) as string[]);
     return res.status(200).json({ results });
