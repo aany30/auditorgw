@@ -285,12 +285,14 @@ interface AuthState {
   metaAdAccountOptions: { id: string; name: string }[];
   dv360AdvertiserOptions: { id: string; name: string; partnerId?: string }[];
   gadsCustomerOptions: { id: string; name: string; loginCustomerId?: string }[];
+  gadsMccAccounts: { id: string; name: string; isManager: boolean; children?: { id: string; name: string }[] }[];
   snapAdAccountOptions: { id: string; name: string }[];
   setMetaAdAccountOptions: (opts: { id: string; name: string }[]) => void;
   setDv360AdvertiserOptions: (opts: { id: string; name: string; partnerId?: string }[]) => void;
   dv360Partners: { id: string; name: string }[];
   setDv360Partners: (partners: { id: string; name: string }[]) => void;
   setGadsCustomerOptions: (opts: { id: string; name: string; loginCustomerId?: string }[]) => void;
+  setGadsMccAccounts: (accounts: { id: string; name: string; isManager: boolean; children?: { id: string; name: string }[] }[]) => void;
   setSnapAdAccountOptions: (opts: { id: string; name: string }[]) => void;
   switchMetaAdAccount: (id: string) => void;
   switchDv360Advertiser: (id: string) => void;
@@ -455,11 +457,13 @@ export const useAuthStore = create<AuthState>()(
       dv360AdvertiserOptions: [],
       dv360Partners: [],
       gadsCustomerOptions: [],
+      gadsMccAccounts: [],
       snapAdAccountOptions: [],
       setMetaAdAccountOptions: (opts) => set({ metaAdAccountOptions: opts }),
       setDv360AdvertiserOptions: (opts) => set({ dv360AdvertiserOptions: opts }),
       setDv360Partners: (partners) => set({ dv360Partners: partners }),
       setGadsCustomerOptions: (opts) => set({ gadsCustomerOptions: opts }),
+      setGadsMccAccounts: (accounts) => set({ gadsMccAccounts: accounts }),
       setSnapAdAccountOptions: (opts) => set({ snapAdAccountOptions: opts }),
       switchMetaAdAccount: (id) => {
         // Pixels are account-specific, so drop the previous account's pixel IDs —
@@ -829,7 +833,7 @@ export const useAuthStore = create<AuthState>()(
       },
       // Bump this version any time DEFAULT_NAMING_CONVENTIONS / META_BENCHMARKS
       // change in a way that should override persisted user state.
-      version: 10,
+      version: 11,
       // v4: wipe persisted demo placeholder tokens. v5: Google Ads/GA4/GTM
       // integration removed — drop all google credential keys and google
       // benchmark fields from persisted state; initialize DV360 fields.
@@ -908,6 +912,12 @@ export const useAuthStore = create<AuthState>()(
             ...state,
             dv360AdvertiserOptions: [],
             dv360Partners: [],
+          };
+        }
+        if (fromVersion < 11) {
+          state = {
+            ...state,
+            gadsMccAccounts: [],
           };
         }
         return state as AuthState;

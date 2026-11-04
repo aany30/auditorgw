@@ -256,10 +256,6 @@ export default function Dashboard() {
   const [selectedObjectives, setSelectedObjectives] = useState<Set<string>>(new Set());
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(["audit", "tracking", "reporting", "ad-library", "insights"]));
   const [mounted, setMounted] = useState(false);
-  const [dv360AdvOptions, setDv360AdvOptions] = useState<{ id: string; name: string }[] | null>(null);
-  const [localGadsOptions, setLocalGadsOptions] = useState<{ id: string; name: string; loginCustomerId?: string }[] | null>(null);
-  const [localSnapOptions, setLocalSnapOptions] = useState<{ id: string; name: string }[] | null>(null);
-  const [dv360NeedsAdvertiser, setDv360NeedsAdvertiser] = useState(false);
   const [gadsResolving, setGadsResolving] = useState(false);
   const [gadsResolveError, setGadsResolveError] = useState<string | null>(null);
 
@@ -302,7 +298,6 @@ export default function Dashboard() {
         // Manager with several client accounts — let the user choose. Each pick
         // carries the manager as its login-customer-id.
         const resolved = leaves.map((a) => ({ id: a.id, name: a.name, loginCustomerId: enteredId }));
-        setLocalGadsOptions(resolved);
         // Merge resolved leaves into existing options, replacing the MCC entry.
         const existing = useAuthStore.getState().gadsCustomerOptions.filter((o) => o.id !== enteredId);
         useAuthStore.getState().setGadsCustomerOptions([...existing, ...resolved]);
@@ -430,13 +425,8 @@ export default function Dashboard() {
           partnerId: (dv360_partner_id as string) || undefined,
         });
 
-        if (advIds.length > 1) {
-          const opts = advIds.map((id, i) => ({ id, name: advNames[i] || id }));
-          setDv360AdvOptions(opts);
-          persistDv360Options(opts);
-        } else {
-          persistDv360Options(advIds.map((id, i) => ({ id, name: advNames[i] || id })));
-        }
+        const opts = advIds.map((id, i) => ({ id, name: advNames[i] || id }));
+        persistDv360Options(opts);
       } else {
         // No advertisers found — save creds without advertiser ID, user pastes manually
         setDV360Credentials({
@@ -446,7 +436,6 @@ export default function Dashboard() {
           advertiserId: "",
           partnerId: (dv360_partner_id as string) || undefined,
         });
-        setDv360NeedsAdvertiser(true);
       }
 
       router.replace("/app/dashboard");
@@ -458,7 +447,6 @@ export default function Dashboard() {
       const gadsIds = (gads_customer_ids as string).split(",");
       const gadsNames = gads_customer_names ? (gads_customer_names as string).split("|") : gadsIds;
       const gadsOpts = gadsIds.map((id, i) => ({ id, name: gadsNames[i] || id }));
-      setLocalGadsOptions(gadsOpts);
       useAuthStore.getState().setGadsCustomerOptions(gadsOpts);
       if (gadsIds.length === 1) {
         resolveGoogleAdsAccount(gadsIds[0]);
@@ -480,9 +468,6 @@ export default function Dashboard() {
         });
         const snapOpts = adAccountIds.map((id, i) => ({ id, name: adAccountNames[i] || id }));
         useAuthStore.getState().setSnapAdAccountOptions(snapOpts);
-        if (adAccountIds.length > 1) {
-          setLocalSnapOptions(snapOpts);
-        }
       } else {
         setSnapchatCredentials({
           clientId: snap_client_id as string,
@@ -926,175 +911,6 @@ export default function Dashboard() {
         </aside>
 
         <main className="flex-1 overflow-y-auto bg-gray-50">
-          {/* DV360 Advertiser picker — shown when OAuth returned multiple advertisers */}
-          {dv360AdvOptions && (
-            <div className="bg-blue-50 border-b border-blue-200 px-8 py-4">
-              <p className="text-sm font-semibold text-blue-900 mb-2">Select a DV360 advertiser</p>
-              <div className="flex flex-wrap gap-2">
-                {dv360AdvOptions.map((adv) => (
-                  <button
-                    key={adv.id}
-                    onClick={() => {
-                      setDV360Credentials({
-                        clientId: useAuthStore.getState().dv360ClientId!,
-                        clientSecret: useAuthStore.getState().dv360ClientSecret!,
-                        refreshToken: useAuthStore.getState().dv360RefreshToken!,
-                        advertiserId: adv.id,
-                      });
-                      setDv360AdvOptions(null);
-                    }}
-                    className="px-3 py-1.5 bg-white border border-blue-300 rounded-lg text-sm text-blue-900 hover:bg-blue-100 transition-colors"
-                  >
-                    {adv.name} <span className="text-blue-400 text-xs ml-1">({adv.id})</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Google Ads customer picker — shown when OAuth returned multiple customers */}
-          {localGadsOptions && localGadsOptions.length > 1 && (
-            <div className="bg-green-50 border-b border-green-200 px-8 py-4">
-              <p className="text-sm font-semibold text-green-900 mb-2">Select a Google Ads Account</p>
-              <div className="flex flex-wrap gap-2">
-                {localGadsOptions.map((opt) => (
-                  <button
-                    key={opt.id}
-                    onClick={() => {
-                      setGoogleAdsCredentials({ customerId: opt.id, loginCustomerId: opt.loginCustomerId });
-                      setLocalGadsOptions(null);
-                    }}
-                    className="px-3 py-1.5 bg-white border border-green-300 rounded-lg text-sm text-green-900 hover:bg-green-100 transition-colors"
-                  >
-                    {opt.name} <span className="text-green-400 text-xs ml-1">({opt.id})</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Snapchat ad account picker — shown when OAuth returned multiple ad accounts */}
-          {localSnapOptions && localSnapOptions.length > 1 && (
-            <div className="bg-yellow-50 border-b border-yellow-200 px-8 py-4">
-              <p className="text-sm font-semibold text-yellow-900 mb-2">Select a Snapchat Ad Account</p>
-              <div className="flex flex-wrap gap-2">
-                {localSnapOptions.map((opt) => (
-                  <button
-                    key={opt.id}
-                    onClick={() => {
-                      const s = useAuthStore.getState();
-                      setSnapchatCredentials({
-                        clientId: s.snapchatClientId!,
-                        clientSecret: s.snapchatClientSecret!,
-                        refreshToken: s.snapchatRefreshToken!,
-                        adAccountId: opt.id,
-                        orgId: s.snapchatOrgId || undefined,
-                      });
-                      setLocalSnapOptions(null);
-                    }}
-                    className="px-3 py-1.5 bg-white border border-yellow-300 rounded-lg text-sm text-yellow-900 hover:bg-yellow-100 transition-colors"
-                  >
-                    {opt.name} <span className="text-yellow-500 text-xs ml-1">({opt.id})</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* DV360 needs advertiser ID — OAuth didn't find any advertisers, or
-              creds persisted (e.g. after reload) without an advertiser yet. */}
-          {(dv360NeedsAdvertiser || (dv360RefreshToken && !dv360AdvertiserId)) && (
-            <div className="bg-amber-50 border-b border-amber-200 px-8 py-4">
-              <p className="text-sm font-semibold text-amber-900 mb-1">Paste your DV360 Advertiser ID</p>
-              <p className="text-xs text-amber-700 mb-2">
-                Open <a href="https://displayvideo.google.com" target="_blank" rel="noreferrer" className="underline">displayvideo.google.com</a> — the number after <code className="text-xs">/a/</code> in the URL is your Advertiser ID.
-              </p>
-              <form
-                className="flex gap-2"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  const input = (e.target as HTMLFormElement).elements.namedItem("advId") as HTMLInputElement;
-                  if (input.value.trim()) {
-                    setDV360Credentials({
-                      clientId: useAuthStore.getState().dv360ClientId!,
-                      clientSecret: useAuthStore.getState().dv360ClientSecret!,
-                      refreshToken: useAuthStore.getState().dv360RefreshToken!,
-                      advertiserId: input.value.trim(),
-                    });
-                    setDv360NeedsAdvertiser(false);
-                  }
-                }}
-              >
-                <input name="advId" placeholder="e.g. 1234567890" className="px-3 py-1.5 border border-amber-300 rounded-lg text-sm bg-white w-48 focus:outline-none focus:ring-2 focus:ring-amber-200" />
-                <button type="submit" className="px-3 py-1.5 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700">
-                  Save
-                </button>
-              </form>
-            </div>
-          )}
-
-          {/* Google Ads needs Customer ID — OAuth completed (shared Google creds)
-              but no Google Ads customer ID was auto-detected or set yet. */}
-          {!demoMode && dv360RefreshToken && !googleAdsCustomerId && !localGadsOptions && (
-            <div className="bg-green-50 border-b border-green-200 px-8 py-4">
-              <p className="text-sm font-semibold text-green-900 mb-1">Paste your Google Ads Customer ID</p>
-              <p className="text-xs text-green-700 mb-2">
-                Open <a href="https://ads.google.com" target="_blank" rel="noreferrer" className="underline">ads.google.com</a> — the number in the top-right (e.g. 123-456-7890) is your Customer ID. Dashes are optional.
-              </p>
-              <form
-                className="flex gap-2"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  const input = (e.target as HTMLFormElement).elements.namedItem("gadsId") as HTMLInputElement;
-                  const val = input.value.trim().replace(/-/g, "");
-                  if (val) resolveGoogleAdsAccount(val);
-                }}
-              >
-                <input name="gadsId" placeholder="e.g. 123-456-7890" disabled={gadsResolving} className="px-3 py-1.5 border border-green-300 rounded-lg text-sm bg-white w-48 focus:outline-none focus:ring-2 focus:ring-green-200 disabled:opacity-50" />
-                <button type="submit" disabled={gadsResolving} className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50">
-                  {gadsResolving ? "Checking…" : "Save"}
-                </button>
-              </form>
-              {gadsResolveError && (
-                <p className="text-xs text-red-600 mt-2">{gadsResolveError}</p>
-              )}
-            </div>
-          )}
-
-          {/* Snapchat needs Ad Account ID — OAuth completed but the Marketing API
-              couldn't auto-fetch an ad account (common when the user's org has
-              no ad accounts yet, or scope limitations). */}
-          {!demoMode && snapchatRefreshToken && !snapchatAdAccountId && (
-            <div className="bg-yellow-50 border-b border-yellow-200 px-8 py-4">
-              <p className="text-sm font-semibold text-yellow-900 mb-1">Paste your Snapchat Ad Account ID</p>
-              <p className="text-xs text-yellow-700 mb-2">
-                Open <a href="https://ads.snapchat.com" target="_blank" rel="noreferrer" className="underline">ads.snapchat.com</a> → Business Settings → Ad Accounts. The ID is a UUID like <code className="text-xs">a1b2c3d4-e5f6-7890-abcd-ef1234567890</code>.
-              </p>
-              <form
-                className="flex gap-2"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  const input = (e.target as HTMLFormElement).elements.namedItem("snapId") as HTMLInputElement;
-                  const val = input.value.trim();
-                  if (val) {
-                    const s = useAuthStore.getState();
-                    setSnapchatCredentials({
-                      clientId: s.snapchatClientId!,
-                      clientSecret: s.snapchatClientSecret!,
-                      refreshToken: s.snapchatRefreshToken!,
-                      adAccountId: val,
-                      orgId: s.snapchatOrgId || undefined,
-                    });
-                  }
-                }}
-              >
-                <input name="snapId" placeholder="e.g. a1b2c3d4-e5f6-7890-abcd-ef1234567890" className="px-3 py-1.5 border border-yellow-300 rounded-lg text-sm bg-white w-96 focus:outline-none focus:ring-2 focus:ring-yellow-200" />
-                <button type="submit" className="px-3 py-1.5 bg-yellow-500 text-black rounded-lg text-sm font-medium hover:bg-yellow-600">
-                  Save
-                </button>
-              </form>
-            </div>
-          )}
 
           {/* Keying by the active account IDs forces the whole tab subtree to
               remount when the user switches accounts, so every hook re-runs and

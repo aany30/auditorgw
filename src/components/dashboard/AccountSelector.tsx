@@ -369,6 +369,217 @@ function DV360Row({
   );
 }
 
+/* ── Google Ads grouped-by-MCC row ──────────────────────────── */
+
+interface MccAccount {
+  id: string;
+  name: string;
+  isManager: boolean;
+  children?: { id: string; name: string }[];
+}
+
+interface GoogleAdsRowProps {
+  connected: boolean;
+  authenticated: boolean;
+  activeId: string | null;
+  mccAccounts: MccAccount[];
+  flatOptions: { id: string; name: string; loginCustomerId?: string }[];
+  onSwitch: (id: string, loginCustomerId?: string) => void;
+  onDisconnect: () => void;
+  onClose: () => void;
+  onPasteId: (id: string) => void;
+}
+
+function GoogleAdsRow({
+  connected, authenticated, activeId, mccAccounts, flatOptions,
+  onSwitch, onDisconnect, onClose, onPasteId,
+}: GoogleAdsRowProps) {
+  const [expanded, setExpanded] = useState(false);
+  const [expandedMcc, setExpandedMcc] = useState<Set<string>>(new Set());
+  const needsSelection = authenticated && !connected;
+  const hasAccounts = mccAccounts.length > 0 || flatOptions.length > 0;
+
+  const activeName = (() => {
+    if (!activeId) return null;
+    for (const m of mccAccounts) {
+      if (m.id === activeId) return m.name;
+      for (const c of m.children || []) {
+        if (c.id === activeId) return c.name;
+      }
+    }
+    const flat = flatOptions.find((o) => o.id === activeId);
+    return flat?.name || activeId;
+  })();
+
+  const toggleMcc = (id: string) => {
+    setExpandedMcc((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  return (
+    <div className="border-b border-gray-50 last:border-b-0">
+      <div className="px-4 py-2.5 flex items-center justify-between">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="w-7 h-7 rounded-full bg-yellow-100 flex items-center justify-center flex-shrink-0">
+            <span className="text-yellow-600">{GOOGLE_SVG}</span>
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5">
+              <span className="text-sm font-semibold text-gray-900">Google Ads</span>
+              {connected ? (
+                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-green-700 bg-green-50 px-1.5 py-0.5 rounded-full">
+                  <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                </span>
+              ) : needsSelection ? (
+                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded-full">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                </span>
+              ) : (
+                <span className="inline-flex items-center text-[10px] font-medium text-gray-400 bg-gray-50 px-1.5 py-0.5 rounded-full">off</span>
+              )}
+            </div>
+            {connected && activeName && (
+              <div className="text-[11px] text-gray-500 truncate max-w-[140px]">
+                {activeName}
+              </div>
+            )}
+            {needsSelection && (
+              <div className="text-[10px] text-amber-600 font-medium">Select account</div>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          {(needsSelection || connected) && hasAccounts && (
+            <button
+              onClick={() => setExpanded((v) => !v)}
+              className={`text-[11px] font-semibold px-2 py-1 rounded ${
+                needsSelection
+                  ? "text-amber-600 hover:text-amber-800 hover:bg-amber-50"
+                  : "text-blue-600 hover:text-blue-800 hover:bg-blue-50"
+              }`}
+            >
+              {needsSelection ? "Pick" : "Switch"} <ChevronDown className={`w-3 h-3 inline transition ${expanded ? "rotate-180" : ""}`} />
+            </button>
+          )}
+          {(connected || authenticated) ? (
+            <button
+              onClick={onDisconnect}
+              className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition"
+              title="Disconnect Google Ads"
+            >
+              <Unlink className="w-3.5 h-3.5" />
+            </button>
+          ) : (
+            <a
+              href="/api/auth/google/start"
+              onClick={onClose}
+              className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-800 px-2 py-1 rounded hover:bg-blue-50"
+            >
+              <Link2 className="w-3 h-3" /> Connect
+            </a>
+          )}
+        </div>
+      </div>
+
+      {/* Hierarchical MCC picker */}
+      {expanded && hasAccounts && (
+        <div className="px-4 pb-2">
+          <div className="bg-gray-50 rounded-lg p-1.5 max-h-72 overflow-y-auto">
+            {mccAccounts.map((acc) => {
+              if (acc.isManager && acc.children && acc.children.length > 0) {
+                const isOpen = expandedMcc.has(acc.id);
+                return (
+                  <div key={acc.id} className="mb-1 last:mb-0">
+                    <button
+                      onClick={() => toggleMcc(acc.id)}
+                      className="w-full text-left px-2.5 pt-2 pb-1 flex items-center gap-1.5 hover:bg-gray-100 rounded-md transition"
+                    >
+                      <ChevronDown className={`w-3 h-3 text-gray-400 transition flex-shrink-0 ${isOpen ? "" : "-rotate-90"}`} />
+                      <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider truncate">{acc.name}</span>
+                      <span className="text-[9px] text-gray-400 flex-shrink-0">{acc.children.length}</span>
+                    </button>
+                    {isOpen && (
+                      <div className="space-y-0.5 ml-2">
+                        {acc.children.map((child) => (
+                          <button
+                            key={child.id}
+                            onClick={() => { onSwitch(child.id, acc.id); setExpanded(false); }}
+                            className={`w-full text-left px-3 py-1.5 rounded-md text-xs transition flex items-center justify-between ${
+                              activeId === child.id
+                                ? "bg-white shadow-sm text-gray-900 font-semibold"
+                                : "text-gray-600 hover:bg-white hover:shadow-sm"
+                            }`}
+                          >
+                            <div className="min-w-0">
+                              <div className="font-medium truncate">{child.name}</div>
+                              <div className="text-[10px] text-gray-400 font-mono">{child.id}</div>
+                            </div>
+                            {activeId === child.id && <Check className="w-3.5 h-3.5 text-green-600 flex-shrink-0 ml-2" />}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              }
+              // Standalone leaf account (not under any MCC)
+              return (
+                <button
+                  key={acc.id}
+                  onClick={() => { onSwitch(acc.id); setExpanded(false); }}
+                  className={`w-full text-left px-3 py-2 rounded-md text-xs transition flex items-center justify-between ${
+                    activeId === acc.id
+                      ? "bg-white shadow-sm text-gray-900 font-semibold"
+                      : "text-gray-600 hover:bg-white hover:shadow-sm"
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <div className="font-medium truncate">{acc.name}</div>
+                    <div className="text-[10px] text-gray-400 font-mono">{acc.id}</div>
+                  </div>
+                  {activeId === acc.id && <Check className="w-3.5 h-3.5 text-green-600 flex-shrink-0 ml-2" />}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Paste ID fallback */}
+      {needsSelection && !hasAccounts && (
+        <div className="px-4 pb-2.5">
+          <div className="bg-amber-50 rounded-lg p-2.5">
+            <div className="flex items-start gap-1.5 mb-1.5">
+              <AlertCircle className="w-3 h-3 text-amber-500 mt-0.5 flex-shrink-0" />
+              <span className="text-[10px] text-amber-700">Open ads.google.com — the number in the top-right (e.g. 123-456-7890) is your Customer ID.</span>
+            </div>
+            <form
+              className="flex gap-1.5"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const input = (e.target as HTMLFormElement).elements.namedItem("entityId") as HTMLInputElement;
+                if (input.value.trim()) onPasteId(input.value.trim().replace(/-/g, ""));
+              }}
+            >
+              <input
+                name="entityId"
+                placeholder="e.g. 123-456-7890"
+                className="flex-1 px-2.5 py-1.5 border border-amber-300 rounded-md text-xs bg-white focus:outline-none focus:ring-2 focus:ring-amber-200"
+              />
+              <button type="submit" className="px-2.5 py-1.5 bg-amber-600 text-white rounded-md text-xs font-medium hover:bg-amber-700">
+                Save
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ── Main AccountSelector ────────────────────────────────────── */
 
 interface AccountSelectorProps {
@@ -385,6 +596,7 @@ export default function AccountSelector({ onResolveGoogleAds }: AccountSelectorP
     dv360Partners,
     googleAdsCustomerId,
     gadsCustomerOptions,
+    gadsMccAccounts,
     snapchatAdAccountId,
     snapAdAccountOptions,
     isMetaConnected,
@@ -404,6 +616,7 @@ export default function AccountSelector({ onResolveGoogleAds }: AccountSelectorP
     setDv360AdvertiserOptions,
     setDv360Partners,
     setGadsCustomerOptions,
+    setGadsMccAccounts,
     setSnapAdAccountOptions,
     switchDv360Advertiser,
     switchGoogleAdsCustomer,
@@ -507,11 +720,11 @@ export default function AccountSelector({ onResolveGoogleAds }: AccountSelectorP
       .finally(() => { dv360InFlightRef.current = false; });
   }, [googleAuth, dv360Partners.length, dv360ClientId, dv360ClientSecret, dv360RefreshToken, setDv360AdvertiserOptions, setDv360Partners]);
 
-  // Auto-fetch Google Ads accounts (all accessible leaf customers) once a Google
-  // token exists and no options are loaded. Shares the DV360/Google OAuth creds.
+  // Auto-fetch Google Ads accounts (hierarchical: MCC → children) once a Google
+  // token exists and no accounts are loaded. Shares the DV360/Google OAuth creds.
   const gadsInFlightRef = useRef(false);
   useEffect(() => {
-    if (!googleAuth || gadsCustomerOptions.length > 0 || gadsInFlightRef.current) return;
+    if (!googleAuth || gadsMccAccounts.length > 0 || gadsInFlightRef.current) return;
     if (!dv360ClientId || !dv360ClientSecret || !dv360RefreshToken) return;
     gadsInFlightRef.current = true;
     fetch("/api/google-ads/list-accounts", {
@@ -526,14 +739,25 @@ export default function AccountSelector({ onResolveGoogleAds }: AccountSelectorP
       .then((r) => r.json())
       .then((d) => {
         if (d.accounts?.length) {
-          setGadsCustomerOptions(
-            d.accounts.map((a: { id: string; name: string }) => ({ id: a.id, name: a.name }))
-          );
+          setGadsMccAccounts(d.accounts);
+          // Also flatten all leaf accounts into gadsCustomerOptions for
+          // backward compatibility with the rest of the app.
+          const flat: { id: string; name: string; loginCustomerId?: string }[] = [];
+          for (const acc of d.accounts) {
+            if (acc.isManager && acc.children?.length) {
+              for (const child of acc.children) {
+                flat.push({ id: child.id, name: child.name, loginCustomerId: acc.id });
+              }
+            } else if (!acc.isManager) {
+              flat.push({ id: acc.id, name: acc.name });
+            }
+          }
+          if (flat.length > 0) setGadsCustomerOptions(flat);
         }
       })
       .catch(() => {})
       .finally(() => { gadsInFlightRef.current = false; });
-  }, [googleAuth, gadsCustomerOptions.length, dv360ClientId, dv360ClientSecret, dv360RefreshToken, setGadsCustomerOptions]);
+  }, [googleAuth, gadsMccAccounts.length, dv360ClientId, dv360ClientSecret, dv360RefreshToken, setGadsMccAccounts, setGadsCustomerOptions]);
 
   // Auto-fetch Snapchat ad accounts (across all orgs) once a Snapchat token exists
   // and no options are loaded.
@@ -642,27 +866,20 @@ export default function AccountSelector({ onResolveGoogleAds }: AccountSelectorP
             }}
           />
 
-          <PlatformRow
-            label="Google Ads"
-            icon={<span className="text-yellow-600">{GOOGLE_SVG}</span>}
-            color="bg-yellow-100"
+          <GoogleAdsRow
             connected={gadsConn}
             authenticated={googleAuth}
             activeId={googleAdsCustomerId}
-            options={gadsOptions}
-            connectUrl="/api/auth/google/start"
-            onDisconnect={clearGoogleAdsCredentials}
-            onSwitch={(id) => {
-              if (onResolveGoogleAds) onResolveGoogleAds(id);
-              else switchGoogleAdsCustomer(id);
+            mccAccounts={gadsMccAccounts}
+            flatOptions={gadsOptions}
+            onSwitch={(id, loginCustomerId) => {
+              setGoogleAdsCredentials({ customerId: id, loginCustomerId });
             }}
+            onDisconnect={clearGoogleAdsCredentials}
             onClose={() => setOpen(false)}
-            pasteLabel="e.g. 123-456-7890"
-            pasteHint="Open ads.google.com — the number in the top-right (e.g. 123-456-7890) is your Customer ID."
             onPasteId={(id) => {
-              const cleaned = id.replace(/-/g, "");
-              if (onResolveGoogleAds) onResolveGoogleAds(cleaned);
-              else setGoogleAdsCredentials({ customerId: cleaned });
+              if (onResolveGoogleAds) onResolveGoogleAds(id);
+              else setGoogleAdsCredentials({ customerId: id });
             }}
           />
 
