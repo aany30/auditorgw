@@ -753,9 +753,14 @@ export default function AccountSelector({ onResolveGoogleAds }: AccountSelectorP
 
   // Auto-fetch Google Ads accounts (hierarchical: MCC → children) once a Google
   // token exists and no accounts are loaded. Shares the DV360/Google OAuth creds.
+  // Also re-fetches when existing flat options look stale (name === id).
   const gadsInFlightRef = useRef(false);
+  const gadsLooksStale = gadsMccAccounts.length === 0 &&
+    gadsCustomerOptions.length > 0 &&
+    gadsCustomerOptions.every((o: { id: string; name: string }) => o.name === o.id);
   useEffect(() => {
-    if (!googleAuth || gadsMccAccounts.length > 0 || gadsInFlightRef.current) return;
+    if (!googleAuth || gadsInFlightRef.current) return;
+    if (gadsMccAccounts.length > 0 && !gadsLooksStale) return;
     if (!dv360ClientId || !dv360ClientSecret || !dv360RefreshToken) return;
     gadsInFlightRef.current = true;
     fetch("/api/google-ads/list-accounts", {
@@ -788,7 +793,7 @@ export default function AccountSelector({ onResolveGoogleAds }: AccountSelectorP
       })
       .catch(() => {})
       .finally(() => { gadsInFlightRef.current = false; });
-  }, [googleAuth, gadsMccAccounts.length, dv360ClientId, dv360ClientSecret, dv360RefreshToken, setGadsMccAccounts, setGadsCustomerOptions]);
+  }, [googleAuth, gadsMccAccounts.length, gadsLooksStale, dv360ClientId, dv360ClientSecret, dv360RefreshToken, setGadsMccAccounts, setGadsCustomerOptions]);
 
   // Auto-fetch Snapchat ad accounts (across all orgs) once a Snapchat token exists
   // and no options are loaded.

@@ -58,8 +58,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const resourceNames: string[] = listData.resourceNames || [];
     const customerIds = resourceNames.map((r: string) => r.replace("customers/", ""));
 
-    // Step 2: Fetch info for each customer (name + isManager) in parallel
+    // Step 2: Fetch info for each customer (name + isManager) in parallel.
+    // Some child accounts require `login-customer-id` set to their MCC, so
+    // we first try a plain fetch; if it fails we'll retry in Step 2b with
+    // each discovered MCC as the login customer.
     const infoMap = new Map<string, { name: string; isManager: boolean }>();
+    const failedIds: string[] = [];
     await Promise.all(
       customerIds.map(async (cid) => {
         try {
@@ -71,13 +75,45 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               isManager: !!info.manager,
             });
           } else {
-            infoMap.set(cid, { name: cid, isManager: false });
+            failedIds.push(cid);
           }
         } catch {
-          infoMap.set(cid, { name: cid, isManager: false });
+          failedIds.push(cid);
         }
       })
     );
+
+    // Step 2b: Retry failed IDs using each known MCC as login-customer-id
+    const managerIdsKnown = [...infoMap.entries()]
+      .filter(([, v]) => v.isManager)
+      .map(([id]) => id);
+
+    if (failedIds.length > 0 && managerIdsKnown.length > 0) {
+      await Promise.all(
+        failedIds.map(async (cid) => {
+          for (const mccId of managerIdsKnown) {
+            try {
+              const infoRes = await fetch(`${GADS_BASE}/customers/${cid}`, {
+                headers: { ...authHeaders, "login-customer-id": mccId },
+              });
+              if (infoRes.ok) {
+                const info = await infoRes.json();
+                infoMap.set(cid, {
+                  name: info.descriptiveName || cid,
+                  isManager: !!info.manager,
+                });
+                return;
+              }
+            } catch { /* try next MCC */ }
+          }
+          infoMap.set(cid, { name: cid, isManager: false });
+        })
+      );
+    } else {
+      for (const cid of failedIds) {
+        infoMap.set(cid, { name: cid, isManager: false });
+      }
+    }
 
     // Step 3: For each MCC account, fetch child accounts via GAQL
     const accounts: AccountInfo[] = [];
