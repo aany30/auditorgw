@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { ChevronDown, Check, LogOut, Link2, Unlink, AlertCircle } from "lucide-react";
+import { ChevronDown, Check, LogOut, Link2, Unlink, AlertCircle, RefreshCw } from "lucide-react";
 import { useAuthStore } from "@/store/auth";
 
 const GOOGLE_SVG = (
@@ -388,11 +388,12 @@ interface GoogleAdsRowProps {
   onDisconnect: () => void;
   onClose: () => void;
   onPasteId: (id: string) => void;
+  onRefresh: () => void;
 }
 
 function GoogleAdsRow({
   connected, authenticated, activeId, mccAccounts, flatOptions,
-  onSwitch, onDisconnect, onClose, onPasteId,
+  onSwitch, onDisconnect, onClose, onPasteId, onRefresh,
 }: GoogleAdsRowProps) {
   const [expanded, setExpanded] = useState(false);
   const [expandedMcc, setExpandedMcc] = useState<Set<string>>(new Set());
@@ -464,6 +465,15 @@ function GoogleAdsRow({
               {needsSelection ? "Pick" : "Switch"} <ChevronDown className={`w-3 h-3 inline transition ${expanded ? "rotate-180" : ""}`} />
             </button>
           )}
+          {(connected || authenticated) && (
+            <button
+              onClick={onRefresh}
+              className="p-1.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded transition"
+              title="Refresh accounts"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+            </button>
+          )}
           {(connected || authenticated) ? (
             <button
               onClick={onDisconnect}
@@ -484,66 +494,87 @@ function GoogleAdsRow({
         </div>
       </div>
 
-      {/* Hierarchical MCC picker */}
+      {/* Hierarchical MCC picker (falls back to flat list when hierarchy not loaded) */}
       {expanded && hasAccounts && (
         <div className="px-4 pb-2">
           <div className="bg-gray-50 rounded-lg p-1.5 max-h-72 overflow-y-auto">
-            {mccAccounts.map((acc) => {
-              if (acc.isManager && acc.children && acc.children.length > 0) {
-                const isOpen = expandedMcc.has(acc.id);
+            {mccAccounts.length > 0 ? (
+              mccAccounts.map((acc) => {
+                if (acc.isManager && acc.children && acc.children.length > 0) {
+                  const isOpen = expandedMcc.has(acc.id);
+                  return (
+                    <div key={acc.id} className="mb-1 last:mb-0">
+                      <button
+                        onClick={() => toggleMcc(acc.id)}
+                        className="w-full text-left px-2.5 pt-2 pb-1 flex items-center gap-1.5 hover:bg-gray-100 rounded-md transition"
+                      >
+                        <ChevronDown className={`w-3 h-3 text-gray-400 transition flex-shrink-0 ${isOpen ? "" : "-rotate-90"}`} />
+                        <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider truncate">{acc.name}</span>
+                        <span className="text-[9px] text-gray-400 flex-shrink-0">{acc.children.length}</span>
+                      </button>
+                      {isOpen && (
+                        <div className="space-y-0.5 ml-2">
+                          {acc.children.map((child) => (
+                            <button
+                              key={child.id}
+                              onClick={() => { onSwitch(child.id, acc.id); setExpanded(false); }}
+                              className={`w-full text-left px-3 py-1.5 rounded-md text-xs transition flex items-center justify-between ${
+                                activeId === child.id
+                                  ? "bg-white shadow-sm text-gray-900 font-semibold"
+                                  : "text-gray-600 hover:bg-white hover:shadow-sm"
+                              }`}
+                            >
+                              <div className="min-w-0">
+                                <div className="font-medium truncate">{child.name}</div>
+                                <div className="text-[10px] text-gray-400 font-mono">{child.id}</div>
+                              </div>
+                              {activeId === child.id && <Check className="w-3.5 h-3.5 text-green-600 flex-shrink-0 ml-2" />}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
+                // Standalone leaf account (not under any MCC)
                 return (
-                  <div key={acc.id} className="mb-1 last:mb-0">
-                    <button
-                      onClick={() => toggleMcc(acc.id)}
-                      className="w-full text-left px-2.5 pt-2 pb-1 flex items-center gap-1.5 hover:bg-gray-100 rounded-md transition"
-                    >
-                      <ChevronDown className={`w-3 h-3 text-gray-400 transition flex-shrink-0 ${isOpen ? "" : "-rotate-90"}`} />
-                      <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider truncate">{acc.name}</span>
-                      <span className="text-[9px] text-gray-400 flex-shrink-0">{acc.children.length}</span>
-                    </button>
-                    {isOpen && (
-                      <div className="space-y-0.5 ml-2">
-                        {acc.children.map((child) => (
-                          <button
-                            key={child.id}
-                            onClick={() => { onSwitch(child.id, acc.id); setExpanded(false); }}
-                            className={`w-full text-left px-3 py-1.5 rounded-md text-xs transition flex items-center justify-between ${
-                              activeId === child.id
-                                ? "bg-white shadow-sm text-gray-900 font-semibold"
-                                : "text-gray-600 hover:bg-white hover:shadow-sm"
-                            }`}
-                          >
-                            <div className="min-w-0">
-                              <div className="font-medium truncate">{child.name}</div>
-                              <div className="text-[10px] text-gray-400 font-mono">{child.id}</div>
-                            </div>
-                            {activeId === child.id && <Check className="w-3.5 h-3.5 text-green-600 flex-shrink-0 ml-2" />}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                  <button
+                    key={acc.id}
+                    onClick={() => { onSwitch(acc.id); setExpanded(false); }}
+                    className={`w-full text-left px-3 py-2 rounded-md text-xs transition flex items-center justify-between ${
+                      activeId === acc.id
+                        ? "bg-white shadow-sm text-gray-900 font-semibold"
+                        : "text-gray-600 hover:bg-white hover:shadow-sm"
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <div className="font-medium truncate">{acc.name}</div>
+                      <div className="text-[10px] text-gray-400 font-mono">{acc.id}</div>
+                    </div>
+                    {activeId === acc.id && <Check className="w-3.5 h-3.5 text-green-600 flex-shrink-0 ml-2" />}
+                  </button>
                 );
-              }
-              // Standalone leaf account (not under any MCC)
-              return (
+              })
+            ) : (
+              // Fallback: flat list from gadsCustomerOptions (hierarchy not loaded yet)
+              flatOptions.map((opt) => (
                 <button
-                  key={acc.id}
-                  onClick={() => { onSwitch(acc.id); setExpanded(false); }}
+                  key={opt.id}
+                  onClick={() => { onSwitch(opt.id, opt.loginCustomerId); setExpanded(false); }}
                   className={`w-full text-left px-3 py-2 rounded-md text-xs transition flex items-center justify-between ${
-                    activeId === acc.id
+                    activeId === opt.id
                       ? "bg-white shadow-sm text-gray-900 font-semibold"
                       : "text-gray-600 hover:bg-white hover:shadow-sm"
                   }`}
                 >
                   <div className="min-w-0">
-                    <div className="font-medium truncate">{acc.name}</div>
-                    <div className="text-[10px] text-gray-400 font-mono">{acc.id}</div>
+                    <div className="font-medium truncate">{opt.name}</div>
+                    <div className="text-[10px] text-gray-400 font-mono">{opt.id}</div>
                   </div>
-                  {activeId === acc.id && <Check className="w-3.5 h-3.5 text-green-600 flex-shrink-0 ml-2" />}
+                  {activeId === opt.id && <Check className="w-3.5 h-3.5 text-green-600 flex-shrink-0 ml-2" />}
                 </button>
-              );
-            })}
+              ))
+            )}
           </div>
         </div>
       )}
@@ -880,6 +911,10 @@ export default function AccountSelector({ onResolveGoogleAds }: AccountSelectorP
             onPasteId={(id) => {
               if (onResolveGoogleAds) onResolveGoogleAds(id);
               else setGoogleAdsCredentials({ customerId: id });
+            }}
+            onRefresh={() => {
+              setGadsMccAccounts([]);
+              setGadsCustomerOptions([]);
             }}
           />
 
