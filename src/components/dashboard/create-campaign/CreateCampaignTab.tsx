@@ -8,7 +8,7 @@ import GoogleAdsCampaignWizard from "./GoogleAdsCampaignWizard";
 import SnapchatCampaignWizard from "./SnapchatCampaignWizard";
 
 interface Props {
-  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify" | "both";
 }
 
 export default function CreateCampaignTab({ platform }: Props) {

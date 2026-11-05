@@ -25,7 +25,7 @@ import type { DateRange } from "@/components/shared/DateRangePicker";
 import type { ReportRequest } from "@/pages/api/ai/generate-report";
 
 interface Props {
-  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify" | "both";
   dateRange: DateRange;
   customStart?: string;
   customEnd?: string;

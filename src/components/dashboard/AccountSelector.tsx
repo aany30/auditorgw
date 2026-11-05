@@ -17,6 +17,12 @@ const META_SVG = (
   </svg>
 );
 
+const SPOTIFY_SVG = (
+  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
+    <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z" />
+  </svg>
+);
+
 const SNAP_SVG = (
   <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
     <path d="M12.206.793c.99 0 4.347.276 5.93 3.821.529 1.193.403 3.219.299 4.847l-.003.06c-.012.18-.022.345-.03.51.075.045.203.09.401.09.3-.016.659-.12 1.033-.301a.477.477 0 0 1 .718.447c-.003.2-.154.462-.469.667-.293.191-.678.369-1.08.503-.112.037-.208.087-.295.161-.065.054-.111.123-.145.198.033.197.116.42.255.633.396.611 1.028 1.136 1.726 1.402a.466.466 0 0 1 .242.707c-.143.309-.677.585-1.547.803-.2.049-.361.131-.468.256-.105.122-.177.284-.218.453-.077.317-.159.662-.476.834a.578.578 0 0 1-.298.088c-.128 0-.265-.04-.413-.086-.219-.068-.472-.144-.788-.144a2.38 2.38 0 0 0-.372.028c-.345.052-.736.247-1.189.49-.776.416-1.735.933-3.049.933-1.33 0-2.294-.523-3.078-.943-.443-.238-.825-.443-1.162-.494a2.42 2.42 0 0 0-.371-.027c-.332 0-.591.083-.808.149-.14.044-.264.082-.382.082a.617.617 0 0 1-.339-.102c-.29-.168-.372-.498-.448-.808-.042-.174-.116-.34-.224-.465-.108-.126-.272-.21-.474-.26-.859-.216-1.386-.49-1.53-.8a.49.49 0 0 1 .243-.712c.699-.265 1.33-.79 1.726-1.401.14-.213.222-.436.255-.633a.564.564 0 0 0-.145-.198 1.063 1.063 0 0 0-.295-.161c-.4-.134-.787-.312-1.08-.503-.315-.205-.466-.468-.47-.668a.482.482 0 0 1 .72-.447c.374.181.733.285 1.033.301.199 0 .326-.045.401-.09a31.03 31.03 0 0 1-.033-.57c-.104-1.628-.23-3.654.299-4.847C7.86 1.069 11.216.793 12.206.793z" />
@@ -620,17 +626,22 @@ export default function AccountSelector({ onResolveGoogleAds }: AccountSelectorP
     gadsMccAccounts,
     snapchatAdAccountId,
     snapAdAccountOptions,
+    spotifyAdAccountId,
+    spotifyAdAccountOptions,
     isMetaConnected,
     isDV360Connected,
     isGoogleAdsConnected,
     isSnapchatConnected,
+    isSpotifyConnected,
     hasMetaToken,
     hasGoogleToken,
     hasSnapchatToken,
+    hasSpotifyToken,
     clearMetaCredentials,
     clearDV360Credentials,
     clearGoogleAdsCredentials,
     clearSnapchatCredentials,
+    clearSpotifyCredentials,
     clearAllCredentials,
     switchMetaAdAccount,
     setMetaAdAccountOptions,
@@ -639,18 +650,24 @@ export default function AccountSelector({ onResolveGoogleAds }: AccountSelectorP
     setGadsCustomerOptions,
     setGadsMccAccounts,
     setSnapAdAccountOptions,
+    setSpotifyAdAccountOptions,
     switchDv360Advertiser,
     switchGoogleAdsCustomer,
     switchSnapchatAdAccount,
+    switchSpotifyAdAccount,
     setDV360Credentials,
     setGoogleAdsCredentials,
     setSnapchatCredentials,
+    setSpotifyCredentials,
     dv360ClientId,
     dv360ClientSecret,
     dv360RefreshToken,
     snapchatClientId,
     snapchatClientSecret,
     snapchatRefreshToken,
+    spotifyClientId,
+    spotifyClientSecret,
+    spotifyRefreshToken,
   } = useAuthStore();
 
   const [open, setOpen] = useState(false);
@@ -671,16 +688,19 @@ export default function AccountSelector({ onResolveGoogleAds }: AccountSelectorP
   const dv360Conn = mounted && isDV360Connected();
   const gadsConn = mounted && isGoogleAdsConnected();
   const snapConn = mounted && isSnapchatConnected();
+  const spotifyConn = mounted && isSpotifyConnected();
   const metaAuth = mounted && hasMetaToken();
   const googleAuth = mounted && hasGoogleToken();
   const snapAuth = mounted && hasSnapchatToken();
+  const spotifyAuth = mounted && hasSpotifyToken();
 
-  const fullyConnected = [metaConn, dv360Conn, gadsConn, snapConn].filter(Boolean).length;
+  const fullyConnected = [metaConn, dv360Conn, gadsConn, snapConn, spotifyConn].filter(Boolean).length;
   const pendingCount = [
     !metaConn && metaAuth,
     !dv360Conn && googleAuth,
     !gadsConn && googleAuth,
     !snapConn && snapAuth,
+    !spotifyConn && spotifyAuth,
   ].filter(Boolean).length;
 
   // Auto-fetch Meta ad accounts whenever a token exists (even before an account is
@@ -813,6 +833,33 @@ export default function AccountSelector({ onResolveGoogleAds }: AccountSelectorP
       .finally(() => { snapInFlightRef.current = false; });
   }, [snapAuth, snapAdAccountOptions.length, snapchatClientId, snapchatClientSecret, snapchatRefreshToken, setSnapAdAccountOptions]);
 
+  // Auto-fetch Spotify ad accounts once a Spotify token exists and no options are loaded.
+  const spotifyInFlightRef = useRef(false);
+  useEffect(() => {
+    if (!spotifyAuth || spotifyAdAccountOptions.length > 0 || spotifyInFlightRef.current) return;
+    if (!spotifyClientId || !spotifyClientSecret || !spotifyRefreshToken) return;
+    spotifyInFlightRef.current = true;
+    fetch("/api/spotify/ad-accounts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        clientId: spotifyClientId,
+        clientSecret: spotifyClientSecret,
+        refreshToken: spotifyRefreshToken,
+      }),
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.adAccounts?.length) {
+          setSpotifyAdAccountOptions(
+            d.adAccounts.map((a: { id: string; name: string }) => ({ id: a.id, name: a.name }))
+          );
+        }
+      })
+      .catch(() => {})
+      .finally(() => { spotifyInFlightRef.current = false; });
+  }, [spotifyAuth, spotifyAdAccountOptions.length, spotifyClientId, spotifyClientSecret, spotifyRefreshToken, setSpotifyAdAccountOptions]);
+
   const metaOptions = metaAdAccountOptions.length > 0
     ? metaAdAccountOptions
     : metaBusinessId ? [{ id: metaBusinessId, name: metaBusinessId }] : [];
@@ -825,6 +872,9 @@ export default function AccountSelector({ onResolveGoogleAds }: AccountSelectorP
   const snapOptions = snapAdAccountOptions.length > 0
     ? snapAdAccountOptions
     : snapchatAdAccountId ? [{ id: snapchatAdAccountId, name: snapchatAdAccountId }] : [];
+  const spotifyOptions = spotifyAdAccountOptions.length > 0
+    ? spotifyAdAccountOptions
+    : spotifyAdAccountId ? [{ id: spotifyAdAccountId, name: spotifyAdAccountId }] : [];
 
   return (
     <div className="relative" ref={ref}>
@@ -931,6 +981,31 @@ export default function AccountSelector({ onResolveGoogleAds }: AccountSelectorP
                 refreshToken: s.snapchatRefreshToken!,
                 adAccountId: id,
                 orgId: s.snapchatOrgId || undefined,
+              });
+            }}
+          />
+
+          <PlatformRow
+            label="Spotify"
+            icon={<span className="text-green-500">{SPOTIFY_SVG}</span>}
+            color="bg-green-100"
+            connected={spotifyConn}
+            authenticated={spotifyAuth}
+            activeId={spotifyAdAccountId}
+            options={spotifyOptions}
+            connectUrl="/api/auth/spotify/start"
+            onDisconnect={clearSpotifyCredentials}
+            onSwitch={switchSpotifyAdAccount}
+            onClose={() => setOpen(false)}
+            pasteLabel="e.g. abc123..."
+            pasteHint="Open Spotify Ad Studio — the Ad Account ID is in the account settings."
+            onPasteId={(id) => {
+              const s = useAuthStore.getState();
+              setSpotifyCredentials({
+                clientId: s.spotifyClientId!,
+                clientSecret: s.spotifyClientSecret!,
+                refreshToken: s.spotifyRefreshToken!,
+                adAccountId: id,
               });
             }}
           />

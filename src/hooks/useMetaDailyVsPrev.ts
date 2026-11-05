@@ -64,7 +64,7 @@ export interface PlatformDaily {
 }
 
 export function useMetaDailyVsPrev(
-  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both",
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify" | "both",
   dateRange: DateRange,
   customStart?: string,
   customEnd?: string

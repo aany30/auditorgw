@@ -436,7 +436,7 @@ function PlacementDetailTable({
 // ─── Main component ───────────────────────────────────────────────────────────
 
 interface Props {
-  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify" | "both";
   dateRange: DateRange;
   customStart?: string;
   customEnd?: string;

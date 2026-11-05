@@ -25,7 +25,7 @@ import { isDemoCredential } from "@/lib/demo-data";
  * and syncs the OTHER platform's fields into memory before we write ours, so
  * the persist flush cannot lose them regardless of hydration timing.
  */
-function rescueOtherPlatformFromStorage(otherPlatform: "meta" | "dv360" | "google_ads" | "snapchat") {
+function rescueOtherPlatformFromStorage(otherPlatform: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify") {
   if (typeof window === "undefined") return;
   try {
     const raw = window.localStorage.getItem("auth-store");
@@ -74,6 +74,16 @@ function rescueOtherPlatformFromStorage(otherPlatform: "meta" | "dv360" | "googl
           snapchatAdAccountId: stored.snapchatAdAccountId ?? null,
           snapchatOrgId: stored.snapchatOrgId ?? null,
           snapchatCurrency: stored.snapchatCurrency ?? null,
+        });
+      }
+    } else if (otherPlatform === "spotify") {
+      if (stored.spotifyRefreshToken && !current.spotifyRefreshToken) {
+        useAuthStore.setState({
+          spotifyClientId: stored.spotifyClientId ?? null,
+          spotifyClientSecret: stored.spotifyClientSecret ?? null,
+          spotifyRefreshToken: stored.spotifyRefreshToken,
+          spotifyAdAccountId: stored.spotifyAdAccountId ?? null,
+          spotifyCurrency: stored.spotifyCurrency ?? null,
         });
       }
     }
@@ -281,12 +291,19 @@ interface AuthState {
   snapchatAdAccountId: string | null;
   snapchatOrgId: string | null;
 
+  // Spotify Ads credentials — separate OAuth app.
+  spotifyClientId: string | null;
+  spotifyClientSecret: string | null;
+  spotifyRefreshToken: string | null;
+  spotifyAdAccountId: string | null;
+
   // Available account options per platform (persisted so users can switch later)
   metaAdAccountOptions: { id: string; name: string }[];
   dv360AdvertiserOptions: { id: string; name: string; partnerId?: string }[];
   gadsCustomerOptions: { id: string; name: string; loginCustomerId?: string }[];
   gadsMccAccounts: { id: string; name: string; isManager: boolean; children?: { id: string; name: string }[] }[];
   snapAdAccountOptions: { id: string; name: string }[];
+  spotifyAdAccountOptions: { id: string; name: string }[];
   setMetaAdAccountOptions: (opts: { id: string; name: string }[]) => void;
   setDv360AdvertiserOptions: (opts: { id: string; name: string; partnerId?: string }[]) => void;
   dv360Partners: { id: string; name: string }[];
@@ -294,10 +311,12 @@ interface AuthState {
   setGadsCustomerOptions: (opts: { id: string; name: string; loginCustomerId?: string }[]) => void;
   setGadsMccAccounts: (accounts: { id: string; name: string; isManager: boolean; children?: { id: string; name: string }[] }[]) => void;
   setSnapAdAccountOptions: (opts: { id: string; name: string }[]) => void;
+  setSpotifyAdAccountOptions: (opts: { id: string; name: string }[]) => void;
   switchMetaAdAccount: (id: string) => void;
   switchDv360Advertiser: (id: string) => void;
   switchGoogleAdsCustomer: (id: string) => void;
   switchSnapchatAdAccount: (id: string) => void;
+  switchSpotifyAdAccount: (id: string) => void;
 
   // Account currencies, cached once detected so a later rate-limited campaign
   // fetch can't lose the correct symbol (Account Structure fetches reliably;
@@ -306,10 +325,12 @@ interface AuthState {
   dv360Currency: string | null;
   googleAdsCurrency: string | null;
   snapchatCurrency: string | null;
+  spotifyCurrency: string | null;
   setMetaCurrency: (c: string) => void;
   setDv360Currency: (c: string) => void;
   setGoogleAdsCurrency: (c: string) => void;
   setSnapchatCurrency: (c: string) => void;
+  setSpotifyCurrency: (c: string) => void;
 
   // Meta quota chip — mirror of the last-seen X-Business-Use-Case-Usage header
   // from Meta, per ad account. Updated by every Meta API response handler
@@ -388,6 +409,13 @@ interface AuthState {
     orgId?: string;
   }) => void;
   clearSnapchatCredentials: () => void;
+  setSpotifyCredentials: (creds: {
+    clientId: string;
+    clientSecret: string;
+    refreshToken: string;
+    adAccountId: string;
+  }) => void;
+  clearSpotifyCredentials: () => void;
   clearAllCredentials: () => void;
   addMetaPixelId: (pixelId: string) => void;
   removeMetaPixelId: (pixelId: string) => void;
@@ -410,9 +438,11 @@ interface AuthState {
   isDV360Connected: () => boolean;
   isGoogleAdsConnected: () => boolean;
   isSnapchatConnected: () => boolean;
+  isSpotifyConnected: () => boolean;
   hasMetaToken: () => boolean;
   hasGoogleToken: () => boolean;
   hasSnapchatToken: () => boolean;
+  hasSpotifyToken: () => boolean;
   getDateRangeLabel: () => string;
 
   // Demo mode — session-only, NOT persisted to localStorage.
@@ -453,18 +483,24 @@ export const useAuthStore = create<AuthState>()(
       snapchatRefreshToken: null,
       snapchatAdAccountId: null,
       snapchatOrgId: null,
+      spotifyClientId: null,
+      spotifyClientSecret: null,
+      spotifyRefreshToken: null,
+      spotifyAdAccountId: null,
       metaAdAccountOptions: [],
       dv360AdvertiserOptions: [],
       dv360Partners: [],
       gadsCustomerOptions: [],
       gadsMccAccounts: [],
       snapAdAccountOptions: [],
+      spotifyAdAccountOptions: [],
       setMetaAdAccountOptions: (opts) => set({ metaAdAccountOptions: opts }),
       setDv360AdvertiserOptions: (opts) => set({ dv360AdvertiserOptions: opts }),
       setDv360Partners: (partners) => set({ dv360Partners: partners }),
       setGadsCustomerOptions: (opts) => set({ gadsCustomerOptions: opts }),
       setGadsMccAccounts: (accounts) => set({ gadsMccAccounts: accounts }),
       setSnapAdAccountOptions: (opts) => set({ snapAdAccountOptions: opts }),
+      setSpotifyAdAccountOptions: (opts) => set({ spotifyAdAccountOptions: opts }),
       switchMetaAdAccount: (id) => {
         // Pixels are account-specific, so drop the previous account's pixel IDs —
         // the new account's pixels are auto-derived from its ad account when empty.
@@ -480,14 +516,19 @@ export const useAuthStore = create<AuthState>()(
       switchSnapchatAdAccount: (id) => {
         set({ snapchatAdAccountId: id, snapchatCurrency: null });
       },
+      switchSpotifyAdAccount: (id) => {
+        set({ spotifyAdAccountId: id, spotifyCurrency: null });
+      },
       metaCurrency: null,
       dv360Currency: null,
       googleAdsCurrency: null,
       snapchatCurrency: null,
+      spotifyCurrency: null,
       setMetaCurrency: (c: string) => { if (c && c !== get().metaCurrency) set({ metaCurrency: c }); },
       setDv360Currency: (c: string) => { if (c && c !== get().dv360Currency) set({ dv360Currency: c }); },
       setGoogleAdsCurrency: (c: string) => { if (c && c !== get().googleAdsCurrency) set({ googleAdsCurrency: c }); },
       setSnapchatCurrency: (c: string) => { if (c && c !== get().snapchatCurrency) set({ snapchatCurrency: c }); },
+      setSpotifyCurrency: (c: string) => { if (c && c !== get().spotifyCurrency) set({ spotifyCurrency: c }); },
       metaQuota: {},
       setMetaQuota: (accountId, snapshot) =>
         set((state) => ({ metaQuota: { ...state.metaQuota, [accountId]: snapshot } })),
@@ -531,6 +572,7 @@ export const useAuthStore = create<AuthState>()(
         rescueOtherPlatformFromStorage("dv360");
         rescueOtherPlatformFromStorage("google_ads");
         rescueOtherPlatformFromStorage("snapchat");
+        rescueOtherPlatformFromStorage("spotify");
         set({ metaAccessToken: token, metaBusinessId: businessId || null, metaPixelIds: pixelIds });
       },
 
@@ -547,6 +589,7 @@ export const useAuthStore = create<AuthState>()(
         rescueOtherPlatformFromStorage("meta");
         rescueOtherPlatformFromStorage("google_ads");
         rescueOtherPlatformFromStorage("snapchat");
+        rescueOtherPlatformFromStorage("spotify");
         set({
           dv360ClientId: clientId,
           dv360ClientSecret: clientSecret,
@@ -560,6 +603,7 @@ export const useAuthStore = create<AuthState>()(
         rescueOtherPlatformFromStorage("meta");
         rescueOtherPlatformFromStorage("dv360");
         rescueOtherPlatformFromStorage("snapchat");
+        rescueOtherPlatformFromStorage("spotify");
         set({
           googleAdsCustomerId: customerId,
           googleAdsLoginCustomerId: loginCustomerId || null,
@@ -577,6 +621,7 @@ export const useAuthStore = create<AuthState>()(
         rescueOtherPlatformFromStorage("meta");
         rescueOtherPlatformFromStorage("dv360");
         rescueOtherPlatformFromStorage("google_ads");
+        rescueOtherPlatformFromStorage("spotify");
         set({
           snapchatClientId: clientId,
           snapchatClientSecret: clientSecret,
@@ -594,6 +639,29 @@ export const useAuthStore = create<AuthState>()(
           snapchatAdAccountId: null,
           snapchatOrgId: null,
           snapchatCurrency: null,
+        }),
+
+      setSpotifyCredentials: ({ clientId, clientSecret, refreshToken, adAccountId }) => {
+        rescueOtherPlatformFromStorage("meta");
+        rescueOtherPlatformFromStorage("dv360");
+        rescueOtherPlatformFromStorage("google_ads");
+        rescueOtherPlatformFromStorage("snapchat");
+        set({
+          spotifyClientId: clientId,
+          spotifyClientSecret: clientSecret,
+          spotifyRefreshToken: refreshToken,
+          spotifyAdAccountId: adAccountId,
+        });
+      },
+
+      clearSpotifyCredentials: () =>
+        set({
+          spotifyClientId: null,
+          spotifyClientSecret: null,
+          spotifyRefreshToken: null,
+          spotifyAdAccountId: null,
+          spotifyCurrency: null,
+          spotifyAdAccountOptions: [],
         }),
 
       setDateRange: (range) => set({ dateRange: range }),
@@ -672,6 +740,12 @@ export const useAuthStore = create<AuthState>()(
           snapchatAdAccountId: null,
           snapchatOrgId: null,
           snapchatCurrency: null,
+          spotifyClientId: null,
+          spotifyClientSecret: null,
+          spotifyRefreshToken: null,
+          spotifyAdAccountId: null,
+          spotifyCurrency: null,
+          spotifyAdAccountOptions: [],
           // NOTE: totalAiCreditsUsd is intentionally NOT reset here. Each email's
           // usage lives in aiCreditsByEmail and is restored on re-login, so a
           // user's credit total is never lost by logging out.
@@ -719,6 +793,16 @@ export const useAuthStore = create<AuthState>()(
           !isDemoCredential(s.snapchatRefreshToken)
         );
       },
+      isSpotifyConnected: () => {
+        const s = get();
+        return !!(
+          s.spotifyRefreshToken &&
+          s.spotifyClientId &&
+          s.spotifyClientSecret &&
+          s.spotifyAdAccountId &&
+          !isDemoCredential(s.spotifyRefreshToken)
+        );
+      },
       hasMetaToken: () => {
         const s = get();
         return !!(s.metaAccessToken && !isDemoCredential(s.metaAccessToken));
@@ -730,6 +814,10 @@ export const useAuthStore = create<AuthState>()(
       hasSnapchatToken: () => {
         const s = get();
         return !!(s.snapchatRefreshToken && s.snapchatClientId && s.snapchatClientSecret && !isDemoCredential(s.snapchatRefreshToken));
+      },
+      hasSpotifyToken: () => {
+        const s = get();
+        return !!(s.spotifyRefreshToken && s.spotifyClientId && s.spotifyClientSecret && !isDemoCredential(s.spotifyRefreshToken));
       },
 
       getDateRangeLabel: () => {
@@ -833,7 +921,7 @@ export const useAuthStore = create<AuthState>()(
       },
       // Bump this version any time DEFAULT_NAMING_CONVENTIONS / META_BENCHMARKS
       // change in a way that should override persisted user state.
-      version: 11,
+      version: 12,
       // v4: wipe persisted demo placeholder tokens. v5: Google Ads/GA4/GTM
       // integration removed — drop all google credential keys and google
       // benchmark fields from persisted state; initialize DV360 fields.
@@ -918,6 +1006,17 @@ export const useAuthStore = create<AuthState>()(
           state = {
             ...state,
             gadsMccAccounts: [],
+          };
+        }
+        if (fromVersion < 12) {
+          state = {
+            ...state,
+            spotifyClientId: null,
+            spotifyClientSecret: null,
+            spotifyRefreshToken: null,
+            spotifyAdAccountId: null,
+            spotifyCurrency: null,
+            spotifyAdAccountOptions: [],
           };
         }
         return state as AuthState;

@@ -15,7 +15,7 @@ import { calcCost } from "@/lib/ai-cost";
 
 export interface ReportRequest {
   reportType: "awareness" | "sales";
-  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify" | "both";
   brandName?: string;
   dateRange: string;
   currency: string;

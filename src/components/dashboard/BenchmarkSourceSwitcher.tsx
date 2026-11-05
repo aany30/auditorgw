@@ -15,7 +15,7 @@ interface Props {
   /** Stage names this audit cares about — sent to the AI so it returns matching values. */
   stages: string[];
   /** Platform context for the AI prompt. */
-  platform?: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
+  platform?: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify" | "both";
 }
 
 type Tab = "meta" | "industry" | "past";

@@ -18,7 +18,7 @@ interface BenchmarkRequest {
   /** Funnel stage names, e.g. ["PageView", "ViewContent", "AddToCart", "Purchase"]. */
   stages: string[];
   /** Platform context, helps the model pick the right benchmark profile. */
-  platform?: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
+  platform?: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify" | "both";
 }
 
 interface BenchmarkResponse {

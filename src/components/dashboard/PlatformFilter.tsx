@@ -3,7 +3,7 @@ import { useRouter } from "next/router";
 import { Globe, ChevronDown, Check } from "lucide-react";
 import { useAuthStore } from "@/store/auth";
 
-export type PlatformValue = "all" | "meta" | "dv360" | "google_ads" | "snapchat" | "x" | "linkedin";
+export type PlatformValue = "all" | "meta" | "dv360" | "google_ads" | "snapchat" | "spotify" | "x" | "linkedin";
 
 const PLATFORM_OPTIONS: Array<{ value: PlatformValue; label: string; available: boolean }> = [
   { value: "all", label: "All", available: true },
@@ -11,6 +11,7 @@ const PLATFORM_OPTIONS: Array<{ value: PlatformValue; label: string; available: 
   { value: "dv360", label: "DV360", available: true },
   { value: "google_ads", label: "Google Ads", available: true },
   { value: "snapchat", label: "Snapchat", available: true },
+  { value: "spotify", label: "Spotify", available: true },
   { value: "x", label: "X", available: false },
   { value: "linkedin", label: "LinkedIn", available: false },
 ];
@@ -24,7 +25,7 @@ export default function PlatformFilter({ value, onChange }: Props) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const router = useRouter();
-  const { isMetaConnected, isDV360Connected, isGoogleAdsConnected, isSnapchatConnected, demoMode } = useAuthStore();
+  const { isMetaConnected, isDV360Connected, isGoogleAdsConnected, isSnapchatConnected, isSpotifyConnected, demoMode } = useAuthStore();
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
@@ -47,6 +48,7 @@ export default function PlatformFilter({ value, onChange }: Props) {
         dv360: demoMode || isDV360Connected(),
         google_ads: demoMode || isGoogleAdsConnected(),
         snapchat: demoMode || isSnapchatConnected(),
+        spotify: demoMode || isSpotifyConnected(),
       }
     : {};
 
@@ -126,10 +128,11 @@ export default function PlatformFilter({ value, onChange }: Props) {
  * shape that existing tabs consume. "all" + any not-yet-integrated platform
  * falls back to "both" so existing fetch logic still runs.
  */
-export function toLegacyPlatform(p: PlatformValue): "meta" | "dv360" | "google_ads" | "snapchat" | "both" {
+export function toLegacyPlatform(p: PlatformValue): "meta" | "dv360" | "google_ads" | "snapchat" | "spotify" | "both" {
   if (p === "meta") return "meta";
   if (p === "dv360") return "dv360";
   if (p === "google_ads") return "google_ads";
   if (p === "snapchat") return "snapchat";
+  if (p === "spotify") return "spotify";
   return "both";
 }

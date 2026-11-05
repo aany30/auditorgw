@@ -39,7 +39,7 @@ import type { AdInsightRow } from "@/pages/api/reporting/ad-insights/meta";
 import { ChevronRight as ChevronRightIcon, MoreHorizontal, GitCompare, Layers as LayersIcon } from "lucide-react";
 
 interface Props {
-  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify" | "both";
   dateRange: DateRange;
   customStart?: string;
   customEnd?: string;

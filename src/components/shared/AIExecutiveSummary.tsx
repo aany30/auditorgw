@@ -17,7 +17,7 @@ interface Props {
   tabName: string;
   /** Serialisable snapshot of the tab's current data — passed verbatim to Claude. */
   context: Record<string, unknown>;
-  platform?: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
+  platform?: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify" | "both";
   dateRange?: string;
   /** Render as a compact inline button next to the tab title. Panel drops below on click. */
   inline?: boolean;

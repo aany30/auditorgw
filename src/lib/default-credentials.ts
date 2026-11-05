@@ -56,6 +56,22 @@ export function resolveSnapchatCreds(body: Record<string, unknown>): SnapchatCre
   return { clientId, clientSecret, refreshToken, adAccountId, orgId };
 }
 
+interface SpotifyCreds {
+  clientId: string;
+  clientSecret: string;
+  refreshToken: string;
+  adAccountId: string;
+}
+
+export function resolveSpotifyCreds(body: Record<string, unknown>): SpotifyCreds | null {
+  const clientId = (body.clientId as string) || process.env.SPOTIFY_CLIENT_ID || "";
+  const clientSecret = (body.clientSecret as string) || process.env.SPOTIFY_CLIENT_SECRET || "";
+  const refreshToken = (body.refreshToken as string) || process.env.SPOTIFY_REFRESH_TOKEN || "";
+  const adAccountId = (body.adAccountId as string) || process.env.DEFAULT_SPOTIFY_AD_ACCOUNT_ID || "";
+  if (!clientId || !clientSecret || !refreshToken || !adAccountId) return null;
+  return { clientId, clientSecret, refreshToken, adAccountId };
+}
+
 export function resolveDV360Creds(body: Record<string, unknown>): DV360Creds | null {
   const clientId = (body.clientId as string) || process.env.DEFAULT_DV360_CLIENT_ID || "";
   const clientSecret = (body.clientSecret as string) || process.env.DEFAULT_DV360_CLIENT_SECRET || "";

@@ -26,7 +26,7 @@ export interface ReportNarrativeRequest {
   /** Sidebar areas the user chose to focus the report on (reporting/audit/tracking). */
   focusAreas?: string[];
   brandName?: string;
-  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify" | "both";
   dateRange: string;
   currency: string;
   totals: {

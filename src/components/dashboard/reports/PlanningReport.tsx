@@ -44,7 +44,7 @@ import SmartNumberInput from "@/components/shared/SmartNumberInput";
 import { rangeToDates } from "@/lib/date-range";
 
 interface Props {
-  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify" | "both";
   dateRange: DateRange;
   customStart?: string;
   customEnd?: string;
@@ -140,7 +140,7 @@ function GapInsight({ campaign, planned, delivered, pacing, dateRange, platform,
   delivered: Record<string, number>;
   pacing: Record<string, number | null>;
   dateRange: string;
-  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify" | "both";
   align?: "start" | "end";
   label?: string;
 }) {
@@ -1777,7 +1777,7 @@ const CHART_PLATFORMS: { label: string; value: "both" | "meta" | "dv360" | "goog
 ];
 
 export function DailyTrendCharts({ dateRange: parentRange, customStart, customEnd, platform: parentPlatform }: {
-  dateRange: DateRange; customStart?: string; customEnd?: string; platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
+  dateRange: DateRange; customStart?: string; customEnd?: string; platform: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify" | "both";
 }) {
   const [localRange, setLocalRange] = useState<DateRange | null>(null);
   const [localPlatform, setLocalPlatform] = useState<"both" | "meta" | "dv360" | "google_ads" | null>(null);
@@ -2100,7 +2100,7 @@ function AggComboPanel({
   const derivedDv360Values = useHier ? dv360Hier.map((n) => n.dimensionValue) : dv360Values;
   const metaDelivered = computeDelivered("meta", derivedMetaValues, useHier ? metaHier : undefined);
   const dv360Delivered = computeDelivered("dv360", derivedDv360Values, useHier ? dv360Hier : undefined);
-  const platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both" = hasMeta && hasDv ? "both" : hasMeta ? "meta" : "dv360";
+  const platform: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify" | "both" = hasMeta && hasDv ? "both" : hasMeta ? "meta" : "dv360";
   const combinedPlanned: Record<string, number> = {};
   const combinedDelivered: Record<string, number> = {};
   const pacing: Record<string, number | null> = {};
@@ -3134,7 +3134,7 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
       pacing[m.key] = p > 0 ? Math.round((deliveredRec[m.key] / p) * 100) : null;
     }
     const plats = new Set(tables.map((t) => t.platform).filter(Boolean));
-    const platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both" = plats.size === 1 ? ([...plats][0] as "meta" | "dv360") : "both";
+    const platform: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify" | "both" = plats.size === 1 ? ([...plats][0] as "meta" | "dv360") : "both";
     return { planned: plannedRec, delivered: deliveredRec, pacing, platform };
   }, [tables, planned]);
 

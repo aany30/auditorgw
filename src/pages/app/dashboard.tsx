@@ -110,7 +110,7 @@ interface SubTab {
   label: string;
   Icon: LucideIcon;
   /** Platforms this tab has meaningful data for. Absent = all. */
-  platforms?: Array<"meta" | "dv360" | "google_ads" | "snapchat">;
+  platforms?: Array<"meta" | "dv360" | "google_ads" | "snapchat" | "spotify">;
 }
 
 interface NavGroup {
@@ -142,10 +142,10 @@ const NAV: NavGroup[] = [
     label: "Tracking",
     Icon: Monitor,
     children: [
-      { id: "account-structure",      label: "Account Structure",      Icon: Layers,   platforms: ["meta", "dv360", "google_ads", "snapchat"] },
+      { id: "account-structure",      label: "Account Structure",      Icon: Layers,   platforms: ["meta", "dv360", "google_ads", "snapchat", "spotify"] },
       { id: "aud-performance",        label: "Audience Performance",   Icon: BarChart2, platforms: ["meta"] },
       { id: "aud-saturation",         label: "Saturation",             Icon: Zap,      platforms: ["meta", "dv360"] },
-      { id: "conversion-monitoring",  label: "Conversion Monitoring",  Icon: LineChart, platforms: ["meta", "dv360", "google_ads", "snapchat"] },
+      { id: "conversion-monitoring",  label: "Conversion Monitoring",  Icon: LineChart, platforms: ["meta", "dv360", "google_ads", "snapchat", "spotify"] },
       { id: "create-campaign",        label: "Create Campaign",        Icon: PlusCircle },
     ],
   },
@@ -205,7 +205,7 @@ const NAV: NavGroup[] = [
 ];
 
 /** True when the tab has meaningful data for the selected platform. */
-function isTabVisible(tab: SubTab, platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both"): boolean {
+function isTabVisible(tab: SubTab, platform: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify" | "both"): boolean {
   if (!tab.platforms) return true;         // no restriction = all
   if (platform === "both") return true;    // "All" shows everything
   return tab.platforms.includes(platform);
@@ -224,16 +224,21 @@ export default function Dashboard() {
     clearDV360Credentials,
     clearGoogleAdsCredentials,
     clearSnapchatCredentials,
+    clearSpotifyCredentials,
     googleAdsCustomerId,
     snapchatAdAccountId,
     snapchatRefreshToken,
+    spotifyAdAccountId,
+    spotifyRefreshToken,
     setMetaCredentials,
     setMetaPixelList,
     setDV360Credentials,
     setGoogleAdsCredentials,
     setSnapchatCredentials,
+    setSpotifyCredentials,
     isGoogleAdsConnected,
     isSnapchatConnected,
+    isSpotifyConnected,
     setDv360AdvertiserOptions: persistDv360Options,
     totalAiCreditsUsd,
     alertEmail,
@@ -480,7 +485,32 @@ export default function Dashboard() {
       router.replace("/app/dashboard");
     }
 
-  }, [router.isReady, hydrated, router.query, setMetaCredentials, setMetaPixelList, setDV360Credentials, setGoogleAdsCredentials, setSnapchatCredentials, setLoginEmail, router]);
+    // Handle Spotify OAuth callback
+    const { spotify_refresh, spotify_client_id, spotify_client_secret, spotify_ad_account_ids, spotify_ad_account_names } = router.query;
+    if (spotify_refresh && spotify_client_id && spotify_client_secret) {
+      const adAccountIds = spotify_ad_account_ids ? (spotify_ad_account_ids as string).split(",") : [];
+      const adAccountNames = spotify_ad_account_names ? (spotify_ad_account_names as string).split("|") : adAccountIds;
+      if (adAccountIds.length > 0) {
+        setSpotifyCredentials({
+          clientId: spotify_client_id as string,
+          clientSecret: spotify_client_secret as string,
+          refreshToken: spotify_refresh as string,
+          adAccountId: adAccountIds[0],
+        });
+        const spotifyOpts = adAccountIds.map((id, i) => ({ id, name: adAccountNames[i] || id }));
+        useAuthStore.getState().setSpotifyAdAccountOptions(spotifyOpts);
+      } else {
+        setSpotifyCredentials({
+          clientId: spotify_client_id as string,
+          clientSecret: spotify_client_secret as string,
+          refreshToken: spotify_refresh as string,
+          adAccountId: "",
+        });
+      }
+      router.replace("/app/dashboard");
+    }
+
+  }, [router.isReady, hydrated, router.query, setMetaCredentials, setMetaPixelList, setDV360Credentials, setGoogleAdsCredentials, setSnapchatCredentials, setSpotifyCredentials, setLoginEmail, router]);
 
   // One-time cleanup: validate stored Google Ads options, removing any MCC
   // (manager) accounts that snuck in before the callback filter was added.
@@ -548,10 +578,11 @@ export default function Dashboard() {
     // back to landing — let the "Paste your Advertiser ID" prompt show.
     const dv360Pending = !!dv360RefreshToken;
     const snapPending = !!snapchatRefreshToken || !!snapchatAdAccountId || !!(router.query.snap_refresh);
-    if (!isMetaConnected() && !isDV360Connected() && !isGoogleAdsConnected() && !isSnapchatConnected() && !dv360Pending && !snapPending && !demoMode) {
+    const spotifyPending = !!spotifyRefreshToken || !!spotifyAdAccountId || !!(router.query.spotify_refresh);
+    if (!isMetaConnected() && !isDV360Connected() && !isGoogleAdsConnected() && !isSnapchatConnected() && !isSpotifyConnected() && !dv360Pending && !snapPending && !spotifyPending && !demoMode) {
       router.replace("/");
     }
-  }, [mounted, hydrated, router.isReady, router.query.demo, isMetaConnected, isDV360Connected, isGoogleAdsConnected, isSnapchatConnected, dv360RefreshToken, snapchatRefreshToken, snapchatAdAccountId, demoMode, router, hasServerDefaults]);
+  }, [mounted, hydrated, router.isReady, router.query.demo, isMetaConnected, isDV360Connected, isGoogleAdsConnected, isSnapchatConnected, isSpotifyConnected, dv360RefreshToken, snapchatRefreshToken, snapchatAdAccountId, spotifyRefreshToken, spotifyAdAccountId, demoMode, router, hasServerDefaults]);
 
   const handleLogout = () => {
     clearAllCredentials();
@@ -559,12 +590,13 @@ export default function Dashboard() {
   };
 
   // Disconnect one platform, keep the session alive if the other remains.
-  const handleDisconnect = (which: "meta" | "dv360" | "google_ads" | "snapchat") => {
+  const handleDisconnect = (which: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify") => {
     if (which === "meta") clearMetaCredentials();
     else if (which === "dv360") clearDV360Credentials();
     else if (which === "google_ads") clearGoogleAdsCredentials();
-    else clearSnapchatCredentials();
-    const stillConnected = isMetaConnected() || isDV360Connected() || isGoogleAdsConnected() || isSnapchatConnected();
+    else if (which === "snapchat") clearSnapchatCredentials();
+    else clearSpotifyCredentials();
+    const stillConnected = isMetaConnected() || isDV360Connected() || isGoogleAdsConnected() || isSnapchatConnected() || isSpotifyConnected();
     if (!stillConnected && !demoMode) router.push("/");
   };
 
@@ -916,7 +948,7 @@ export default function Dashboard() {
               remount when the user switches accounts, so every hook re-runs and
               refetches data for the newly selected account. */}
           <div
-            key={`acct:${metaBusinessId || "-"}:${dv360AdvertiserId || "-"}:${googleAdsCustomerId || "-"}:${snapchatAdAccountId || "-"}`}
+            key={`acct:${metaBusinessId || "-"}:${dv360AdvertiserId || "-"}:${googleAdsCustomerId || "-"}:${snapchatAdAccountId || "-"}:${spotifyAdAccountId || "-"}`}
             className="p-8"
           >
             {renderTabContent()}

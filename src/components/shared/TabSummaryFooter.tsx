@@ -19,7 +19,7 @@ interface Props {
   lines: string[];
   tabName: string;
   context: Record<string, unknown>;
-  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify" | "both";
   dateRange?: string;
 }
 

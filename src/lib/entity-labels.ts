@@ -8,7 +8,7 @@
  * so tables use these labels instead of hardcoding "Ad Sets"/"Ads".
  */
 
-export function entityLabels(platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both"): {
+export function entityLabels(platform: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify" | "both"): {
   level2: string;
   level3: string;
   level2Short: string;

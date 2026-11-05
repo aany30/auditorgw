@@ -28,7 +28,7 @@ function dateRangeToParams(range: DateRange, customStart?: string, customEnd?: s
 }
 
 export function useAudit(
-  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both",
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify" | "both",
   dateRange: DateRange,
   customStart?: string,
   customEnd?: string

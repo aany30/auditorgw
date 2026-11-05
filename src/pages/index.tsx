@@ -5,6 +5,7 @@ import { useAuthStore } from "@/store/auth";
 import MetaGuide from "@/components/guides/MetaGuide";
 import DV360Guide from "@/components/guides/DV360Guide";
 import SnapchatGuide from "@/components/guides/SnapchatGuide";
+import SpotifyGuide from "@/components/guides/SpotifyGuide";
 import {
   BarChart3,
   Sparkles,
@@ -21,8 +22,8 @@ import {
 
 export default function Landing() {
   const router = useRouter();
-  const { isMetaConnected, isDV360Connected, isGoogleAdsConnected, isSnapchatConnected, enterDemoMode } = useAuthStore();
-  const [activeTab, setActiveTab] = useState<"meta" | "dv360" | "snapchat" | null>(null);
+  const { isMetaConnected, isDV360Connected, isGoogleAdsConnected, isSnapchatConnected, isSpotifyConnected, enterDemoMode } = useAuthStore();
+  const [activeTab, setActiveTab] = useState<"meta" | "dv360" | "snapchat" | "spotify" | null>(null);
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -32,7 +33,7 @@ export default function Landing() {
     }
   }, [router]);
 
-  const connected = mounted && (isMetaConnected() || isDV360Connected() || isGoogleAdsConnected() || isSnapchatConnected());
+  const connected = mounted && (isMetaConnected() || isDV360Connected() || isGoogleAdsConnected() || isSnapchatConnected() || isSpotifyConnected());
   const oauthError = typeof router.query.error === "string" ? router.query.error : null;
 
   const loadDemoData = () => {
@@ -80,7 +81,7 @@ export default function Landing() {
             <span className="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">Audit Tool</span>
           </h1>
           <p className="text-xl text-gray-600 mb-8 max-w-3xl mx-auto leading-relaxed">
-            Monitor, validate, and optimize your Meta, DV360, Google Ads &amp; Snapchat tracking implementation in real-time.
+            Monitor, validate, and optimize your Meta, DV360, Google Ads, Snapchat &amp; Spotify tracking implementation in real-time.
             Detect issues faster and improve conversion signal quality with AI-driven insights.
           </p>
 
@@ -337,6 +338,64 @@ export default function Landing() {
           {activeTab === "snapchat" && (
             <div className="mt-4">
               <SnapchatGuide onClose={() => setActiveTab(null)} />
+            </div>
+          )}
+        </div>
+
+        {/* Spotify Connection */}
+        <div className="mb-6">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
+                <svg className="w-5 h-5 text-green-600" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/>
+                </svg>
+              </div>
+              <h3 className="text-2xl font-bold text-gray-900">Spotify Connection</h3>
+            </div>
+            {mounted && isSpotifyConnected() && (
+              <span className="text-green-700 text-xs font-semibold bg-green-50 px-2 py-1 rounded-full flex items-center gap-1">
+                <CheckCircle2 className="w-3 h-3" /> Connected
+              </span>
+            )}
+          </div>
+          <div className="grid md:grid-cols-2 gap-4">
+            <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm flex flex-col">
+              <h4 className="font-bold text-gray-900 text-base mb-1">One-click sign-in</h4>
+              <p className="text-sm text-gray-600 mb-4 flex-1">
+                Sign in with your Spotify account. We&apos;ll fetch your ad accounts automatically.
+              </p>
+              <a
+                href="/api/auth/spotify/start"
+                className="w-full py-3 px-4 rounded-lg font-bold text-sm flex items-center justify-center gap-2 transition shadow-sm bg-[#1DB954] text-white hover:bg-[#1aa34a] border-2 border-green-500"
+              >
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/>
+                </svg>
+                Connect with Spotify
+              </a>
+            </div>
+            <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm flex flex-col">
+              <h4 className="font-bold text-gray-900 text-base mb-1">Enter Ad Account ID</h4>
+              <p className="text-sm text-gray-600 mb-4 flex-1">
+                Paste your Refresh Token and Ad Account ID to connect directly.
+              </p>
+              <button
+                onClick={() => setActiveTab(activeTab === "spotify" ? null : "spotify")}
+                className={`w-full py-3 px-4 rounded-lg font-bold text-sm flex items-center justify-center gap-2 transition shadow-sm ${
+                  activeTab === "spotify"
+                    ? "bg-green-500 text-white hover:bg-green-600"
+                    : "bg-gray-900 text-white hover:bg-gray-800"
+                }`}
+              >
+                <BookOpen className="w-4 h-4" />
+                {activeTab === "spotify" ? "Hide" : "Enter credentials"}
+              </button>
+            </div>
+          </div>
+          {activeTab === "spotify" && (
+            <div className="mt-4">
+              <SpotifyGuide onClose={() => setActiveTab(null)} />
             </div>
           )}
         </div>

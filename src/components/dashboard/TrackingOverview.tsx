@@ -4,7 +4,7 @@ import { useAudit } from "@/hooks/useAudit";
 import type { DateRange } from "@/components/shared/DateRangePicker";
 
 interface Props {
-  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify" | "both";
   dateRange: DateRange;
   customStart?: string;
   customEnd?: string;

@@ -9,7 +9,7 @@ import { useDV360Audiences } from "@/hooks/useDV360Audiences";
 import TabSummaryFooter from "@/components/shared/TabSummaryFooter";
 
 interface Props {
-  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify" | "both";
   dateRange: string;
   customStart?: string;
   customEnd?: string;

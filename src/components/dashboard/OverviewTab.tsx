@@ -16,7 +16,7 @@ import SortTh from "@/components/shared/SortTh";
 import { useSort } from "@/hooks/useSort";
 
 interface OverviewTabProps {
-  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "both";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify" | "both";
   dateRange: DateRange;
   customStart?: string;
   customEnd?: string;
