@@ -112,6 +112,7 @@ export interface GAdsCustomerInfo {
   descriptiveName: string;
   currencyCode: string;
   timeZone: string;
+  manager?: boolean;
 }
 
 export interface GAdsChildAccount {
@@ -352,11 +353,13 @@ export class GoogleAdsApiClient {
         descriptiveName?: string;
         currencyCode?: string;
         timeZone?: string;
+        manager?: boolean;
       };
     }>(`
       SELECT
         customer.id, customer.descriptive_name,
-        customer.currency_code, customer.time_zone
+        customer.currency_code, customer.time_zone,
+        customer.manager
       FROM customer
       LIMIT 1
     `);
@@ -366,6 +369,7 @@ export class GoogleAdsApiClient {
       descriptiveName: c?.descriptiveName || "",
       currencyCode: c?.currencyCode || "USD",
       timeZone: c?.timeZone || "UTC",
+      manager: !!c?.manager,
     };
   }
 

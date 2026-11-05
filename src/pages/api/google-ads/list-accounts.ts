@@ -75,11 +75,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             loginCustomerId: cid,
           });
           const info = await client.getCustomerInfo();
-          const children = await client.listChildAccounts();
-          const isMcc = children.some((c) => c.isManager === false && c.id !== cid);
           infoMap.set(cid, {
             name: info.descriptiveName || cid,
-            isManager: isMcc || children.length > 1,
+            isManager: !!info.manager,
           });
         } catch {
           infoMap.set(cid, { name: cid, isManager: false });
