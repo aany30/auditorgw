@@ -146,21 +146,27 @@ export function useCampaigns(
     snapchatRefreshToken,
     snapchatAdAccountId,
     snapchatOrgId,
+    spotifyClientId,
+    spotifyClientSecret,
+    spotifyRefreshToken,
+    spotifyAdAccountId,
     demoMode,
     metaCurrency: storedMetaCurrency,
     dv360Currency: storedDv360Currency,
     googleAdsCurrency: storedGoogleAdsCurrency,
     snapchatCurrency: storedSnapchatCurrency,
+    spotifyCurrency: storedSpotifyCurrency,
     setMetaCurrency,
     setDv360Currency,
     setGoogleAdsCurrency,
     setSnapchatCurrency,
+    setSpotifyCurrency,
   } = useAuthStore();
 
   const [campaigns, setCampaigns] = useState<CampaignData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [platformErrors, setPlatformErrors] = useState<{ meta?: string; dv360?: string; google_ads?: string; snapchat?: string }>({});
+  const [platformErrors, setPlatformErrors] = useState<{ meta?: string; dv360?: string; google_ads?: string; snapchat?: string; spotify?: string }>({});
   // Track whether we seeded from the SWR cache so we don't flash a spinner.
   const swrSeeded = useRef(false);
   // DV360 delivery arrives via an async Bid Manager report that is often still
@@ -211,7 +217,7 @@ export function useCampaigns(
       if (reloadTick === 0 && !swrSeeded.current) setLoading(true);
       setError(null);
       setPlatformErrors({});
-      const errs: { meta?: string; dv360?: string; google_ads?: string; snapchat?: string } = {};
+      const errs: { meta?: string; dv360?: string; google_ads?: string; snapchat?: string; spotify?: string } = {};
       const all: CampaignData[] = [];
       const hasServerDefaults = !!process.env.NEXT_PUBLIC_HAS_DEFAULT_CREDS;
       try {
@@ -314,6 +320,29 @@ export function useCampaigns(
             errs.snapchat = body.error || `Snapchat API error (HTTP ${r.status})`;
           }
         }
+        // Spotify fetch
+        const canFetchSpotify = (platform === "spotify" || platform === "both") &&
+          (spotifyRefreshToken && spotifyClientId && spotifyClientSecret && spotifyAdAccountId || hasServerDefaults);
+        if (canFetchSpotify) {
+          const r = await fetch("/api/naming/campaigns/spotify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              clientId: spotifyClientId || undefined,
+              clientSecret: spotifyClientSecret || undefined,
+              refreshToken: spotifyRefreshToken || undefined,
+              adAccountId: spotifyAdAccountId || undefined,
+              startDate,
+              endDate,
+            }),
+          });
+          if (r.ok) {
+            all.push(...(await r.json()));
+          } else {
+            const body = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
+            errs.spotify = body.error || `Spotify API error (HTTP ${r.status})`;
+          }
+        }
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Fetch failed");
       } finally {
@@ -321,7 +350,7 @@ export function useCampaigns(
           setCampaigns(all);
           setPlatformErrors(errs);
           // Keep legacy `error` populated for existing consumers.
-          const first = errs.meta || errs.dv360 || errs.google_ads || errs.snapchat;
+          const first = errs.meta || errs.dv360 || errs.google_ads || errs.snapchat || errs.spotify;
           if (first) setError(first);
           // Cache each platform's detected currency (sticky) so a later
           // rate-limited fetch that drops a platform still renders the right
@@ -330,10 +359,12 @@ export function useCampaigns(
           const d = all.find((c) => c.platform === "dv360" && c.currency)?.currency;
           const g = all.find((c) => c.platform === "google_ads" && c.currency)?.currency;
           const s = all.find((c) => c.platform === "snapchat" && c.currency)?.currency;
+          const sp = all.find((c) => c.platform === "spotify" && c.currency)?.currency;
           if (m) setMetaCurrency(m);
           if (d) setDv360Currency(d);
           if (g) setGoogleAdsCurrency(g);
           if (s) setSnapchatCurrency(s);
+          if (sp) setSpotifyCurrency(sp);
 
           fetchInFlight.current = false;
           // DV360 re-poll: DV360 delivery comes from async Bid Manager reports that
@@ -382,6 +413,10 @@ export function useCampaigns(
     snapchatRefreshToken,
     snapchatAdAccountId,
     snapchatOrgId,
+    spotifyClientId,
+    spotifyClientSecret,
+    spotifyRefreshToken,
+    spotifyAdAccountId,
     demoMode,
     reloadTick,
     strictWindow,
@@ -395,11 +430,13 @@ export function useCampaigns(
   const detectedDv360 = campaigns.find((c) => c.platform === "dv360" && c.currency)?.currency;
   const detectedGads = campaigns.find((c) => c.platform === "google_ads" && c.currency)?.currency;
   const detectedSnap = campaigns.find((c) => c.platform === "snapchat" && c.currency)?.currency;
+  const detectedSpotify = campaigns.find((c) => c.platform === "spotify" && c.currency)?.currency;
 
   const metaCurrency = detectedMeta || storedMetaCurrency || "USD";
   const dv360Currency = detectedDv360 || storedDv360Currency || "USD";
   const googleAdsCurrency = detectedGads || storedGoogleAdsCurrency || "USD";
   const snapchatCurrency = detectedSnap || storedSnapchatCurrency || "USD";
+  const spotifyCurrency = detectedSpotify || storedSpotifyCurrency || "USD";
 
-  return { campaigns, loading, error, platformErrors, startDate, endDate, metaCurrency, dv360Currency, googleAdsCurrency, snapchatCurrency };
+  return { campaigns, loading, error, platformErrors, startDate, endDate, metaCurrency, dv360Currency, googleAdsCurrency, snapchatCurrency, spotifyCurrency };
 }

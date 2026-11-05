@@ -1,4 +1,4 @@
-export type Platform = "meta" | "dv360" | "google_ads" | "snapchat";
+export type Platform = "meta" | "dv360" | "google_ads" | "snapchat" | "spotify";
 
 // API Response Types
 export interface MetaPixelData {
