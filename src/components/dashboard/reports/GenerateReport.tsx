@@ -137,7 +137,8 @@ async function generateExcel(opts: {
   const campRows = sorted.map(c => {
     const sp = c.spend || 0, im = c.impressions || 0, cl = c.clicks || 0, cv = c.conversions || 0, rev = c.conversionValue || 0;
     return [
-      c.name, c.platform === "meta" ? "Meta" : c.platform === "dv360" ? "DV360" : c.platform === "google_ads" ? "Google Ads" : c.platform === "snapchat" ? "Snapchat" : (c.platform || "Other"), c.status || "—", (c.objective || "—").replace(/OUTCOME_/, ""),
+      c.name, c.platform === "meta" ? "Meta" : c.platform === "dv360" ? "DV360" : c.platform === "google_ads" ? "Google Ads" : c.platform === "snapchat" ? "Snapchat" : c.platform === "spotify" ? "Spotify" : (c.platform || "Other"),
+      c.status || "—", (c.objective || "—").replace(/OUTCOME_/, ""),
       +sp.toFixed(2), im, cl, pct(cl, im), Math.round(cv), +rev.toFixed(2),
       sp > 0 && rev > 0 ? +(rev / sp).toFixed(2) : "—",
       im > 0 ? +(sp / im * 1000).toFixed(2) : "—",

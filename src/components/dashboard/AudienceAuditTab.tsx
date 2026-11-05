@@ -24,6 +24,7 @@ export default function AudienceAuditTab({ platform, dateRange, customStart, cus
   const showMeta = metaOn && (platform === "meta" || platform === "both");
   const showDV360 = dv360On && (platform === "dv360" || platform === "both");
   const showSnap = platform === "snapchat" || platform === "both";
+  const showSpotify = platform === "spotify" || platform === "both";
 
   const { audiences, loading: audLoading, error: audError } = useDV360Audiences(showDV360);
   const { sorted: sortedAudiences, sort: audSort, toggle: audToggle } = useSort(audiences, "name", "asc");
@@ -193,6 +194,43 @@ export default function AudienceAuditTab({ platform, dateRange, customStart, cus
                 <span className="inline-block mr-2 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-pink-100 text-pink-800">Snapchat</span>
                 Snap Audience Match, Lookalike, and Custom Audience sizes are not exposed via the Snap Marketing
                 API — manage and inspect audiences in Snap Ads Manager under Audiences.
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* ── Spotify Section ──────────────────────────────────────────── */}
+      {showSpotify && platform === "both" && (
+        <div className="flex items-center gap-3 pt-4 pb-1 border-b border-gray-200">
+          <h2 className="text-xl font-bold text-gray-900">Spotify</h2>
+          <span className="text-xs text-gray-400 font-medium">Spotify Ads</span>
+        </div>
+      )}
+
+      {showSpotify && (
+        <>
+          <AuditTabShell
+            platform="spotify"
+            dateRange={dateRange}
+            customStart={customStart}
+            customEnd={customEnd}
+            selectedObjectives={selectedObjectives}
+            title="Spotify Audience Audit"
+            description="Intent classification derived from live Spotify campaign objectives"
+            Icon={Users}
+            defaultSubTab="intent"
+            subTabs={[
+              { id: "intent", label: "Intent Analysis", description: "Cold/Warm/Hot mix", render: (p) => <IntentAnalysisAudit {...p} /> },
+              { id: "quality", label: "Audience Quality", description: "High-intent share", render: (p) => <AudienceQualityAudit {...p} /> },
+            ]}
+          />
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-xs text-blue-800">
+            <div className="flex items-start gap-2">
+              <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+              <div>
+                <span className="inline-block mr-2 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-green-100 text-green-800">Spotify</span>
+                Spotify audience targeting is managed via Spotify Ads Manager — audience sizes are not exposed via the Ads API.
               </div>
             </div>
           </div>

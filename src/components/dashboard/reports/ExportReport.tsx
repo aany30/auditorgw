@@ -262,7 +262,7 @@ function buildPdfHtml(opts: {
   <div class="cover">
     <div>
       <div class="cover-logo">📊 Auditor — ${PDF_TYPE_LABELS[pdfType]}</div>
-      <div class="cover-sub">Campaign Intelligence · ${opts.platform === "meta" ? "Meta Ads" : opts.platform === "dv360" ? "DV360" : opts.platform === "snapchat" ? "Snapchat Ads" : opts.platform === "google_ads" ? "Google Ads" : "All platforms"}</div>
+      <div class="cover-sub">Campaign Intelligence · ${opts.platform === "meta" ? "Meta Ads" : opts.platform === "dv360" ? "DV360" : opts.platform === "snapchat" ? "Snapchat Ads" : opts.platform === "spotify" ? "Spotify Ads" : opts.platform === "google_ads" ? "Google Ads" : "All platforms"}</div>
     </div>
     <div class="cover-meta">
       <div><strong>Period:</strong> ${startDate} → ${endDate}</div>
@@ -307,7 +307,7 @@ function buildCampaignCsv(campaigns: any[], currency: string, startDate: string,
   ];
   const rows = campaigns.map(c => {
     const sp = c.spend||0, im = c.impressions||0, cl = c.clicks||0, cv = c.conversions||0, rev = c.conversionValue||0;
-    const platLabel = c.platform === "meta" ? "Meta" : c.platform === "snapchat" ? "Snapchat" : c.platform === "google_ads" ? "Google Ads" : "DV360";
+    const platLabel = c.platform === "meta" ? "Meta" : c.platform === "snapchat" ? "Snapchat" : c.platform === "spotify" ? "Spotify" : c.platform === "google_ads" ? "Google Ads" : "DV360";
     return [c.name, platLabel, c.status||"—", c.objective||"—",
       sp.toFixed(2), im, cl, im>0?((cl/im)*100).toFixed(2):"",
       cv, rev.toFixed(2), sp>0&&rev>0?(rev/sp).toFixed(2):"",
@@ -374,7 +374,7 @@ export default function ExportReport({ platform, dateRange, customStart, customE
 
   const currency = currencyFor(
     campaigns,
-    platform === "dv360" ? "dv360" : platform === "snapchat" ? "snapchat" : platform === "google_ads" ? "google_ads" : "meta",
+    platform === "dv360" ? "dv360" : platform === "snapchat" ? "snapchat" : platform === "spotify" ? "spotify" : platform === "google_ads" ? "google_ads" : "meta",
   );
   const cur = (n: number) => formatMoney(n, currency, 0);
 

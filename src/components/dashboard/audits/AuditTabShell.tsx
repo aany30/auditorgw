@@ -50,6 +50,10 @@ export default function AuditTabShell({
     snapchatRefreshToken,
     snapchatAdAccountId,
     snapchatOrgId,
+    spotifyClientId,
+    spotifyClientSecret,
+    spotifyRefreshToken,
+    spotifyAdAccountId,
   } = useAuthStore();
   const [campaigns, setCampaigns] = useState<CampaignData[]>([]);
   const [loading, setLoading] = useState(false);
@@ -132,6 +136,24 @@ export default function AuditTabShell({
             all.push(...snapCampaigns);
           }
         }
+        if (
+          (platform === "spotify" || platform === "both") &&
+          spotifyRefreshToken && spotifyAdAccountId
+        ) {
+          const r = await fetch("/api/naming/campaigns/spotify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              clientId: spotifyClientId || undefined,
+              clientSecret: spotifyClientSecret || undefined,
+              refreshToken: spotifyRefreshToken,
+              adAccountId: spotifyAdAccountId,
+              startDate,
+              endDate,
+            }),
+          });
+          if (r.ok) all.push(...(await r.json()));
+        }
       } catch (e) {
         console.error(e);
       } finally {
@@ -160,6 +182,10 @@ export default function AuditTabShell({
     snapchatRefreshToken,
     snapchatAdAccountId,
     snapchatOrgId,
+    spotifyClientId,
+    spotifyClientSecret,
+    spotifyRefreshToken,
+    spotifyAdAccountId,
   ]);
 
   const filteredCampaigns = useMemo(() => {

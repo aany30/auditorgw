@@ -193,7 +193,7 @@ function campaignRecs(campaigns: any[]): Recommendation[] {
       from: "ACTIVE",
       to: "PAUSED",
     } : undefined;
-    const platformLabel = c.platform === "meta" ? "Meta" : c.platform === "dv360" ? "DV360" : c.platform === "google_ads" ? "Google Ads" : c.platform === "snapchat" ? "Snapchat" : "Meta";
+    const platformLabel = c.platform === "meta" ? "Meta" : c.platform === "dv360" ? "DV360" : c.platform === "google_ads" ? "Google Ads" : c.platform === "snapchat" ? "Snapchat" : c.platform === "spotify" ? "Spotify" : "Meta";
     recs.push({
       id: `camp-zero-conv-${c.id}`, priority: "High", platform: platformLabel as any, category: "Funnel",
       issue: `"${c.name}" spending with zero conversions`,
@@ -549,6 +549,7 @@ export default function RecommendationsTab({ platform = "both", dateRange = "30d
   const isDvEnabled = platform === "dv360" || platform === "both";
   const isGadsEnabled = platform === "google_ads" || platform === "both";
   const isSnapEnabled = platform === "snapchat" || platform === "both";
+  const isSpotifyEnabled = platform === "spotify" || platform === "both";
   const { campaigns, loading: campsLoading } = useCampaigns(platform, dateRange, customStart, customEnd);
   const { rows: pubRows,    loading: pubLoading }    = useMetaBreakdown("publisher_platform", dateRange, customStart, customEnd, isMetaEnabled);
   const { rows: ageRows,    loading: ageLoading }    = useMetaBreakdown("age",    dateRange, customStart, customEnd, isMetaEnabled);

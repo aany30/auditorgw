@@ -219,11 +219,13 @@ export default function DashboardReport({
   const cur = metaCurrency || dv360Currency || "INR";
   const gadsCurrency = currencyFor(campaigns, "google_ads");
   const snapCurrency = currencyFor(campaigns, "snapchat");
+  const spotifyCurrency = currencyFor(campaigns, "spotify");
 
   const showMeta = platform === "meta" || platform === "both";
   const showDv = platform === "dv360" || platform === "both";
   const showGads = platform === "google_ads" || platform === "both";
   const showSnap = platform === "snapchat" || platform === "both";
+  const showSpotify = platform === "spotify" || platform === "both";
 
   const metaCampaigns = useMemo(() => campaigns.filter((c) => c.platform === "meta"), [campaigns]);
 
@@ -238,8 +240,9 @@ export default function DashboardReport({
 
   const gadsCampaigns = useMemo(() => campaigns.filter((c) => c.platform === "google_ads"), [campaigns]);
   const snapCampaigns = useMemo(() => campaigns.filter((c) => c.platform === "snapchat"), [campaigns]);
+  const spotifyCampaigns = useMemo(() => campaigns.filter((c) => c.platform === "spotify"), [campaigns]);
 
-  const enrichedCampaigns = useMemo(() => [...metaCampaigns, ...dv360Campaigns, ...gadsCampaigns, ...snapCampaigns], [metaCampaigns, dv360Campaigns, gadsCampaigns, snapCampaigns]);
+  const enrichedCampaigns = useMemo(() => [...metaCampaigns, ...dv360Campaigns, ...gadsCampaigns, ...snapCampaigns, ...spotifyCampaigns], [metaCampaigns, dv360Campaigns, gadsCampaigns, snapCampaigns, spotifyCampaigns]);
 
   // Honor the date range picker strictly for ALL selections (presets and
   // custom): no all-time fallback. If a DV360 campaign has 0 spend in the
@@ -251,6 +254,7 @@ export default function DashboardReport({
   const dvD = useMemo(() => deliveredOfGroup(dv360Campaigns, false), [dv360Campaigns]);
   const gadsD = useMemo(() => deliveredOfGroup(gadsCampaigns, false), [gadsCampaigns]);
   const snapD = useMemo(() => deliveredOfGroup(snapCampaigns, false), [snapCampaigns]);
+  const spotifyD = useMemo(() => deliveredOfGroup(spotifyCampaigns, false), [spotifyCampaigns]);
 
   const pacing = (key: string) => {
     const p = planned[key] || 0;

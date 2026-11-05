@@ -22,7 +22,7 @@ export function detectCurrency(campaigns: CampaignData[]): string {
  * you're about to format. Falls back to the account-wide currency when that
  * platform has no campaigns loaded yet (keeps a sensible symbol during load).
  */
-export function currencyFor(campaigns: CampaignData[], platform: "meta" | "dv360" | "google_ads" | "snapchat"): string {
+export function currencyFor(campaigns: CampaignData[], platform: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify"): string {
   const scoped = campaigns.filter((c) => c.platform === platform);
   return scoped.find((c) => c.currency)?.currency ?? detectCurrency(campaigns);
 }

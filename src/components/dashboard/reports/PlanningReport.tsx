@@ -4457,10 +4457,13 @@ export default function PlanningReport({ platform, dateRange, customStart, custo
   const showMeta = platform === "meta" || platform === "both";
   const showDv   = platform === "dv360" || platform === "both";
   const showSnap = platform === "snapchat" || platform === "both";
+  const showSpotify = platform === "spotify" || platform === "both";
 
   const metaCampaigns = useMemo(() => campaigns.filter((c) => c.platform === "meta"), [campaigns]);
   const snapchatCampaigns = useMemo(() => campaigns.filter((c) => c.platform === "snapchat"), [campaigns]);
   const snapchatCurrency = useAuthStore((s) => s.snapchatCurrency) || "USD";
+  const spotifyCampaigns = useMemo(() => campaigns.filter((c) => c.platform === "spotify"), [campaigns]);
+  const spotifyCurrency = useAuthStore((s) => s.spotifyCurrency) || "USD";
 
   // Reach comes from a DEDICATED endpoint (not the heavy campaigns route, where
   // it gets starved by slow entity calls). Enrich DV360 campaigns with it so
@@ -4540,6 +4543,14 @@ export default function PlanningReport({ platform, dateRange, customStart, custo
           <SnapchatPlanningSummary campaigns={snapchatCampaigns} currency={snapchatCurrency} loading={loading} />
         </div>
       )}
+
+      {/* ── Spotify section (summary only) ── */}
+      {showSpotify && (
+        <div className="space-y-4">
+          {platform === "both" && <SectionHeader label="Spotify" sub="Spotify Ads" />}
+          <SpotifyPlanningSummary campaigns={spotifyCampaigns} currency={spotifyCurrency} loading={loading} />
+        </div>
+      )}
     </div>
   );
 }
@@ -4572,6 +4583,63 @@ function SnapchatPlanningSummary({ campaigns, currency, loading }: { campaigns: 
       {campaigns.length === 0 ? (
         <div className="px-5 py-8 text-sm text-gray-500 text-center">
           No Snapchat campaigns in this window.
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 md:grid-cols-5 divide-x divide-gray-100">
+          {[
+            { label: "Campaigns",   value: campaigns.length.toLocaleString("en-IN") },
+            { label: "Spend",       value: cur(spend) },
+            { label: "Impressions", value: Math.round(impressions).toLocaleString("en-IN") },
+            { label: "Clicks",      value: Math.round(clicks).toLocaleString("en-IN") },
+            { label: "Conversions", value: Math.round(conversions).toLocaleString("en-IN") },
+          ].map((m) => (
+            <div key={m.label} className="px-4 py-3 text-center">
+              <div className="text-lg font-bold text-gray-900 tabular-nums">{m.value}</div>
+              <div className="text-[11px] font-semibold text-gray-600 mt-0.5">{m.label}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      {campaigns.length > 0 && conversionValue > 0 && (
+        <div className="px-5 py-3 text-xs text-gray-500 border-t border-gray-100 flex items-center justify-between">
+          <span>Reported conversion value: <strong className="text-gray-800 tabular-nums">{cur(conversionValue)}</strong></span>
+          {spend > 0 && (
+            <span>Blended ROAS: <strong className="text-gray-800 tabular-nums">{(conversionValue / spend).toFixed(2)}×</strong></span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Spotify planning summary (lightweight) ──────────────────────────────────
+function SpotifyPlanningSummary({ campaigns, currency, loading }: { campaigns: CampaignData[]; currency: string; loading: boolean }) {
+  const cur = (n: number) => formatMoney(n, currency, 0);
+  const spend = campaigns.reduce((s, c) => s + (c.spend || 0), 0);
+  const impressions = campaigns.reduce((s, c) => s + (c.impressions || 0), 0);
+  const clicks = campaigns.reduce((s, c) => s + (c.clicks || 0), 0);
+  const conversions = campaigns.reduce((s, c) => s + (c.conversions || 0), 0);
+  const conversionValue = campaigns.reduce((s, c) => s + (c.conversionValue || 0), 0);
+
+  if (loading) return <div className="h-24 flex items-center justify-center text-sm text-gray-400">Loading Spotify planning…</div>;
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
+      <div className="h-1 rounded-t-xl bg-green-500" />
+      <div className="px-5 py-4 border-b border-gray-100 flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-bold text-gray-900">Spotify Delivery Summary</h3>
+          <p className="text-xs text-gray-500 mt-0.5">
+            Planned-vs-delivered math and channel/objective breakdowns above are Meta &amp; DV360 only — Spotify totals shown as reported by the Ads API.
+          </p>
+        </div>
+        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-green-100 text-green-800 border border-green-200 shrink-0">
+          Spotify API
+        </span>
+      </div>
+      {campaigns.length === 0 ? (
+        <div className="px-5 py-8 text-sm text-gray-500 text-center">
+          No Spotify campaigns in this window.
         </div>
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-5 divide-x divide-gray-100">

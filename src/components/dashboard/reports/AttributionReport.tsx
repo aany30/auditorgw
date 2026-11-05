@@ -1018,6 +1018,7 @@ export default function AttributionReport({ platform, dateRange, customStart, cu
   const showDv   = platform === "dv360" || platform === "both";
   const showGads = platform === "google_ads" || platform === "both";
   const showSnap = platform === "snapchat" || platform === "both";
+  const showSpotify = platform === "spotify" || platform === "both";
 
   return (
     <div className="space-y-6 section-enter">
@@ -1033,8 +1034,9 @@ export default function AttributionReport({ platform, dateRange, customStart, cu
                 : platform === "dv360" ? "DV360 Floodlight attribution"
                 : platform === "google_ads" ? "Google Ads conversion actions"
                 : platform === "snapchat" ? "Snapchat Pixel attribution"
+                : platform === "spotify" ? "Spotify Ads attribution"
                 : "Multi-platform attribution"}
-              {platform === "both" ? " · plus DV360, Google Ads & Snapchat" : ""}
+              {platform === "both" ? " · plus DV360, Google Ads, Snapchat & Spotify" : ""}
             </p>
           </div>
         </div>

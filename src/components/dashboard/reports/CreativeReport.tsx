@@ -133,7 +133,7 @@ function detectFormat(row: AdInsightRow): CFormat {
 // ─── Sub-types ────────────────────────────────────────────────────────────────
 
 interface EnrichedAd {
-  id: string; name: string; format: CFormat; language: string; platform: "meta" | "dv360" | "google_ads" | "snapchat";
+  id: string; name: string; format: CFormat; language: string; platform: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify";
   spend: number; impressions: number; clicks: number; conversions: number; conversionValue: number;
   ctr: number; cpm: number; cpc: number; roas: number; cpa: number; cvr: number; aov: number;
   // Conversions/revenue aren't available per-creative for DV360 (Bid Manager
@@ -674,7 +674,7 @@ function TopCreativesTable({ ads, currency }: { ads: EnrichedAd[]; currency: str
 // ─── Shared enrichment / aggregation helpers ─────────────────────────────────
 
 /** Turn raw ad-insight rows into enriched ads with format, language, derived KPIs. */
-function enrichAds(raw: AdInsightRow[], platform: "meta" | "dv360" | "google_ads" | "snapchat"): EnrichedAd[] {
+function enrichAds(raw: AdInsightRow[], platform: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify"): EnrichedAd[] {
   // Conversions/revenue are only real for Meta here; DV360 line items don't
   // carry them at creative grain, so those KPIs are marked unavailable.
   const convAvailable = platform === "meta";
@@ -823,6 +823,7 @@ export default function CreativeReport({ platform, dateRange, customStart, custo
   const showDv   = platform === "dv360" || platform === "both";
   const showGads = platform === "google_ads" || platform === "both";
   const showSnap = platform === "snapchat" || platform === "both";
+  const showSpotify = platform === "spotify" || platform === "both";
 
   // Google Ads ad-level rows synthesized from the campaign → ad group → ad tree
   // already returned by useCampaigns (ad.name carries the RSA headlines joined).
@@ -864,6 +865,26 @@ export default function CreativeReport({ platform, dateRange, customStart, custo
     return out;
   }, [campaigns, showSnap]);
   const snapEnriched: EnrichedAd[] = useMemo(() => enrichAds(snapAds, "snapchat"), [snapAds]);
+
+  // Spotify ad-level rows synthesized from campaigns → ad sets → ads.
+  const spotifyAds: AdInsightRow[] = useMemo(() => {
+    if (!showSpotify) return [];
+    const out: AdInsightRow[] = [];
+    for (const c of campaigns.filter(c => c.platform === "spotify")) {
+      for (const as_ of c.adSets ?? []) {
+        for (const ad of as_.ads ?? []) {
+          out.push({
+            id: ad.id, name: ad.name,
+            spend: ad.spend ?? 0, impressions: ad.impressions ?? 0, clicks: ad.clicks ?? 0,
+            conversions: ad.conversions ?? 0, conversionValue: 0, reach: 0, videoViews: 0,
+            creativeType: ad.lineItemType || "",
+          });
+        }
+      }
+    }
+    return out;
+  }, [campaigns, showSpotify]);
+  const spotifyEnriched: EnrichedAd[] = useMemo(() => enrichAds(spotifyAds, "spotify"), [spotifyAds]);
 
   // DV360 delivery-by-language (FILTER_SITE_LANGUAGE) — real BM breakdown.
   const { rows: dvLangRows, loading: dvLangLoading, pending: dvLangPending } =

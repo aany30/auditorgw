@@ -549,7 +549,7 @@ function TipCell({ tip, campaignContext, isDemo, platform, campaign, currency, b
     : "campaign"
   ) as "campaign" | "adset" | "insertion_order";
 
-  const tipApplyContext: ApplyContext | undefined = isDemo || platform === "snapchat" ? undefined : {
+  const tipApplyContext: ApplyContext | undefined = isDemo || platform === "snapchat" || platform === "spotify" ? undefined : {
     platform: platform as "meta" | "dv360" | "google_ads",
     entityType,
     entityId: campaign.id,
@@ -2304,10 +2304,12 @@ export default function BudgetAllocationAudit({ campaigns, dateRange, customStar
   const dv360Campaigns = campaigns.filter((c) => c.platform === "dv360");
   const gadsCampaigns = campaigns.filter((c) => c.platform === "google_ads");
   const snapCampaigns = campaigns.filter((c) => c.platform === "snapchat");
+  const spotifyCampaigns = campaigns.filter((c) => c.platform === "spotify");
   const metaCurrency = currencyFor(campaigns, "meta");
   const dv360Currency = currencyFor(campaigns, "dv360");
   const gadsCurrency = currencyFor(campaigns, "google_ads");
   const snapCurrency = currencyFor(campaigns, "snapchat");
+  const spotifyCurrency = currencyFor(campaigns, "spotify");
 
   if (campaigns.length === 0) {
     return (
@@ -2321,7 +2323,8 @@ export default function BudgetAllocationAudit({ campaigns, dateRange, customStar
   const showDV360 = (platform === "dv360" || platform === "both") && dv360Campaigns.length > 0;
   const showGads = (platform === "google_ads" || platform === "both") && gadsCampaigns.length > 0;
   const showSnap = (platform === "snapchat" || platform === "both") && snapCampaigns.length > 0;
-  const multi = Number(showMeta) + Number(showDV360) + Number(showGads) + Number(showSnap) > 1;
+  const showSpotify = (platform === "spotify" || platform === "both") && spotifyCampaigns.length > 0;
+  const multi = Number(showMeta) + Number(showDV360) + Number(showGads) + Number(showSnap) + Number(showSpotify) > 1;
 
   return (
     <div className="space-y-8">
@@ -2376,6 +2379,20 @@ export default function BudgetAllocationAudit({ campaigns, dateRange, customStar
             </div>
           )}
           <SnapchatBudgetSection campaigns={snapCampaigns} currency={snapCurrency} />
+        </section>
+      )}
+
+      {(showSnap || showGads) && showSpotify && <hr className="border-gray-200" />}
+
+      {showSpotify && (
+        <section>
+          {multi && (
+            <div className="flex items-center gap-2 mb-4">
+              <div className="w-1 h-6 bg-green-500 rounded-full" />
+              <h2 className="text-base font-bold text-gray-900">Spotify — Budget Allocation</h2>
+            </div>
+          )}
+          <SnapchatBudgetSection campaigns={spotifyCampaigns} currency={spotifyCurrency} />
         </section>
       )}
     </div>

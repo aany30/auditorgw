@@ -217,8 +217,9 @@ export default function FunnelSeparationAudit({ campaigns, accountTotal, dateRan
   const dv360Campaigns = useMemo(() => campaigns.filter((c) => c.platform === "dv360"), [campaigns]);
   const gadsCampaigns = useMemo(() => campaigns.filter((c) => c.platform === "google_ads"), [campaigns]);
   const snapCampaigns = useMemo(() => campaigns.filter((c) => c.platform === "snapchat"), [campaigns]);
+  const spotifyCampaigns = useMemo(() => campaigns.filter((c) => c.platform === "spotify"), [campaigns]);
   const platformsPresent =
-    Number(metaCampaigns.length > 0) + Number(dv360Campaigns.length > 0) + Number(gadsCampaigns.length > 0) + Number(snapCampaigns.length > 0);
+    Number(metaCampaigns.length > 0) + Number(dv360Campaigns.length > 0) + Number(gadsCampaigns.length > 0) + Number(snapCampaigns.length > 0) + Number(spotifyCampaigns.length > 0);
   const hasBoth = platformsPresent > 1;
 
   // Overall counts for KPI cards
@@ -359,6 +360,11 @@ export default function FunnelSeparationAudit({ campaigns, accountTotal, dateRan
           {snapCampaigns.length > 0 && (
             <div className={hasBoth ? "pt-6" : ""}>
               <PlatformFunnelSection label="Snapchat" campaigns={snapCampaigns} allCampaigns={campaigns} />
+            </div>
+          )}
+          {spotifyCampaigns.length > 0 && (
+            <div className={hasBoth ? "pt-6" : ""}>
+              <PlatformFunnelSection label="Spotify" campaigns={spotifyCampaigns} allCampaigns={campaigns} />
             </div>
           )}
         </div>
@@ -602,6 +608,16 @@ export default function FunnelSeparationAudit({ campaigns, accountTotal, dateRan
           customStart={customStart}
           customEnd={customEnd}
           platformLabel={hasBoth ? "Snapchat" : undefined}
+        />
+      )}
+      {spotifyCampaigns.length > 0 && (
+        <FunnelStagePerformance
+          campaigns={spotifyCampaigns}
+          accountTotal={spotifyCampaigns.length}
+          dateRange={dateRange}
+          customStart={customStart}
+          customEnd={customEnd}
+          platformLabel={hasBoth ? "Spotify" : undefined}
         />
       )}
     </div>
