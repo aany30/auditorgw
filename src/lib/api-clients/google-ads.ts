@@ -621,17 +621,15 @@ export class GoogleAdsApiClient {
         countingType?: string;
       };
       metrics: {
-        conversions: string;
         allConversions: string;
-        conversionsValue: string;
+        allConversionsValue: string;
       };
     }>(`
       SELECT
         conversion_action.id, conversion_action.name,
         conversion_action.type, conversion_action.status,
         conversion_action.category, conversion_action.counting_type,
-        metrics.conversions, metrics.all_conversions,
-        metrics.conversions_value
+        metrics.all_conversions, metrics.all_conversions_value
       FROM conversion_action
       WHERE conversion_action.status != 'REMOVED'
     `);
@@ -643,9 +641,9 @@ export class GoogleAdsApiClient {
       status: r.conversionAction.status,
       category: r.conversionAction.category,
       countingType: r.conversionAction.countingType,
-      conversions: Number(r.metrics.conversions) || 0,
+      conversions: Number(r.metrics.allConversions) || 0,
       allConversions: Number(r.metrics.allConversions) || 0,
-      conversionsValue: Number(r.metrics.conversionsValue) || 0,
+      conversionsValue: Number(r.metrics.allConversionsValue) || 0,
     }));
   }
 
