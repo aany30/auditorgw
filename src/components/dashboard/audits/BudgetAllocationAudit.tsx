@@ -2219,7 +2219,7 @@ function GoogleAdsCampaignDrill({ campaign, currency }: { campaign: CampaignData
 // ─────────────────────────────────────────────────────────────────────────────
 // Snapchat section — minimal campaign-level budget table reusing SpendTable
 // ─────────────────────────────────────────────────────────────────────────────
-function SnapchatBudgetSection({ campaigns, currency }: { campaigns: CampaignData[]; currency: string }) {
+function SnapchatBudgetSection({ campaigns, currency, platformName = "Snapchat", platformApi = "Snapchat Marketing API" }: { campaigns: CampaignData[]; currency: string; platformName?: string; platformApi?: string }) {
   const cur = (n: number) => formatMoney(n, currency, 0);
   const [statusFilter, setStatusFilter] = useState<"all" | "active">("all");
   const visible = useMemo(
@@ -2265,7 +2265,7 @@ function SnapchatBudgetSection({ campaigns, currency }: { campaigns: CampaignDat
           ))}
         </div>
         <span className="inline-flex items-center gap-1 text-[11px] text-gray-500">
-          Spend from the Snapchat Marketing API for the selected window
+          Spend from the {platformApi} for the selected window
         </span>
       </div>
 
@@ -2286,11 +2286,11 @@ function SnapchatBudgetSection({ campaigns, currency }: { campaigns: CampaignDat
         totalCount={visible.length}
         isDemo={false}
         platform="snapchat"
-        subtitle="Real per-campaign delivery from the Snapchat Marketing API for the selected window."
+        subtitle={`Real per-campaign delivery from the ${platformApi} for the selected window.`}
       />
 
       <p className="text-[11px] text-gray-400 leading-relaxed px-1">
-        Every figure is real data from the Snapchat Marketing API for the selected window.
+        Every figure is real data from the {platformApi} for the selected window.
       </p>
     </div>
   );
@@ -2392,7 +2392,7 @@ export default function BudgetAllocationAudit({ campaigns, dateRange, customStar
               <h2 className="text-base font-bold text-gray-900">Spotify — Budget Allocation</h2>
             </div>
           )}
-          <SnapchatBudgetSection campaigns={spotifyCampaigns} currency={spotifyCurrency} />
+          <SnapchatBudgetSection campaigns={spotifyCampaigns} currency={spotifyCurrency} platformName="Spotify" platformApi="Spotify Ads API" />
         </section>
       )}
     </div>
