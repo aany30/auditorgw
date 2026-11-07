@@ -64,23 +64,57 @@ export default async function handler(
       client.getCampaignReport(startDate, endDate).catch((e) => { console.warn("Spotify getCampaignReport failed:", e.message); return []; }),
     ]);
 
-    // If windowed report returned no rows, try lifetime stats using
-    // each campaign's own start/end dates (completed campaigns won't
-    // have delivery in the recent window).
+    // Spotify aggregate reports have a 90-day max window. If the windowed
+    // report returned empty (completed campaigns have no delivery in the
+    // recent window), chunk the full campaign lifespan into ≤90-day windows.
     let effectiveStats = campaignStats;
     if (effectiveStats.length === 0 && campaigns.length > 0) {
       const earliest = campaigns.reduce((min, c) => {
         if (c.startDate && (!min || c.startDate < min)) return c.startDate;
         return min;
-      }, "" as string) || "2020-01-01";
+      }, "" as string) || startDate;
       const latest = campaigns.reduce((max, c) => {
         if (c.endDate && (!max || c.endDate > max)) return c.endDate;
         return max;
       }, "" as string) || endDate;
-      effectiveStats = await client.getCampaignReport(earliest, latest).catch((e) => {
-        console.warn("Spotify lifetime getCampaignReport failed:", e.message);
-        return [];
-      });
+
+      // Chunk into 90-day windows
+      const chunks: Array<{ s: string; e: string }> = [];
+      let cursor = new Date(earliest);
+      const end = new Date(latest);
+      while (cursor < end) {
+        const chunkEnd = new Date(cursor);
+        chunkEnd.setDate(chunkEnd.getDate() + 89);
+        if (chunkEnd > end) chunkEnd.setTime(end.getTime());
+        chunks.push({ s: cursor.toISOString().slice(0, 10), e: chunkEnd.toISOString().slice(0, 10) });
+        cursor = new Date(chunkEnd);
+        cursor.setDate(cursor.getDate() + 1);
+      }
+
+      const allRows = await Promise.all(
+        chunks.map((ch) =>
+          client.getCampaignReport(ch.s, ch.e).catch((e) => {
+            console.warn(`Spotify getCampaignReport(${ch.s}–${ch.e}) failed:`, e.message);
+            return [];
+          })
+        )
+      );
+      // Merge: sum metrics per campaign across chunks
+      const merged = new Map<string, typeof effectiveStats[0]>();
+      for (const rows of allRows) {
+        for (const row of rows) {
+          const existing = merged.get(row.entityId);
+          if (existing) {
+            existing.impressions += row.impressions;
+            existing.clicks += row.clicks;
+            existing.spend += row.spend;
+            existing.reach += row.reach;
+          } else {
+            merged.set(row.entityId, { ...row });
+          }
+        }
+      }
+      effectiveStats = Array.from(merged.values());
     }
 
     // Build a stats map keyed by campaign ID.
@@ -134,11 +168,19 @@ export default async function handler(
     const out: CampaignData[] = campaigns.map((c) => {
       const sets = adSetsByCampaign.get(c.id) ?? [];
       const stats = statsMap.get(c.id);
+      // Spotify API returns campaign status as ACTIVE even when all ad sets
+      // are COMPLETED. Derive effective status from ad sets.
+      let effectiveStatus = c.status;
+      if (sets.length > 0 && sets.every((s) => s.status === "COMPLETED")) {
+        effectiveStatus = "COMPLETED";
+      } else if (sets.length > 0 && sets.every((s) => s.status === "PAUSED" || s.status === "COMPLETED")) {
+        effectiveStatus = "PAUSED";
+      }
       return {
         id: c.id,
         name: c.name,
         objective: c.objective || "AWARENESS",
-        status: c.status,
+        status: effectiveStatus,
         platform: "spotify" as const,
         spend: stats?.spend ?? 0,
         impressions: stats?.impressions ?? 0,

@@ -39,21 +39,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     debug.adSetsError = e instanceof Error ? e.message : String(e);
   }
 
-  // Try campaign report for March-May 2026 (when campaigns ran)
+  // Try campaign report in 90-day chunks (API max)
   try {
-    const report = await client.getCampaignReport("2026-03-01", "2026-05-31");
-    debug.campaignReport_MarMay = report;
-    debug.campaignReportCount_MarMay = report.length;
+    const report1 = await client.getCampaignReport("2026-03-01", "2026-05-29");
+    debug.campaignReport_MarMay = report1;
+    debug.campaignReportCount_MarMay = report1.length;
   } catch (e) {
     debug.campaignReportError_MarMay = e instanceof Error ? e.message : String(e);
   }
 
-  // Try account-level lifetime report
+  // Try account-level report (90-day chunk)
   try {
-    const accountReport = await client.getAccountTotals("2026-01-01", "2026-12-31");
-    debug.accountReport_2026 = accountReport;
+    const accountReport = await client.getAccountTotals("2026-03-01", "2026-05-29");
+    debug.accountReport = accountReport;
   } catch (e) {
-    debug.accountReportError_2026 = e instanceof Error ? e.message : String(e);
+    debug.accountReportError = e instanceof Error ? e.message : String(e);
   }
 
   return res.status(200).json(debug);
