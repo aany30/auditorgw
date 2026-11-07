@@ -68,29 +68,20 @@ export default async function handler(
     // report returned empty (completed campaigns have no delivery in the
     // recent window), chunk the full campaign lifespan into ≤90-day windows.
     let effectiveStats = campaignStats;
-    console.log("[Spotify] windowed stats count:", effectiveStats.length, "campaigns:", campaigns.length);
-    console.log("[Spotify] campaign dates:", campaigns.map(c => ({ id: c.id, name: c.name, startDate: c.startDate, endDate: c.endDate })));
     if (effectiveStats.length === 0 && campaigns.length > 0) {
       const earliest = campaigns.reduce((min, c) => {
         if (c.startDate && (!min || c.startDate < min)) return c.startDate;
         return min;
-      }, "" as string);
+      }, "" as string) || startDate;
       const latest = campaigns.reduce((max, c) => {
         if (c.endDate && (!max || c.endDate > max)) return c.endDate;
         return max;
-      }, "" as string);
-      // If campaigns have no date fields, scan back 15 months from today
-      // in 90-day chunks to find when they actually delivered.
-      const fallbackStart = new Date();
-      fallbackStart.setMonth(fallbackStart.getMonth() - 15);
-      const effectiveEarliest = earliest || fallbackStart.toISOString().slice(0, 10);
-      const effectiveLatest = latest || new Date().toISOString().slice(0, 10);
-      console.log("[Spotify] fallback range:", effectiveEarliest, "to", effectiveLatest);
+      }, "" as string) || endDate;
 
       // Chunk into 90-day windows
       const chunks: Array<{ s: string; e: string }> = [];
-      let cursor = new Date(effectiveEarliest);
-      const end = new Date(effectiveLatest);
+      let cursor = new Date(earliest);
+      const end = new Date(latest);
       while (cursor < end) {
         const chunkEnd = new Date(cursor);
         chunkEnd.setDate(chunkEnd.getDate() + 89);
@@ -124,7 +115,6 @@ export default async function handler(
         }
       }
       effectiveStats = Array.from(merged.values());
-      console.log("[Spotify] chunked stats:", effectiveStats.map(r => ({ id: r.entityId, spend: r.spend, impressions: r.impressions })));
     }
 
     // Build a stats map keyed by campaign ID.
