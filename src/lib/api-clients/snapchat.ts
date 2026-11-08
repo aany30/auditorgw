@@ -205,8 +205,11 @@ export class SnapchatApiClient {
       const data = await this.request<{ total_stats?: unknown[] }>(
         `/adaccounts/${this.creds.adAccountId}/stats?${params}`,
       );
+      console.log("[Snapchat] raw stats response keys:", Object.keys(data as Record<string, unknown>));
+      console.log("[Snapchat] raw stats response:", JSON.stringify(data).substring(0, 2000));
       const result = new Map<string, SnapchatStatsRow>();
       const rows = (data.total_stats || []) as Array<Record<string, unknown>>;
+      console.log("[Snapchat] total_stats row count:", rows.length);
       for (const r of rows) {
         const totalStat = (r.total_stat || r) as Record<string, unknown>;
         const breakdown = (totalStat.breakdown || {}) as Record<string, unknown>;

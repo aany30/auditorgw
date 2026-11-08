@@ -68,6 +68,9 @@ export default async function handler(
       client.getCampaignBreakdownStats(startDate, endDate),
     ]);
 
+    console.log("[Snapchat] breakdown stats size:", statsMap.size, "entries:", JSON.stringify(Object.fromEntries(statsMap)));
+    console.log("[Snapchat] campaigns:", campaigns.map(c => ({ id: c.id, name: c.name, status: c.status })));
+
     // Fallback: if breakdown returned empty, fetch per-campaign stats
     let effectiveStats = statsMap;
     if (effectiveStats.size === 0 && campaigns.length > 0) {
