@@ -68,9 +68,6 @@ export default async function handler(
       client.getCampaignBreakdownStats(startDate, endDate),
     ]);
 
-    console.log("[Snapchat] breakdown stats size:", statsMap.size, "entries:", JSON.stringify(Object.fromEntries(statsMap)));
-    console.log("[Snapchat] campaigns:", campaigns.map(c => ({ id: c.id, name: c.name, status: c.status })));
-
     // Fallback: if breakdown returned empty, fetch per-campaign stats
     let effectiveStats = statsMap;
     if (effectiveStats.size === 0 && campaigns.length > 0) {
@@ -140,45 +137,7 @@ export default async function handler(
       };
     });
 
-    // Temporary debug: also fetch raw stats directly to see what Snap returns
-    let rawStatsDebug: unknown = null;
-    try {
-      const params = new URLSearchParams({
-        granularity: "TOTAL",
-        start_time: `${startDate}T00:00:00-00:00`,
-        end_time: `${endDate}T23:59:59-00:00`,
-        breakdown: "campaign",
-        fields: "spend,impressions,swipes,video_views,conversion_purchases",
-      });
-      rawStatsDebug = await client.request(
-        `/adaccounts/${creds.adAccountId}/stats?${params}`,
-      );
-    } catch (e) {
-      rawStatsDebug = { error: e instanceof Error ? e.message : String(e) };
-    }
-
-    // Also try per-campaign stats for the active campaign
-    let perCampaignDebug: unknown = null;
-    const activeCampaign = campaigns.find(c => c.status === "ACTIVE");
-    if (activeCampaign) {
-      try {
-        perCampaignDebug = await client.getCampaignStats(activeCampaign.id, startDate, endDate);
-      } catch (e) {
-        perCampaignDebug = { error: e instanceof Error ? e.message : String(e) };
-      }
-    }
-
-    const _debug = {
-      breakdownStatsSize: effectiveStats.size,
-      breakdownEntries: Object.fromEntries(effectiveStats),
-      rawStatsResponse: rawStatsDebug,
-      perCampaignStats: perCampaignDebug,
-      startDate,
-      endDate,
-      campaignCount: campaigns.length,
-      activeCampaigns: campaigns.filter(c => c.status === "ACTIVE").map(c => ({ id: c.id, name: c.name })),
-    };
-    return res.status(200).json({ campaigns: out, _debug } as unknown as CampaignData[]);
+    return res.status(200).json(out);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     console.error("Snapchat campaigns fetch failed:", message);

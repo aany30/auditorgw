@@ -202,36 +202,33 @@ export class SnapchatApiClient {
       fields: "spend,impressions,swipes,video_views,conversion_purchases",
     });
     try {
-      const data = await this.request<{ total_stats?: unknown[] }>(
+      const data = await this.request<Record<string, unknown>>(
         `/adaccounts/${this.creds.adAccountId}/stats?${params}`,
       );
-      console.log("[Snapchat] raw stats response keys:", Object.keys(data as Record<string, unknown>));
-      console.log("[Snapchat] raw stats response:", JSON.stringify(data).substring(0, 2000));
       const result = new Map<string, SnapchatStatsRow>();
-      const rows = (data.total_stats || []) as Array<Record<string, unknown>>;
-      console.log("[Snapchat] total_stats row count:", rows.length);
-      if (rows.length > 0) {
-        console.log("[Snapchat] first row structure:", JSON.stringify(rows[0]).substring(0, 500));
-      }
-      for (const r of rows) {
-        const totalStat = (r.total_stat || r) as Record<string, unknown>;
-        const breakdown = (totalStat.breakdown || {}) as Record<string, unknown>;
-        const stats = (totalStat.stats || {}) as Record<string, unknown>;
-        const cid = String(breakdown.campaign || totalStat.id || "");
-        if (!cid) continue;
-        const spendMicro = Number(stats.spend || 0);
-        result.set(cid, {
-          id: cid,
-          spend: spendMicro / 1_000_000,
-          impressions: Number(stats.impressions || 0),
-          swipes: Number(stats.swipes || 0),
-          videoViews: Number(stats.video_views || 0),
-          conversions: Number(stats.conversion_purchases || 0),
-        });
+      const totalStats = (data.total_stats || []) as Array<Record<string, unknown>>;
+      for (const row of totalStats) {
+        const totalStat = (row.total_stat || row) as Record<string, unknown>;
+        const breakdownStats = (totalStat.breakdown_stats || {}) as Record<string, unknown>;
+        const campaignRows = (breakdownStats.campaign || []) as Array<Record<string, unknown>>;
+        for (const camp of campaignRows) {
+          const cid = String(camp.id || "");
+          if (!cid) continue;
+          const stats = (camp.stats || {}) as Record<string, unknown>;
+          const spendMicro = Number(stats.spend || 0);
+          result.set(cid, {
+            id: cid,
+            spend: spendMicro / 1_000_000,
+            impressions: Number(stats.impressions || 0),
+            swipes: Number(stats.swipes || 0),
+            videoViews: Number(stats.video_views || 0),
+            conversions: Number(stats.conversion_purchases || 0),
+          });
+        }
       }
       return result;
-    } catch {
-      // Stats fetch failed — fall back to per-campaign stats
+    } catch (err) {
+      console.error("[Snapchat] getCampaignBreakdownStats failed:", err instanceof Error ? err.message : err);
       return new Map();
     }
   }
@@ -261,7 +258,8 @@ export class SnapchatApiClient {
         videoViews: Number(stats.video_views || 0),
         conversions: Number(stats.conversion_purchases || 0),
       };
-    } catch {
+    } catch (err) {
+      console.error(`[Snapchat] getCampaignStats(${campaignId}) failed:`, err instanceof Error ? err.message : err);
       return null;
     }
   }
