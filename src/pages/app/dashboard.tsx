@@ -766,7 +766,7 @@ export default function Dashboard() {
       <nav className="sticky top-0 z-40 bg-white border-b border-gray-200 shadow-sm">
         <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center gap-4">
           {/* Left: Logo + Filters (Platform · Objectives · Calendar) */}
-          <div className="flex items-center gap-4 flex-wrap">
+          <div className="flex items-center gap-4">
             <div className="flex items-center gap-3 pr-4 border-r border-gray-200">
               <BarChart3 className="w-7 h-7 text-blue-600" strokeWidth={2.5} />
               <span className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-blue-700 bg-clip-text text-transparent">
