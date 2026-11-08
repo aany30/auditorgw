@@ -40,10 +40,10 @@ interface FunnelMixAI {
 function bucket(objective?: string): "TOF" | "MOF" | "BOF" | "Unknown" {
   if (!objective) return "Unknown";
   const o = objective.toLowerCase();
-  // TOF — awareness/reach/views (Meta/DV360) + Google Ads Display & Video.
-  if (o.includes("aware") || o.includes("reach") || o.includes("video") || o.includes("store") || o.includes("display")) return "TOF";
-  // MOF — engagement/traffic/consideration (Meta/DV360) + Google Ads Demand Gen / Discovery.
-  if (o.includes("engagement") || o.includes("traffic") || o.includes("consideration") || o.includes("link_click") || o.includes("link click") || o === "link_clicks" || o.includes("demand gen") || o.includes("discovery")) return "MOF";
+  // TOF — awareness/reach/views (Meta/DV360) + Google Ads Display & Video + Spotify impression delivery.
+  if (o.includes("aware") || o.includes("reach") || o.includes("video") || o.includes("store") || o.includes("display") || o.includes("even_impression") || o.includes("podcast")) return "TOF";
+  // MOF — engagement/traffic/consideration (Meta/DV360) + Google Ads Demand Gen / Discovery + Spotify clicks/visits.
+  if (o.includes("engagement") || o.includes("traffic") || o.includes("consideration") || o.includes("link_click") || o.includes("link click") || o === "link_clicks" || o.includes("demand gen") || o.includes("discovery") || o.includes("website_visit") || o.includes("clicks")) return "MOF";
   // BOF — sales/conversions/leads (Meta/DV360) + Google Ads Search, Shopping, Performance Max, Hotel, Travel, Local.
   if (o.includes("conversion") || o.includes("sales") || o.includes("lead") || o.includes("catalog") || o.includes("app") || o.includes("search") || o.includes("shopping") || o.includes("performance max") || o.includes("hotel") || o.includes("travel") || o.includes("local")) return "BOF";
   return "Unknown";

@@ -179,7 +179,7 @@ export default async function handler(
       return {
         id: c.id,
         name: c.name,
-        objective: c.objective || "AWARENESS",
+        objective: c.deliveryGoalGroup || c.objective || "AWARENESS",
         status: effectiveStatus,
         platform: "spotify" as const,
         spend: stats?.spend ?? 0,

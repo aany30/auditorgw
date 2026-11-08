@@ -44,6 +44,7 @@ export interface SpotifyCampaign {
   name: string;
   status: string;
   objective?: string;
+  deliveryGoalGroup?: string;
   startDate?: string;
   endDate?: string;
   impressions?: number;
@@ -159,12 +160,14 @@ export class SpotifyAdsApiClient {
         campaign_id?: string; id?: string;
         name?: string; campaign_name?: string;
         status?: string; objective?: string;
+        delivery_goal_group?: string;
         start_date?: string; end_date?: string;
       }>;
       data?: Array<{
         campaign_id?: string; id?: string;
         name?: string; campaign_name?: string;
         status?: string; objective?: string;
+        delivery_goal_group?: string;
         start_date?: string; end_date?: string;
       }>;
     }>(`/ad_accounts/${this.creds.adAccountId}/campaigns`);
@@ -174,6 +177,7 @@ export class SpotifyAdsApiClient {
       name: c.name || c.campaign_name || "",
       status: c.status || "UNKNOWN",
       objective: c.objective,
+      deliveryGoalGroup: c.delivery_goal_group,
       startDate: c.start_date,
       endDate: c.end_date,
     }));
