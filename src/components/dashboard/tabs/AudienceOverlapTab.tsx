@@ -1045,7 +1045,9 @@ export default function AudienceOverlapTab({ platform, dateRange, customStart, c
           )}
 
           {/* Cross-Campaign Frequency Burden — real REACH-report data, unlike
-              overlap % which DV360's API doesn't expose. */}
+              overlap % which DV360's API doesn't expose. Only rendered when
+              there is actual data or the report is still pending. */}
+          {(crossCampaign || crossCampaignPending || dvFreqLoading || dvMonthlyFreq.length > 0) && (
           <div className="bg-white rounded-lg border border-gray-200 shadow-sm">
             <div className="p-6 border-b border-gray-200 flex items-start gap-3">
               <Repeat2 className="w-5 h-5 text-indigo-600 mt-0.5 shrink-0" />
@@ -1115,6 +1117,7 @@ export default function AudienceOverlapTab({ platform, dateRange, customStart, c
               </div>
             )}
           </div>
+          )}
         </>
       )}
 
@@ -1180,9 +1183,7 @@ export default function AudienceOverlapTab({ platform, dateRange, customStart, c
                       <SortTh col="name" sort={gadsAudSort} onToggle={gadsAudToggle} className="px-6 py-3">Audience Name</SortTh>
                       <SortTh col="type" sort={gadsAudSort} onToggle={gadsAudToggle} className="px-6 py-3">Type</SortTh>
                       <SortTh col="membershipStatus" sort={gadsAudSort} onToggle={gadsAudToggle} className="px-6 py-3">Status</SortTh>
-                      <SortTh col="sizeForDisplay" sort={gadsAudSort} onToggle={gadsAudToggle} className="px-6 py-3" align="right">Size (Display)</SortTh>
-                      <SortTh col="sizeForSearch" sort={gadsAudSort} onToggle={gadsAudToggle} className="px-6 py-3" align="right">Size (Search)</SortTh>
-                      <SortTh col="membershipLifeSpanDays" sort={gadsAudSort} onToggle={gadsAudToggle} className="px-6 py-3" align="right">Membership</SortTh>
+                      <SortTh col="membershipLifeSpanDays" sort={gadsAudSort} onToggle={gadsAudToggle} className="px-6 py-3" align="right">Retention</SortTh>
                       <th className="px-6 py-3 text-left font-semibold text-gray-700">Description</th>
                     </tr>
                   </thead>
@@ -1203,8 +1204,6 @@ export default function AudienceOverlapTab({ platform, dateRange, customStart, c
                             a.membershipStatus === "OPEN" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"
                           }`}>{a.membershipStatus}</span>
                         </td>
-                        <td className="px-6 py-3 text-right text-gray-900 font-medium">{a.sizeForDisplay > 0 ? fmtSize(a.sizeForDisplay) : "—"}</td>
-                        <td className="px-6 py-3 text-right text-gray-700">{a.sizeForSearch > 0 ? fmtSize(a.sizeForSearch) : "—"}</td>
                         <td className="px-6 py-3 text-right text-gray-700">{a.membershipLifeSpanDays > 0 ? `${a.membershipLifeSpanDays}d` : "—"}</td>
                         <td className="px-6 py-3 text-gray-500 text-xs max-w-[200px] truncate">{a.description || "—"}</td>
                       </tr>
@@ -1291,7 +1290,6 @@ export default function AudienceOverlapTab({ platform, dateRange, customStart, c
                   <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-20 shadow-sm">
                     <tr>
                       <SortTh col="name" sort={snapSegSort} onToggle={snapSegToggle} className="px-6 py-3">Segment Name</SortTh>
-                      <SortTh col="type" sort={snapSegSort} onToggle={snapSegToggle} className="px-6 py-3">Type</SortTh>
                       <SortTh col="sourceType" sort={snapSegSort} onToggle={snapSegToggle} className="px-6 py-3">Source</SortTh>
                       <SortTh col="status" sort={snapSegSort} onToggle={snapSegToggle} className="px-6 py-3">Status</SortTh>
                       <SortTh col="approximateNumberUsers" sort={snapSegSort} onToggle={snapSegToggle} className="px-6 py-3" align="right">Approx. Users</SortTh>
@@ -1305,13 +1303,13 @@ export default function AudienceOverlapTab({ platform, dateRange, customStart, c
                         <td className="px-6 py-3 font-medium text-gray-900 max-w-[250px] truncate">{s.name}</td>
                         <td className="px-6 py-3">
                           <span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
-                            s.type === "CUSTOMER_LIST" ? "bg-green-100 text-green-700"
-                            : s.type === "LOOKALIKE" ? "bg-purple-100 text-purple-700"
-                            : s.type === "PIXEL" || s.type === "ENGAGEMENT" ? "bg-blue-100 text-blue-700"
+                            s.sourceType === "FIRST_PARTY" ? "bg-green-100 text-green-700"
+                            : s.sourceType === "PIXEL" ? "bg-blue-100 text-blue-700"
+                            : s.sourceType === "ENGAGEMENT" ? "bg-indigo-100 text-indigo-700"
+                            : s.sourceType === "APP" ? "bg-purple-100 text-purple-700"
                             : "bg-gray-100 text-gray-700"
-                          }`}>{s.type.replace(/_/g, " ")}</span>
+                          }`}>{s.sourceType.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase())}</span>
                         </td>
-                        <td className="px-6 py-3 text-gray-700 text-xs">{s.sourceType.replace(/_/g, " ")}</td>
                         <td className="px-6 py-3">
                           <span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
                             s.status === "ACTIVE" ? "bg-green-100 text-green-700"
