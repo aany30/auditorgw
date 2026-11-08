@@ -59,21 +59,6 @@ export default async function handler(
   try {
     const client = new SnapchatApiClient(creds);
 
-    // Fetch raw stats first to debug, then fetch everything else in parallel.
-    let rawStatsDebug: unknown = null;
-    try {
-      const debugParams = new URLSearchParams({
-        granularity: "TOTAL",
-        start_time: `${startDate}T00:00:00-00:00`,
-        end_time: (() => { const d = new Date(endDate + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10) + "T00:00:00-00:00"; })(),
-        breakdown: "campaign",
-        fields: "spend,impressions,swipes,video_views,conversion_purchases",
-      });
-      rawStatsDebug = await client.request(`/adaccounts/${creds.adAccountId}/stats?${debugParams}`);
-    } catch (e) {
-      rawStatsDebug = { error: e instanceof Error ? e.message : String(e) };
-    }
-
     // Fetch campaigns, ad squads, ads, currency, and campaign-level stats in parallel.
     const [campaigns, adSquads, ads, currency, statsMap] = await Promise.all([
       client.listCampaigns(),
@@ -152,14 +137,8 @@ export default async function handler(
       };
     });
 
-    const _debug = {
-      breakdownStatsSize: effectiveStats.size,
-      breakdownEntries: Object.fromEntries(effectiveStats),
-      rawStatsResponse: rawStatsDebug,
-      startDate,
-      endDate,
-    };
-    return res.status(200).json({ campaigns: out, _debug } as unknown as CampaignData[]);
+    console.log("[Snapchat] effectiveStats size:", effectiveStats.size, "entries:", JSON.stringify(Object.fromEntries(effectiveStats)).substring(0, 2000));
+    return res.status(200).json(out);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     console.error("Snapchat campaigns fetch failed:", message);
