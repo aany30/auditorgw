@@ -223,124 +223,78 @@ export function useCampaigns(
       try {
         const effectiveMetaToken = demoMode ? "demo-meta-token" : metaAccessToken;
         const effectiveMetaBiz = demoMode ? "demo-business-123" : metaBusinessId;
-        const canFetchMeta = (platform === "meta" || platform === "both") && (effectiveMetaToken && effectiveMetaBiz || hasServerDefaults);
-        if (canFetchMeta) {
-          const r = await fetch("/api/naming/campaigns/meta", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              accessToken: effectiveMetaToken || undefined,
-              businessId: effectiveMetaBiz || undefined,
-              startDate,
-              endDate,
-            }),
-          });
-          if (r.ok) {
-            all.push(...(await r.json()));
-          } else {
-            const body = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
-            errs.meta = body.error || `Meta API error (HTTP ${r.status})`;
-          }
-        }
         const effectiveDv360Refresh = demoMode ? "demo-dv360-refresh" : dv360RefreshToken;
+
+        const canFetchMeta = (platform === "meta" || platform === "both") && (effectiveMetaToken && effectiveMetaBiz || hasServerDefaults);
         const canFetchDv = (platform === "dv360" || platform === "both") &&
           (effectiveDv360Refresh && (demoMode || (dv360ClientId && dv360ClientSecret && dv360AdvertiserId)) || hasServerDefaults);
-        if (canFetchDv) {
-          const r = await fetch("/api/naming/campaigns/dv360", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              clientId: demoMode ? "demo-client" : dv360ClientId || undefined,
-              clientSecret: demoMode ? "demo-secret" : dv360ClientSecret || undefined,
-              refreshToken: effectiveDv360Refresh || undefined,
-              advertiserId: demoMode ? "demo-advertiser-1" : dv360AdvertiserId || undefined,
-              partnerId: dv360PartnerId || undefined,
-              startDate,
-              endDate,
-              strictWindow,
-            }),
-          });
+        const canFetchGads = (platform === "google_ads" || platform === "both") &&
+          (googleAdsCustomerId && dv360RefreshToken && dv360ClientId && dv360ClientSecret || hasServerDefaults);
+        const canFetchSnap = (platform === "snapchat" || platform === "both") &&
+          (snapchatRefreshToken && snapchatClientId && snapchatClientSecret && snapchatAdAccountId || hasServerDefaults);
+        const canFetchSpotify = (platform === "spotify" || platform === "both") &&
+          (spotifyRefreshToken && spotifyClientId && spotifyClientSecret && spotifyAdAccountId || hasServerDefaults);
+
+        type PlatformKey = "meta" | "dv360" | "google_ads" | "snapchat" | "spotify";
+        const fetches: Array<{ key: PlatformKey; promise: Promise<Response> }> = [];
+
+        if (canFetchMeta) fetches.push({ key: "meta", promise: fetch("/api/naming/campaigns/meta", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ accessToken: effectiveMetaToken || undefined, businessId: effectiveMetaBiz || undefined, startDate, endDate }),
+        })});
+        if (canFetchDv) fetches.push({ key: "dv360", promise: fetch("/api/naming/campaigns/dv360", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            clientId: demoMode ? "demo-client" : dv360ClientId || undefined,
+            clientSecret: demoMode ? "demo-secret" : dv360ClientSecret || undefined,
+            refreshToken: effectiveDv360Refresh || undefined,
+            advertiserId: demoMode ? "demo-advertiser-1" : dv360AdvertiserId || undefined,
+            partnerId: dv360PartnerId || undefined, startDate, endDate, strictWindow,
+          }),
+        })});
+        if (canFetchGads) fetches.push({ key: "google_ads", promise: fetch("/api/naming/campaigns/google-ads", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            clientId: dv360ClientId || undefined, clientSecret: dv360ClientSecret || undefined,
+            refreshToken: dv360RefreshToken || undefined, customerId: googleAdsCustomerId || undefined,
+            loginCustomerId: googleAdsLoginCustomerId || undefined, startDate, endDate,
+          }),
+        })});
+        if (canFetchSnap) fetches.push({ key: "snapchat", promise: fetch("/api/naming/campaigns/snapchat", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            clientId: snapchatClientId || undefined, clientSecret: snapchatClientSecret || undefined,
+            refreshToken: snapchatRefreshToken || undefined, adAccountId: snapchatAdAccountId || undefined,
+            orgId: snapchatOrgId || undefined, startDate, endDate,
+          }),
+        })});
+        if (canFetchSpotify) fetches.push({ key: "spotify", promise: fetch("/api/naming/campaigns/spotify", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            clientId: spotifyClientId || undefined, clientSecret: spotifyClientSecret || undefined,
+            refreshToken: spotifyRefreshToken || undefined, adAccountId: spotifyAdAccountId || undefined,
+            startDate, endDate,
+          }),
+        })});
+
+        const results = await Promise.allSettled(fetches.map((f) => f.promise));
+        for (let i = 0; i < results.length; i++) {
+          const { key } = fetches[i];
+          const result = results[i];
+          if (result.status === "rejected") {
+            errs[key] = result.reason instanceof Error ? result.reason.message : `${key} fetch failed`;
+            continue;
+          }
+          const r = result.value;
           if (r.ok) {
             const rows: CampaignData[] = await r.json();
             all.push(...rows);
-            // Write fresh rows to the SWR cache so the next page load is instant.
-            if (effectiveAdvertiserId && rows.length > 0) {
+            if (key === "dv360" && effectiveAdvertiserId && rows.length > 0) {
               swrWrite(swrKey(effectiveAdvertiserId, startDate, endDate, strictWindow), rows);
             }
           } else {
             const body = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
-            errs.dv360 = body.error || `DV360 API error (HTTP ${r.status})`;
-          }
-        }
-        // Google Ads fetch
-        const canFetchGads = (platform === "google_ads" || platform === "both") &&
-          (googleAdsCustomerId && dv360RefreshToken && dv360ClientId && dv360ClientSecret || hasServerDefaults);
-        if (canFetchGads) {
-          const r = await fetch("/api/naming/campaigns/google-ads", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              clientId: dv360ClientId || undefined,
-              clientSecret: dv360ClientSecret || undefined,
-              refreshToken: dv360RefreshToken || undefined,
-              customerId: googleAdsCustomerId || undefined,
-              loginCustomerId: googleAdsLoginCustomerId || undefined,
-              startDate,
-              endDate,
-            }),
-          });
-          if (r.ok) {
-            all.push(...(await r.json()));
-          } else {
-            const body = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
-            errs.google_ads = body.error || `Google Ads API error (HTTP ${r.status})`;
-          }
-        }
-        // Snapchat fetch
-        const canFetchSnap = (platform === "snapchat" || platform === "both") &&
-          (snapchatRefreshToken && snapchatClientId && snapchatClientSecret && snapchatAdAccountId || hasServerDefaults);
-        if (canFetchSnap) {
-          const r = await fetch("/api/naming/campaigns/snapchat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              clientId: snapchatClientId || undefined,
-              clientSecret: snapchatClientSecret || undefined,
-              refreshToken: snapchatRefreshToken || undefined,
-              adAccountId: snapchatAdAccountId || undefined,
-              orgId: snapchatOrgId || undefined,
-              startDate,
-              endDate,
-            }),
-          });
-          if (r.ok) {
-            all.push(...(await r.json()));
-          } else {
-            const body = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
-            errs.snapchat = body.error || `Snapchat API error (HTTP ${r.status})`;
-          }
-        }
-        // Spotify fetch
-        const canFetchSpotify = (platform === "spotify" || platform === "both") &&
-          (spotifyRefreshToken && spotifyClientId && spotifyClientSecret && spotifyAdAccountId || hasServerDefaults);
-        if (canFetchSpotify) {
-          const r = await fetch("/api/naming/campaigns/spotify", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              clientId: spotifyClientId || undefined,
-              clientSecret: spotifyClientSecret || undefined,
-              refreshToken: spotifyRefreshToken || undefined,
-              adAccountId: spotifyAdAccountId || undefined,
-              startDate,
-              endDate,
-            }),
-          });
-          if (r.ok) {
-            all.push(...(await r.json()));
-          } else {
-            const body = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
-            errs.spotify = body.error || `Spotify API error (HTTP ${r.status})`;
+            errs[key] = body.error || `${key} API error (HTTP ${r.status})`;
           }
         }
       } catch (e) {
