@@ -137,7 +137,6 @@ export default async function handler(
       };
     });
 
-    console.log("[Snapchat] effectiveStats size:", effectiveStats.size, "entries:", JSON.stringify(Object.fromEntries(effectiveStats)).substring(0, 2000));
     return res.status(200).json(out);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
