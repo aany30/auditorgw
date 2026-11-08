@@ -30,15 +30,14 @@ export function useAdSetInsights(
   const { startDate, endDate } = rangeToDates(dateRange, customStart, customEnd);
 
   useEffect(() => {
-    if (platform === "dv360") {
-      setAdsets([]);
-      setAudiences([]);
+    if (platform !== "meta" && platform !== "both") {
+      setAdsets([]); setAudiences([]); setLoading(false);
       return;
     }
     const effectiveToken = demoMode ? "demo-meta-token" : metaAccessToken;
     const effectiveBiz = demoMode ? "demo-business-123" : metaBusinessId;
     const hasServerDefaults = !!process.env.NEXT_PUBLIC_HAS_DEFAULT_CREDS;
-    if (!hasServerDefaults && !effectiveToken && !effectiveBiz) { setAdsets([]); setAudiences([]); return; }
+    if (!hasServerDefaults && !effectiveToken && !effectiveBiz) { setAdsets([]); setAudiences([]); setLoading(false); return; }
 
     let cancelled = false;
     setLoading(true);

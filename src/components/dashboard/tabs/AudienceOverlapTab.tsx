@@ -543,7 +543,7 @@ export default function AudienceOverlapTab({ platform, dateRange, customStart, c
 
   const chosenNames = analysis?.items.map((it) => it.row.name) ?? [];
 
-  if (loading && adsets.length === 0) return <LoadingState message="Loading overlap data…" />;
+  if (loading && adsets.length === 0 && showMeta && !showDV360) return <LoadingState message="Loading overlap data…" />;
 
   return (
     <div className="space-y-6">
