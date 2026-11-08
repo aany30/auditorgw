@@ -48,11 +48,15 @@ export interface SnapchatStatsRow {
 
 const tokenCache = new Map<string, { accessToken: string; expiresAt: number }>();
 
-/** Snapchat stats endpoint expects RFC3339 datetime strings with timezone. */
-function toRFC3339(date: string, endOfDay = false): string {
-  // YYYY-MM-DD → YYYY-MM-DDT00:00:00-00:00 (or 23:59:59 for end)
-  const time = endOfDay ? "T23:59:59-00:00" : "T00:00:00-00:00";
-  return `${date}${time}`;
+/** Snapchat stats endpoint expects RFC3339 datetime strings with timezone.
+ *  end_time is exclusive, so we shift to midnight of the next day. */
+function toRFC3339(date: string, exclusiveEnd = false): string {
+  if (exclusiveEnd) {
+    const d = new Date(date + "T00:00:00Z");
+    d.setUTCDate(d.getUTCDate() + 1);
+    return d.toISOString().slice(0, 10) + "T00:00:00-00:00";
+  }
+  return `${date}T00:00:00-00:00`;
 }
 
 export class SnapchatApiClient {
