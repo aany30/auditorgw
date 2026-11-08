@@ -210,6 +210,9 @@ export class SnapchatApiClient {
       const result = new Map<string, SnapchatStatsRow>();
       const rows = (data.total_stats || []) as Array<Record<string, unknown>>;
       console.log("[Snapchat] total_stats row count:", rows.length);
+      if (rows.length > 0) {
+        console.log("[Snapchat] first row structure:", JSON.stringify(rows[0]).substring(0, 500));
+      }
       for (const r of rows) {
         const totalStat = (r.total_stat || r) as Record<string, unknown>;
         const breakdown = (totalStat.breakdown || {}) as Record<string, unknown>;

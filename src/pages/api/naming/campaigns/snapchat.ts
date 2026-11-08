@@ -140,7 +140,16 @@ export default async function handler(
       };
     });
 
-    return res.status(200).json(out);
+    // Temporary debug: attach raw stats info
+    const _debug = {
+      breakdownStatsSize: effectiveStats.size,
+      breakdownEntries: Object.fromEntries(effectiveStats),
+      startDate,
+      endDate,
+      campaignCount: campaigns.length,
+      activeCampaigns: campaigns.filter(c => c.status === "ACTIVE").map(c => c.id),
+    };
+    return res.status(200).json({ campaigns: out, _debug } as unknown as CampaignData[]);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     console.error("Snapchat campaigns fetch failed:", message);
