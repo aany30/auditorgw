@@ -797,6 +797,52 @@ export class GoogleAdsApiClient {
     }
     return [...byDevice.entries()].map(([label, d]) => ({ label, ...d }));
   }
+
+  async listAudiences(): Promise<Array<{
+    id: string;
+    name: string;
+    type: string;
+    membershipStatus: string;
+    sizeForSearch: number;
+    sizeForDisplay: number;
+    description: string;
+    membershipLifeSpanDays: number;
+  }>> {
+    const rows = await this.search<{
+      userList: {
+        id: string;
+        name: string;
+        type: string;
+        membershipStatus: string;
+        sizeForSearch: string;
+        sizeForDisplay: string;
+        description: string;
+        membershipLifeSpan: string;
+      };
+    }>(`
+      SELECT
+        user_list.id,
+        user_list.name,
+        user_list.type,
+        user_list.membership_status,
+        user_list.size_for_search,
+        user_list.size_for_display,
+        user_list.description,
+        user_list.membership_life_span
+      FROM user_list
+      ORDER BY user_list.name
+    `);
+    return rows.map((r) => ({
+      id: String(r.userList.id || ""),
+      name: String(r.userList.name || ""),
+      type: String(r.userList.type || "UNKNOWN"),
+      membershipStatus: String(r.userList.membershipStatus || "UNKNOWN"),
+      sizeForSearch: Number(r.userList.sizeForSearch) || 0,
+      sizeForDisplay: Number(r.userList.sizeForDisplay) || 0,
+      description: String(r.userList.description || ""),
+      membershipLifeSpanDays: Number(r.userList.membershipLifeSpan) || 0,
+    }));
+  }
 }
 
 // ─── Label helpers ──────────────────────────────────────────────────────────

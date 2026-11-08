@@ -268,6 +268,40 @@ export class SnapchatApiClient {
     }
   }
 
+  /** List audience segments (SAM segments) for the ad account. */
+  async listSegments(): Promise<Array<{
+    id: string;
+    name: string;
+    status: string;
+    type: string;
+    description: string;
+    targetableStatus: string;
+    approximateNumberUsers: number;
+    uploadStatus: string;
+    retentionInDays: number;
+    sourceType: string;
+  }>> {
+    const data = await this.request<{
+      segments?: Array<{ segment?: Record<string, unknown> }>;
+    }>(`/adaccounts/${this.creds.adAccountId}/segments`);
+    const list = data.segments || [];
+    return list.map((entry) => {
+      const s = (entry.segment || entry) as Record<string, unknown>;
+      return {
+        id: String(s.id || ""),
+        name: String(s.name || ""),
+        status: String(s.status || "UNKNOWN"),
+        type: String(s.type || "UNKNOWN"),
+        description: String(s.description || ""),
+        targetableStatus: String(s.targetable_status || "UNKNOWN"),
+        approximateNumberUsers: Number(s.approximate_number_users || 0),
+        uploadStatus: String(s.upload_status || "UNKNOWN"),
+        retentionInDays: Number(s.retention_in_days || 0),
+        sourceType: String(s.source_type || "UNKNOWN"),
+      };
+    });
+  }
+
   // ─── Write ───────────────────────────────────────────────────────────────
 
   async createCampaign(data: Record<string, unknown>): Promise<unknown> {

@@ -14,6 +14,8 @@ import { useSort } from "@/hooks/useSort";
 import AIRecommendationButton from "@/components/shared/AIRecommendationButton";
 import { useDV360Audiences } from "@/hooks/useDV360Audiences";
 import { useDV360FrequencyBurden } from "@/hooks/useDV360FrequencyBurden";
+import { useGoogleAdsAudiences } from "@/hooks/useGoogleAdsAudiences";
+import { useSnapchatAudiences } from "@/hooks/useSnapchatAudiences";
 import { useAuthStore } from "@/store/auth";
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Tooltip as ReTooltip,
@@ -430,11 +432,15 @@ function stageBadge(stage: FunnelStage) {
 }
 
 export default function AudienceOverlapTab({ platform, dateRange, customStart, customEnd }: Props) {
-  const { isMetaConnected, isDV360Connected, demoMode } = useAuthStore();
+  const { isMetaConnected, isDV360Connected, isGoogleAdsConnected, isSnapchatConnected, demoMode } = useAuthStore();
   const metaOn = isMetaConnected() || demoMode;
   const dv360On = isDV360Connected() || demoMode;
+  const gadsOn = isGoogleAdsConnected() || demoMode;
+  const snapOn = isSnapchatConnected() || demoMode;
   const showMeta = metaOn && (platform === "meta" || platform === "both");
   const showDV360 = dv360On && (platform === "dv360" || platform === "both");
+  const showGads = gadsOn && (platform === "google_ads" || platform === "both");
+  const showSnap = snapOn && (platform === "snapchat" || platform === "both");
 
   const { adsets, audiences, audienceMap, loading, error: insightsError, currency, accountReach, accountFrequency } = useAdSetInsights(
     platform === "both" ? "meta" : platform,
@@ -448,6 +454,12 @@ export default function AudienceOverlapTab({ platform, dateRange, customStart, c
   const {
     crossCampaign, crossCampaignPending, monthly: dvMonthlyFreq, monthlyPending: dvMonthlyPending, loading: dvFreqLoading,
   } = useDV360FrequencyBurden(dateRange, customStart, customEnd, showDV360);
+
+  const { audiences: gadsAudiences, loading: gadsAudLoading, error: gadsAudError } = useGoogleAdsAudiences(showGads);
+  const { sorted: sortedGadsAud, sort: gadsAudSort, toggle: gadsAudToggle } = useSort(gadsAudiences, "name", "asc");
+
+  const { segments: snapSegments, loading: snapSegLoading, error: snapSegError } = useSnapchatAudiences(showSnap);
+  const { sorted: sortedSnapSeg, sort: snapSegSort, toggle: snapSegToggle } = useSort(snapSegments, "name", "asc");
 
   // Classify every ad set once, reused below.
   const classifyRow = (a: AdSetRow): AudienceClassification =>
@@ -576,6 +588,20 @@ export default function AudienceOverlapTab({ platform, dateRange, customStart, c
                 avgFrequencyBurden: crossCampaign?.frequency ?? null,
                 currency,
                 note: "DV360 audience overlap between segments is not exposed by any API; only inventory + cross-campaign frequency burden are real.",
+              },
+            } : {}),
+            ...(showGads ? {
+              googleAds: {
+                audienceCount: gadsAudiences.length,
+                openCount: gadsAudiences.filter((a) => a.membershipStatus === "OPEN").length,
+                note: "Google Ads audience overlap is not exposed by the API.",
+              },
+            } : {}),
+            ...(showSnap ? {
+              snapchat: {
+                segmentCount: snapSegments.length,
+                activeCount: snapSegments.filter((s) => s.status === "ACTIVE").length,
+                note: "Snapchat audience overlap is not exposed by the API.",
               },
             } : {}),
           }}
@@ -1092,7 +1118,234 @@ export default function AudienceOverlapTab({ platform, dateRange, customStart, c
         </>
       )}
 
-      {(showMeta || showDV360) && (
+      {/* ── Google Ads Audience Inventory ────────────────────────────── */}
+      {showGads && platform === "both" && (
+        <div className="flex items-center gap-3 pt-4 pb-1 border-b border-gray-200">
+          <h2 className="text-xl font-bold text-gray-900">Google Ads</h2>
+          <span className="text-xs text-gray-400 font-medium">Remarketing &amp; Audience Lists</span>
+        </div>
+      )}
+
+      {showGads && (
+        <>
+          {gadsAudLoading && gadsAudiences.length === 0 && (
+            <div className="text-sm text-gray-500 flex items-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin" /> Loading Google Ads audiences…
+            </div>
+          )}
+
+          {gadsAudError && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">{gadsAudError}</div>
+          )}
+
+          {gadsAudiences.length > 0 && (
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="bg-white rounded-lg border border-gray-200 p-5 shadow-sm">
+                <div className="text-sm text-gray-600">Total Audiences</div>
+                <div className="text-3xl font-bold text-gray-900 mt-1">{gadsAudiences.length}</div>
+                <div className="text-xs text-gray-500 mt-1">Remarketing &amp; audience lists</div>
+              </div>
+              <div className="bg-white rounded-lg border border-gray-200 p-5 shadow-sm">
+                <div className="text-sm text-gray-600">Open (Active)</div>
+                <div className="text-3xl font-bold text-green-600 mt-1">{gadsAudiences.filter((a) => a.membershipStatus === "OPEN").length}</div>
+                <div className="text-xs text-gray-500 mt-1">Actively collecting members</div>
+              </div>
+              <div className="bg-white rounded-lg border border-gray-200 p-5 shadow-sm">
+                <div className="text-sm text-gray-600">Closed</div>
+                <div className="text-3xl font-bold text-gray-400 mt-1">{gadsAudiences.filter((a) => a.membershipStatus === "CLOSED").length}</div>
+                <div className="text-xs text-gray-500 mt-1">No longer adding members</div>
+              </div>
+              <div className="bg-white rounded-lg border border-gray-200 p-5 shadow-sm">
+                <div className="text-sm text-gray-600">Avg Membership</div>
+                <div className="text-3xl font-bold text-blue-600 mt-1">
+                  {gadsAudiences.length > 0
+                    ? `${Math.round(gadsAudiences.reduce((s, a) => s + a.membershipLifeSpanDays, 0) / gadsAudiences.length)}d`
+                    : "—"}
+                </div>
+                <div className="text-xs text-gray-500 mt-1">Average retention window</div>
+              </div>
+            </div>
+          )}
+
+          {gadsAudiences.length > 0 && (
+            <div className="bg-white rounded-lg border border-gray-200 shadow-sm">
+              <div className="p-6 border-b border-gray-200">
+                <h2 className="text-lg font-bold text-gray-900">Google Ads Audience Inventory</h2>
+                <p className="text-sm text-gray-600 mt-1">Remarketing lists, customer match, and similar audiences</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-20 shadow-sm">
+                    <tr>
+                      <SortTh col="name" sort={gadsAudSort} onToggle={gadsAudToggle} className="px-6 py-3">Audience Name</SortTh>
+                      <SortTh col="type" sort={gadsAudSort} onToggle={gadsAudToggle} className="px-6 py-3">Type</SortTh>
+                      <SortTh col="membershipStatus" sort={gadsAudSort} onToggle={gadsAudToggle} className="px-6 py-3">Status</SortTh>
+                      <SortTh col="sizeForDisplay" sort={gadsAudSort} onToggle={gadsAudToggle} className="px-6 py-3" align="right">Size (Display)</SortTh>
+                      <SortTh col="sizeForSearch" sort={gadsAudSort} onToggle={gadsAudToggle} className="px-6 py-3" align="right">Size (Search)</SortTh>
+                      <SortTh col="membershipLifeSpanDays" sort={gadsAudSort} onToggle={gadsAudToggle} className="px-6 py-3" align="right">Membership</SortTh>
+                      <th className="px-6 py-3 text-left font-semibold text-gray-700">Description</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedGadsAud.map((a) => (
+                      <tr key={a.id} className="border-b border-gray-100 hover:bg-gray-50">
+                        <td className="px-6 py-3 font-medium text-gray-900 max-w-[250px] truncate">{a.name}</td>
+                        <td className="px-6 py-3">
+                          <span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                            a.type.includes("REMARKETING") ? "bg-blue-100 text-blue-700"
+                            : a.type.includes("CRM") || a.type.includes("CUSTOMER") ? "bg-green-100 text-green-700"
+                            : a.type.includes("SIMILAR") ? "bg-purple-100 text-purple-700"
+                            : "bg-gray-100 text-gray-700"
+                          }`}>{a.type.replace(/_/g, " ")}</span>
+                        </td>
+                        <td className="px-6 py-3">
+                          <span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                            a.membershipStatus === "OPEN" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"
+                          }`}>{a.membershipStatus}</span>
+                        </td>
+                        <td className="px-6 py-3 text-right text-gray-900 font-medium">{a.sizeForDisplay > 0 ? fmtSize(a.sizeForDisplay) : "—"}</td>
+                        <td className="px-6 py-3 text-right text-gray-700">{a.sizeForSearch > 0 ? fmtSize(a.sizeForSearch) : "—"}</td>
+                        <td className="px-6 py-3 text-right text-gray-700">{a.membershipLifeSpanDays > 0 ? `${a.membershipLifeSpanDays}d` : "—"}</td>
+                        <td className="px-6 py-3 text-gray-500 text-xs max-w-[200px] truncate">{a.description || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-6">
+            <div className="flex items-start gap-3">
+              <Info className="w-5 h-5 mt-0.5 shrink-0 text-blue-500" />
+              <div className="space-y-2">
+                <h2 className="text-base font-bold text-gray-900">Audience overlap isn&apos;t available via the Google Ads API</h2>
+                <p className="text-sm text-gray-600">
+                  Google Ads does not expose audience overlap data through its API. To see how your remarketing
+                  lists overlap, check directly in Google Ads:
+                  <span className="font-medium text-gray-800"> Tools &amp; Settings → Audience Manager → Audience Insights</span>.
+                </p>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* ── Snapchat Audience Segments ──────────────────────────────── */}
+      {showSnap && platform === "both" && (
+        <div className="flex items-center gap-3 pt-4 pb-1 border-b border-gray-200">
+          <h2 className="text-xl font-bold text-gray-900">Snapchat</h2>
+          <span className="text-xs text-gray-400 font-medium">Audience Segments</span>
+        </div>
+      )}
+
+      {showSnap && (
+        <>
+          {snapSegLoading && snapSegments.length === 0 && (
+            <div className="text-sm text-gray-500 flex items-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin" /> Loading Snapchat segments…
+            </div>
+          )}
+
+          {snapSegError && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">{snapSegError}</div>
+          )}
+
+          {snapSegments.length > 0 && (
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="bg-white rounded-lg border border-gray-200 p-5 shadow-sm">
+                <div className="text-sm text-gray-600">Total Segments</div>
+                <div className="text-3xl font-bold text-gray-900 mt-1">{snapSegments.length}</div>
+                <div className="text-xs text-gray-500 mt-1">SAM audience segments</div>
+              </div>
+              <div className="bg-white rounded-lg border border-gray-200 p-5 shadow-sm">
+                <div className="text-sm text-gray-600">Active</div>
+                <div className="text-3xl font-bold text-green-600 mt-1">{snapSegments.filter((s) => s.status === "ACTIVE").length}</div>
+                <div className="text-xs text-gray-500 mt-1">Currently targetable</div>
+              </div>
+              <div className="bg-white rounded-lg border border-gray-200 p-5 shadow-sm">
+                <div className="text-sm text-gray-600">Pixel / App</div>
+                <div className="text-3xl font-bold text-purple-600 mt-1">
+                  {snapSegments.filter((s) => s.sourceType === "PIXEL" || s.sourceType === "APP" || s.sourceType === "FIRST_PARTY").length}
+                </div>
+                <div className="text-xs text-gray-500 mt-1">First-party data sources</div>
+              </div>
+              <div className="bg-white rounded-lg border border-gray-200 p-5 shadow-sm">
+                <div className="text-sm text-gray-600">Total Users</div>
+                <div className="text-3xl font-bold text-blue-600 mt-1">
+                  {fmtSize(snapSegments.reduce((s, seg) => s + seg.approximateNumberUsers, 0))}
+                </div>
+                <div className="text-xs text-gray-500 mt-1">Approximate combined size</div>
+              </div>
+            </div>
+          )}
+
+          {snapSegments.length > 0 && (
+            <div className="bg-white rounded-lg border border-gray-200 shadow-sm">
+              <div className="p-6 border-b border-gray-200">
+                <h2 className="text-lg font-bold text-gray-900">Snapchat Audience Segments</h2>
+                <p className="text-sm text-gray-600 mt-1">SAM segments — pixel, app, customer list, and lookalike audiences</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-20 shadow-sm">
+                    <tr>
+                      <SortTh col="name" sort={snapSegSort} onToggle={snapSegToggle} className="px-6 py-3">Segment Name</SortTh>
+                      <SortTh col="type" sort={snapSegSort} onToggle={snapSegToggle} className="px-6 py-3">Type</SortTh>
+                      <SortTh col="sourceType" sort={snapSegSort} onToggle={snapSegToggle} className="px-6 py-3">Source</SortTh>
+                      <SortTh col="status" sort={snapSegSort} onToggle={snapSegToggle} className="px-6 py-3">Status</SortTh>
+                      <SortTh col="approximateNumberUsers" sort={snapSegSort} onToggle={snapSegToggle} className="px-6 py-3" align="right">Approx. Users</SortTh>
+                      <SortTh col="retentionInDays" sort={snapSegSort} onToggle={snapSegToggle} className="px-6 py-3" align="right">Retention</SortTh>
+                      <th className="px-6 py-3 text-left font-semibold text-gray-700">Description</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedSnapSeg.map((s) => (
+                      <tr key={s.id} className="border-b border-gray-100 hover:bg-gray-50">
+                        <td className="px-6 py-3 font-medium text-gray-900 max-w-[250px] truncate">{s.name}</td>
+                        <td className="px-6 py-3">
+                          <span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                            s.type === "CUSTOMER_LIST" ? "bg-green-100 text-green-700"
+                            : s.type === "LOOKALIKE" ? "bg-purple-100 text-purple-700"
+                            : s.type === "PIXEL" || s.type === "ENGAGEMENT" ? "bg-blue-100 text-blue-700"
+                            : "bg-gray-100 text-gray-700"
+                          }`}>{s.type.replace(/_/g, " ")}</span>
+                        </td>
+                        <td className="px-6 py-3 text-gray-700 text-xs">{s.sourceType.replace(/_/g, " ")}</td>
+                        <td className="px-6 py-3">
+                          <span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                            s.status === "ACTIVE" ? "bg-green-100 text-green-700"
+                            : s.status === "PAUSED" ? "bg-yellow-100 text-yellow-700"
+                            : "bg-gray-100 text-gray-500"
+                          }`}>{s.status}</span>
+                        </td>
+                        <td className="px-6 py-3 text-right text-gray-900 font-medium">{s.approximateNumberUsers > 0 ? fmtSize(s.approximateNumberUsers) : "—"}</td>
+                        <td className="px-6 py-3 text-right text-gray-700">{s.retentionInDays > 0 ? `${s.retentionInDays}d` : "—"}</td>
+                        <td className="px-6 py-3 text-gray-500 text-xs max-w-[200px] truncate">{s.description || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-6">
+            <div className="flex items-start gap-3">
+              <Info className="w-5 h-5 mt-0.5 shrink-0 text-blue-500" />
+              <div className="space-y-2">
+                <h2 className="text-base font-bold text-gray-900">Audience overlap isn&apos;t available via the Snapchat API</h2>
+                <p className="text-sm text-gray-600">
+                  Snapchat does not expose audience overlap data through its Marketing API. Segment sizes shown
+                  are approximate values from Snapchat&apos;s Audience Manager.
+                </p>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {(showMeta || showDV360 || showGads || showSnap) && (
         <TabSummaryFooter
           lines={(() => {
             // Chart-derived insight lines (always shown when data exists).
@@ -1148,6 +1401,21 @@ export default function AudienceOverlapTab({ platform, dateRange, customStart, c
               }
             }
 
+            if (showGads && gadsAudiences.length > 0) {
+              const openCount = gadsAudiences.filter((a) => a.membershipStatus === "OPEN").length;
+              chartLines.push(
+                `Google Ads: ${gadsAudiences.length} audience lists (${openCount} open). Overlap isn't exposed by the Google Ads API.`
+              );
+            }
+
+            if (showSnap && snapSegments.length > 0) {
+              const activeCount = snapSegments.filter((s) => s.status === "ACTIVE").length;
+              const totalUsers = snapSegments.reduce((s, seg) => s + seg.approximateNumberUsers, 0);
+              chartLines.push(
+                `Snapchat: ${snapSegments.length} segments (${activeCount} active, ~${fmtSize(totalUsers)} combined users). Overlap isn't exposed by the Snapchat API.`
+              );
+            }
+
             return chartLines.length > 0
               ? chartLines
               : ["No reach/frequency data available for the trailing 12 months."];
@@ -1162,6 +1430,15 @@ export default function AudienceOverlapTab({ platform, dateRange, customStart, c
               crossCampaignUniqueReach: crossCampaign?.reach ?? null,
               avgFrequencyBurden: crossCampaign?.frequency ?? null,
               currency,
+            } } : {}),
+            ...(showGads && gadsAudiences.length > 0 ? { googleAds: {
+              audienceCount: gadsAudiences.length,
+              openCount: gadsAudiences.filter((a) => a.membershipStatus === "OPEN").length,
+            } } : {}),
+            ...(showSnap && snapSegments.length > 0 ? { snapchat: {
+              segmentCount: snapSegments.length,
+              activeCount: snapSegments.filter((s) => s.status === "ACTIVE").length,
+              totalUsers: snapSegments.reduce((s, seg) => s + seg.approximateNumberUsers, 0),
             } } : {}),
           }}
           platform={platform}
