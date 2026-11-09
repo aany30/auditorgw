@@ -23,11 +23,13 @@ import AIRecommendationButton from "@/components/shared/AIRecommendationButton";
 import type { ApplyAction } from "@/lib/apply/types";
 import type { ApplyContext } from "@/lib/apply/apply-context";
 import {
-  classifyAdSet,
+  classifyAdSet, classifyByObjectiveAndName,
   AUDIENCE_COLORS, STAGE_COLORS, INTENT_COLORS, TYPE_COLORS,
   type AudienceClassification, type FunnelStage, type IntentBucket, type NewVsExisting,
   type CustomAudienceDetail,
 } from "@/lib/audience-classifier";
+import { useCampaigns } from "@/hooks/useCampaigns";
+import type { CampaignData } from "@/types";
 
 // ─── Per-row classification helper ───────────────────────────────────────────
 // All four sub-tabs derive their dimensions from the same classifyAdSet() call,
@@ -37,9 +39,10 @@ type AudienceType = NewVsExisting;
 
 function buildAdSetApplyContext(a: AdSetRow, currency: string): ApplyContext {
   const eff = (a.effectiveStatus || a.status || "").toUpperCase();
+  const plat = (a as any)._nonMetaPlatform || "meta";
   return {
-    platform: "meta",
-    entityType: "adset",
+    platform: plat as "meta" | "dv360" | "google_ads" | "snapchat",
+    entityType: plat === "meta" ? "adset" : "campaign",
     entityId: a.id,
     entityName: a.name,
     currentBudget: a.dailyBudget,
@@ -53,9 +56,11 @@ function buildAdSetApplyContext(a: AdSetRow, currency: string): ApplyContext {
 function buildAdSetAuditContext(a: AdSetRow, cls: AudienceClassification, currency: string) {
   const roas = a.spend > 0 ? a.conversionValue / a.spend : 0;
   const cpa = a.conversions > 0 ? a.spend / a.conversions : 0;
+  const plat = (a as any)._nonMetaPlatform || "meta";
   return {
     module: "Audience Performance",
     siblingMetrics: {
+      platform: plat,
       adSetName: a.name,
       campaignName: a.campaignName || "—",
       audienceType: cls.cls,
@@ -86,16 +91,19 @@ function adSetRecoStatus(a: AdSetRow): "bad" | "warn" | "moderate" {
 
 let _applyIdSeq = 0;
 function buildAdSetApplyAction(a: AdSetRow, currency: string): ApplyAction | null {
+  const plat = ((a as any)._nonMetaPlatform || "meta") as string;
+  // Spotify is read-only — no Apply actions
+  if (plat === "spotify") return null;
   const eff = (a.effectiveStatus || a.status || "").toUpperCase();
   const roas = a.spend > 0 ? a.conversionValue / a.spend : 0;
+  const entityType = plat === "meta" ? "adset" : "campaign";
 
-  // Zero conversions + meaningful spend → suggest pause
   if (a.conversions === 0 && a.spend > 500 && eff === "ACTIVE") {
     return {
       kind: "set_status",
       id: `aud-perf-pause-${a.id}-${++_applyIdSeq}`,
-      platform: "meta",
-      entityType: "adset",
+      platform: plat as any,
+      entityType,
       entityId: a.id,
       entityName: a.name,
       reason: `Zero conversions with ${formatMoney(a.spend, currency, 0)} spend — pause to stop waste`,
@@ -104,13 +112,12 @@ function buildAdSetApplyAction(a: AdSetRow, currency: string): ApplyAction | nul
     };
   }
 
-  // Paused adset with decent historical ROAS → suggest resume
   if (eff === "PAUSED" && roas >= 2) {
     return {
       kind: "set_status",
       id: `aud-perf-resume-${a.id}-${++_applyIdSeq}`,
-      platform: "meta",
-      entityType: "adset",
+      platform: plat as any,
+      entityType,
       entityId: a.id,
       entityName: a.name,
       reason: `Paused but ROAS ${roas.toFixed(1)}× — resume to recapture performance`,
@@ -119,15 +126,14 @@ function buildAdSetApplyAction(a: AdSetRow, currency: string): ApplyAction | nul
     };
   }
 
-  // High ROAS + has daily budget → suggest +25% budget
   if (roas >= 3 && a.dailyBudget && a.dailyBudget > 0 && eff === "ACTIVE") {
     const fromMicros = Math.round(a.dailyBudget * 100);
     const toMicros = Math.round(fromMicros * 1.25);
     return {
       kind: "set_budget",
       id: `aud-perf-budget-${a.id}-${++_applyIdSeq}`,
-      platform: "meta",
-      entityType: "adset",
+      platform: plat as any,
+      entityType,
       entityId: a.id,
       entityName: a.name,
       reason: `ROAS ${roas.toFixed(1)}× — scale budget +25% to capture more volume`,
@@ -142,7 +148,33 @@ function buildAdSetApplyAction(a: AdSetRow, currency: string): ApplyAction | nul
 }
 
 function classify(a: AdSetRow, audienceMap: Map<string, CustomAudienceDetail>): AudienceClassification {
+  if ((a as any)._nonMetaPlatform) {
+    return classifyByObjectiveAndName((a as any).campaignObjective, a.name);
+  }
   return classifyAdSet(a.targeting, audienceMap, a.campaignObjective, a.name);
+}
+
+/** Derive AdSetRow-shaped objects from DV360/Google Ads/Snapchat/Spotify
+ *  campaigns. For these platforms we don't have ad-set-level audience targeting,
+ *  so each campaign becomes one "row" classified by its objective + name. */
+function campaignsToAdSetRows(campaigns: CampaignData[]): AdSetRow[] {
+  return campaigns.map((c) => ({
+    id: c.id,
+    name: c.name,
+    campaignName: c.objective || c.platform,
+    spend: c.spend ?? 0,
+    impressions: c.impressions ?? 0,
+    clicks: c.clicks ?? 0,
+    reach: c.reach ?? 0,
+    frequency: c.frequency ?? 0,
+    conversions: c.conversions ?? 0,
+    conversionValue: c.conversionValue ?? 0,
+    campaignObjective: c.objective,
+    status: c.status,
+    effectiveStatus: c.status,
+    dailyBudget: c.dailyBudget,
+    _nonMetaPlatform: c.platform,
+  } as AdSetRow & { _nonMetaPlatform: string }));
 }
 
 function audienceBadge(cls: AudienceClassification) {
@@ -374,7 +406,7 @@ function DrillDownRow({ adSets, currency, colCount, audienceMap }: { adSets: AdS
                           metric="roas"
                           value={roas.toFixed(2)}
                           status={recoStatus}
-                          platform="meta"
+                          platform={((a as any)._nonMetaPlatform || "meta") as any}
                           auditContext={buildAdSetAuditContext(a, cls, currency)}
                           compact
                           applyContext={a.dailyBudget || a.status ? buildAdSetApplyContext(a, currency) : undefined}
@@ -641,7 +673,7 @@ function IntentTab({ adsets, audienceMap, loading, currency }: { adsets: AdSetRo
                         metric="roas"
                         value={roas.toFixed(2)}
                         status={recoStatus}
-                        platform="meta"
+                        platform={((a as any)._nonMetaPlatform || "meta") as any}
                         auditContext={buildAdSetAuditContext(a, cls, currency)}
                         compact
                         applyContext={a.dailyBudget || a.status ? buildAdSetApplyContext(a, currency) : undefined}
@@ -1028,10 +1060,16 @@ function FunnelStageTab({ adsets, audienceMap, loading, currency }: { adsets: Ad
   );
 }
 
-function EmptyState() {
+function EmptyState({ platform }: { platform?: string }) {
+  const hint = platform === "meta" ? "Connect a Meta account"
+    : platform === "dv360" ? "Connect a DV360 account"
+    : platform === "google_ads" ? "Connect a Google Ads account"
+    : platform === "snapchat" ? "Connect a Snapchat account"
+    : platform === "spotify" ? "Connect a Spotify account"
+    : "Connect an ad account";
   return (
     <div className="bg-white border-2 border-dashed border-gray-300 rounded-xl p-10 text-center text-sm text-gray-500">
-      No ad set data found. Connect a Meta account or widen the date range.
+      No campaign data found. {hint} or widen the date range.
     </div>
   );
 }
@@ -1056,29 +1094,39 @@ const SUB_TABS = [
 
 export default function AudiencePerformanceTab({ platform, dateRange, customStart, customEnd }: Props) {
   const [active, setActive] = useState("by-audience");
-  const { adsets, audienceMap, loading, error, currency, startDate, endDate } = useAdSetInsights(platform, dateRange, customStart, customEnd);
 
-  // Audience Performance is built on Meta ad-set audience insights (reach,
-  // frequency, audience-type grouping). The Google Ads API doesn't expose an
-  // equivalent ad-set audience breakdown, so we don't fabricate it.
-  if (platform === "google_ads") {
-    return (
-      <div className="space-y-6">
-        <div className="flex items-center gap-3">
-          <BarChart2 className="w-8 h-8 text-blue-600" />
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">Audience Performance</h1>
-            <p className="text-gray-600 mt-1">Spend, ROAS, CPA and funnel breakdown by audience type.</p>
-          </div>
-        </div>
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-800">
-          Audience-type performance (with reach and frequency) isn&apos;t available via the Google Ads API. Use Meta or DV360 for this audit, or see Key Metrics / Dashboard for Google Ads campaign performance.
-        </div>
-      </div>
-    );
-  }
+  // Meta: use dedicated ad-set-level insights (rich targeting data)
+  const { adsets: metaAdsets, audienceMap, loading: metaLoading, error: metaError, currency: metaCurrency, startDate, endDate } = useAdSetInsights(platform, dateRange, customStart, customEnd);
 
-  if (loading && adsets.length === 0) return <LoadingState message="Loading audience data…" />;
+  // DV360 / Google Ads / Snapchat / Spotify: derive from campaign data
+  const needsCampaigns = platform !== "meta";
+  const { campaigns, loading: campsLoading, error: campsError,
+    dv360Currency, googleAdsCurrency, snapchatCurrency, spotifyCurrency,
+  } = useCampaigns(needsCampaigns ? platform : "meta", dateRange, customStart, customEnd);
+
+  const nonMetaAdsets = useMemo(() => {
+    if (!needsCampaigns) return [];
+    const relevant = campaigns.filter(c => c.platform !== "meta");
+    return campaignsToAdSetRows(relevant);
+  }, [campaigns, needsCampaigns]);
+
+  const allAdsets = useMemo(() => {
+    if (platform === "meta") return metaAdsets;
+    if (platform === "both") return [...metaAdsets, ...nonMetaAdsets];
+    return nonMetaAdsets;
+  }, [platform, metaAdsets, nonMetaAdsets]);
+
+  const loading = platform === "meta" ? metaLoading : (platform === "both" ? metaLoading || campsLoading : campsLoading);
+  const error = metaError || campsError || null;
+  const currency = platform === "meta" ? metaCurrency
+    : platform === "dv360" ? (dv360Currency || "USD")
+    : platform === "google_ads" ? (googleAdsCurrency || "USD")
+    : platform === "snapchat" ? (snapchatCurrency || "USD")
+    : platform === "spotify" ? (spotifyCurrency || "USD")
+    : metaCurrency;
+
+  if (loading && allAdsets.length === 0) return <LoadingState message="Loading audience data…" />;
+  const isEmpty = !loading && allAdsets.length === 0;
 
   return (
     <div className="space-y-6">
@@ -1088,7 +1136,7 @@ export default function AudiencePerformanceTab({ platform, dateRange, customStar
           <div>
             <h1 className="text-3xl font-bold text-gray-900">Audience Performance</h1>
             <p className="text-gray-600 mt-1">
-              Spend, ROAS, CPA and funnel breakdown by audience type — grouped from ad-set name conventions.
+              Spend, ROAS, CPA and funnel breakdown by audience type — {platform === "meta" ? "grouped from ad-set targeting and name conventions" : "classified by campaign objective and naming conventions"}.
             </p>
           </div>
         </div>
@@ -1111,36 +1159,45 @@ export default function AudiencePerformanceTab({ platform, dateRange, customStar
         ))}
       </div>
 
-      {active === "by-audience" && (
-        <ByAudienceTab
-          adsets={adsets} audienceMap={audienceMap} loading={loading} currency={currency}
-          startDate={startDate} endDate={endDate}
-          platform={platform} dateRange={dateRange}
-        />
+      {isEmpty ? (
+        <EmptyState platform={platform === "both" ? undefined : platform} />
+      ) : (
+        <>
+          {active === "by-audience" && (
+            <ByAudienceTab
+              adsets={allAdsets} audienceMap={audienceMap} loading={loading} currency={currency}
+              startDate={startDate} endDate={endDate}
+              platform={platform} dateRange={dateRange}
+            />
+          )}
+          {active === "intent"    && <IntentTab    adsets={allAdsets} audienceMap={audienceMap} loading={loading} currency={currency} />}
+          {active === "new-exist" && <NewVsExistingTab adsets={allAdsets} audienceMap={audienceMap} loading={loading} currency={currency} />}
+          {active === "funnel"    && <FunnelStageTab adsets={allAdsets} audienceMap={audienceMap} loading={loading} currency={currency} />}
+        </>
       )}
-      {active === "intent"    && <IntentTab    adsets={adsets} audienceMap={audienceMap} loading={loading} currency={currency} />}
-      {active === "new-exist" && <NewVsExistingTab adsets={adsets} audienceMap={audienceMap} loading={loading} currency={currency} />}
-      {active === "funnel"    && <FunnelStageTab adsets={adsets} audienceMap={audienceMap} loading={loading} currency={currency} />}
 
       {active !== "by-audience" && (
         <p className="text-[11px] text-gray-400">
-          Classification reads Meta&apos;s actual targeting setup (interests, custom audiences, Advantage+ flags). Badges with a dotted border were inferred from the ad-set name because Meta didn&apos;t expose the targeting (typically Advantage+ Shopping).
+          {platform === "meta" || platform === "both"
+            ? "Meta classification reads actual targeting setup (interests, custom audiences, Advantage+ flags). Badges with a dotted border were inferred from the ad-set name."
+            : "Classification is inferred from campaign objective and naming conventions. Badges with a dotted border indicate name-based inference."
+          }
         </p>
       )}
 
       <TabSummaryFooter
         tabName="Audience Performance"
         lines={[
-          `${adsets.length} ad set${adsets.length !== 1 ? "s" : ""} loaded across all audience types.`,
-          `Total spend: ${adsets.reduce((s, a) => s + a.spend, 0).toLocaleString("en-US", { style: "currency", currency: currency || "USD", maximumFractionDigits: 0 })} · ${adsets.reduce((s, a) => s + a.conversions, 0).toLocaleString()} conversions in window.`,
-          `Average ROAS: ${adsets.length > 0 ? (adsets.reduce((s, a) => s + (a.spend > 0 ? a.conversionValue / a.spend : 0), 0) / adsets.length).toFixed(2) : "—"}×.`,
+          `${allAdsets.length} ${platform === "meta" ? "ad set" : "campaign"}${allAdsets.length !== 1 ? "s" : ""} loaded across all audience types.`,
+          `Total spend: ${allAdsets.reduce((s, a) => s + a.spend, 0).toLocaleString("en-US", { style: "currency", currency: currency || "USD", maximumFractionDigits: 0 })} · ${allAdsets.reduce((s, a) => s + a.conversions, 0).toLocaleString()} conversions in window.`,
+          `Average ROAS: ${allAdsets.length > 0 ? (allAdsets.reduce((s, a) => s + (a.spend > 0 ? a.conversionValue / a.spend : 0), 0) / allAdsets.length).toFixed(2) : "—"}×.`,
         ]}
         context={{
-          adSetCount: adsets.length,
-          totalSpend: adsets.reduce((s, a) => s + a.spend, 0),
+          adSetCount: allAdsets.length,
+          totalSpend: allAdsets.reduce((s, a) => s + a.spend, 0),
           startDate,
           endDate,
-          adSets: adsets.map(a => ({
+          adSets: allAdsets.map(a => ({
             name: a.name,
             spend: a.spend,
             impressions: a.impressions,

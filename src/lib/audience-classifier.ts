@@ -248,6 +248,60 @@ function buildClassification(
   };
 }
 
+// ─── Multi-platform classifier (DV360, Google Ads, Snapchat, Spotify) ───────
+// These platforms don't expose Meta-style targeting specs, so we classify using
+// campaign objective + entity name keywords.  The classifier is deliberately
+// conservative: it marks rows it can't place as "Unclassified" rather than
+// guessing, and always records source: "name-fallback".
+
+const OBJECTIVE_TO_CLASS: Record<string, AudienceClass> = {
+  // DV360 objectives (from friendlyGoal)
+  "Brand awareness":    "Broad",
+  "Conversions":        "Catalog/DPA",
+  "Offline action":     "Retargeting — Website",
+  "App installs":       "Retargeting — App",
+  // Google Ads channel types (from channelTypeToObjective)
+  "Search":             "Interest",
+  "Display":            "Broad",
+  "Shopping":           "Catalog/DPA",
+  "Video":              "Broad",
+  "Performance Max":    "ASC / Shopping",
+  "Demand Gen":         "Broad",
+  "App":                "Retargeting — App",
+  "Local":              "Broad",
+  "Smart":              "Broad",
+  // Snapchat
+  "AWARENESS":          "Broad",
+  "ENGAGEMENT":         "Interest",
+  "CONVERSIONS":        "Catalog/DPA",
+  "APP_INSTALLS":       "Retargeting — App",
+  "CATALOG_SALES":      "Catalog/DPA",
+  "TRAFFIC":            "Interest",
+  // Spotify
+  "awareness":          "Broad",
+  "consideration":      "Interest",
+  "conversions":        "Catalog/DPA",
+};
+
+/** Classify a DV360/Google Ads/Snapchat/Spotify entity from its campaign
+ *  objective and its own name. No API-sourced targeting data is available. */
+export function classifyByObjectiveAndName(
+  objective: string | undefined,
+  entityName: string,
+): AudienceClassification {
+  // Try name-based first — it's more specific
+  const fromName = classifyByName(entityName);
+  if (fromName) return buildClassification(fromName, "name-fallback");
+
+  // Fall back to objective mapping
+  if (objective) {
+    const cls = OBJECTIVE_TO_CLASS[objective];
+    if (cls) return buildClassification(cls, "name-fallback", `Inferred from campaign objective: ${objective}`);
+  }
+
+  return buildClassification("Unclassified", "name-fallback");
+}
+
 /** Convenience: build the audienceMap once per render from an audiences array. */
 export function buildAudienceMap(
   audiences: CustomAudienceDetail[] | undefined

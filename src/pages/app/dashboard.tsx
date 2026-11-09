@@ -143,7 +143,7 @@ const NAV: NavGroup[] = [
     Icon: Monitor,
     children: [
       { id: "account-structure",      label: "Account Structure",      Icon: Layers,   platforms: ["meta", "dv360", "google_ads", "snapchat", "spotify"] },
-      { id: "aud-performance",        label: "Audience Performance",   Icon: BarChart2, platforms: ["meta"] },
+      { id: "aud-performance",        label: "Audience Performance",   Icon: BarChart2, platforms: ["meta", "dv360", "google_ads", "snapchat", "spotify"] },
       { id: "aud-saturation",         label: "Saturation",             Icon: Zap,      platforms: ["meta", "dv360"] },
       { id: "conversion-monitoring",  label: "Conversion Monitoring",  Icon: LineChart, platforms: ["meta", "dv360", "google_ads", "snapchat", "spotify"] },
       { id: "create-campaign",        label: "Create Campaign",        Icon: PlusCircle },
