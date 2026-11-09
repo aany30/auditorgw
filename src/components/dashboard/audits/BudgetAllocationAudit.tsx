@@ -2066,7 +2066,7 @@ function DV360BudgetSection({ campaigns, currency, dateRange, customStart, custo
 // Google Ads budget section — campaign-level spend/budget from the Google Ads
 // API (synchronous, already on each campaign row). Drills into ad groups.
 // ─────────────────────────────────────────────────────────────────────────────
-function computeGadsTip(c: CampaignData, currency: string): Tip {
+function computeGadsTip(c: CampaignData, currency: string, win?: { startDate: string; endDate: string }): Tip {
   if (!isActive(c)) {
     return { kind: "paused", severity: "info", label: "Paused", detail: "Campaign is not currently delivering.", isSpike: false, sevRank: 1 };
   }
@@ -2083,10 +2083,37 @@ function computeGadsTip(c: CampaignData, currency: string): Tip {
       : "";
     return { kind: "noDelivery", severity: "high", label: "No delivery", detail: `Enabled but zero spend in the selected window.${agNote || " Check ad group status, budget, or ad approvals."}`, isSpike: false, sevRank: 3 };
   }
-  return { kind: "adSetLevel", severity: "info", label: "Delivering", detail: `Total: ${formatMoney(spend, currency, 0)} in window.`, isSpike: false, sevRank: 1 };
+
+  // Budget pacing analysis — compare actual spend against the configured budget.
+  const winDays = win ? Math.max(1, Math.round((new Date(win.endDate).getTime() - new Date(win.startDate).getTime()) / 86_400_000)) : 7;
+  const avgDaily = spend / winDays;
+
+  if (c.dailyBudget && c.dailyBudget > 0) {
+    if (avgDaily / c.dailyBudget > 1.10) {
+      const pct = ((avgDaily - c.dailyBudget) / c.dailyBudget) * 100;
+      return { kind: "overPacing", severity: "medium", label: "Over-pacing", detail: `~${formatMoney(avgDaily, currency, 0)}/day avg vs ${formatMoney(c.dailyBudget, currency, 0)}/day budget · +${Math.round(pct)}%. Google may spend up to 2× daily budget — monitor the trend.`, isSpike: false, sevRank: 2 };
+    }
+    if (avgDaily < c.dailyBudget * 0.70) {
+      const pct = (avgDaily / c.dailyBudget) * 100;
+      return { kind: "underPacing", severity: "medium", label: "Under-pacing", detail: `~${formatMoney(avgDaily, currency, 0)}/day avg vs ${formatMoney(c.dailyBudget, currency, 0)}/day budget · ${Math.round(pct)}% utilisation. Consider lowering budget, broadening targeting, or raising bids.`, isSpike: false, sevRank: 2 };
+    }
+    const pct = (avgDaily / c.dailyBudget) * 100;
+    return { kind: "healthy", severity: "good", label: "On pace", detail: `Spending ~${formatMoney(avgDaily, currency, 0)}/day · ${Math.round(pct)}% of the ${formatMoney(c.dailyBudget, currency, 0)}/day budget.`, isSpike: false, sevRank: 0 };
+  }
+
+  if (c.lifetimeBudget && c.lifetimeBudget > 0) {
+    const spent = spend / c.lifetimeBudget;
+    if (spent > 0.95) {
+      return { kind: "overPacing", severity: "medium", label: "Near limit", detail: `${formatMoney(spend, currency, 0)} of ${formatMoney(c.lifetimeBudget, currency, 0)} lifetime budget spent (${Math.round(spent * 100)}%). Nearing exhaustion.`, isSpike: false, sevRank: 2 };
+    }
+    return { kind: "healthy", severity: "good", label: "On pace", detail: `${formatMoney(spend, currency, 0)} of ${formatMoney(c.lifetimeBudget, currency, 0)} lifetime budget spent (${Math.round(spent * 100)}%).`, isSpike: false, sevRank: 0 };
+  }
+
+  return { kind: "adSetLevel", severity: "info", label: "Delivering", detail: `Total: ${formatMoney(spend, currency, 0)} in window. No campaign-level budget set — budget managed at ad group level.`, isSpike: false, sevRank: 1 };
 }
 
-function GoogleAdsBudgetSection({ campaigns, currency }: { campaigns: CampaignData[]; currency: string }) {
+function GoogleAdsBudgetSection({ campaigns, currency, customStart, customEnd }: { campaigns: CampaignData[]; currency: string; customStart?: string; customEnd?: string }) {
+  const win = customStart && customEnd ? { startDate: customStart, endDate: customEnd } : undefined;
   const cur = (n: number) => formatMoney(n, currency, 0);
   const [statusFilter, setStatusFilter] = useState<"all" | "active">("all");
   const visible = useMemo(
@@ -2117,7 +2144,9 @@ function GoogleAdsBudgetSection({ campaigns, currency }: { campaigns: CampaignDa
   const rows = useMemo(
     () => visible.map((c) => {
       const spend = c.spend || 0;
-      const tip = computeGadsTip(c, currency);
+      const tip = computeGadsTip(c, currency, win);
+      const budgetMajor = c.dailyBudget ?? 0;
+      const avgDaily = win ? spend / Math.max(1, Math.round((new Date(win.endDate).getTime() - new Date(win.startDate).getTime()) / 86_400_000)) : spend / 7;
       return {
         c, name: c.name, status: c.status || "—",
         statusOrder: isActive(c) ? 0 : 1,
@@ -2125,9 +2154,10 @@ function GoogleAdsBudgetSection({ campaigns, currency }: { campaigns: CampaignDa
         budget: c.lifetimeBudget ?? c.dailyBudget ?? 0,
         budgetType: c.lifetimeBudget !== undefined ? "lifetime" : c.dailyBudget !== undefined ? "daily" : "none",
         spend, impressions: c.impressions || 0, clicks: c.clicks || 0, tip, tipSeverity: tip.sevRank,
+        recommendedBudget: recommendedBudgetMajor(tip.kind, budgetMajor, avgDaily),
       };
     }),
-    [visible, currency]
+    [visible, currency, win]
   );
 
   return (
@@ -2364,7 +2394,7 @@ export default function BudgetAllocationAudit({ campaigns, dateRange, customStar
               <h2 className="text-base font-bold text-gray-900">Google Ads — Budget Allocation</h2>
             </div>
           )}
-          <GoogleAdsBudgetSection campaigns={gadsCampaigns} currency={gadsCurrency} />
+          <GoogleAdsBudgetSection campaigns={gadsCampaigns} currency={gadsCurrency} customStart={customStart} customEnd={customEnd} />
         </section>
       )}
 
