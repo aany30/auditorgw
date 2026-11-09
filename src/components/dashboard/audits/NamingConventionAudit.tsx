@@ -14,6 +14,8 @@ export default function NamingConventionAudit({ campaigns }: AuditProps) {
   const {
     metaAccessToken,
     dv360ClientId, dv360ClientSecret, dv360RefreshToken, dv360AdvertiserId, dv360PartnerId,
+    googleAdsCustomerId, googleAdsLoginCustomerId,
+    snapchatClientId, snapchatClientSecret, snapchatRefreshToken, snapchatAdAccountId,
   } = useAuthStore();
   const convention = namingConventions.find((c) => c.id === activeConventionId);
 
@@ -47,8 +49,8 @@ export default function NamingConventionAudit({ campaigns }: AuditProps) {
     parentPlatform: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify",
     kind: "insertionOrder" | "lineItem" = "lineItem",
   ) => {
-    if (parentPlatform === "snapchat" || parentPlatform === "spotify") {
-      setChildStatus((s) => ({ ...s, [nodeId]: { error: "Snapchat rename not supported yet" } }));
+    if (parentPlatform === "spotify") {
+      setChildStatus((s) => ({ ...s, [nodeId]: { error: "Spotify is read-only" } }));
       return;
     }
     const newName = (childDraft[nodeId] ?? currentName).trim();
@@ -62,26 +64,47 @@ export default function NamingConventionAudit({ campaigns }: AuditProps) {
     }
     setChildStatus((s) => ({ ...s, [nodeId]: "loading" }));
     try {
-      const r = parentPlatform === "dv360"
-        ? await fetch("/api/naming/rename/dv360", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              clientId: dv360ClientId,
-              clientSecret: dv360ClientSecret,
-              refreshToken: dv360RefreshToken,
-              advertiserId: dv360AdvertiserId,
-              partnerId: dv360PartnerId || undefined,
-              entityId: nodeId,
-              newName,
-              kind,
-            }),
-          })
-        : await fetch("/api/naming/rename/meta", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ accessToken: metaAccessToken, nodeId, newName }),
-          });
+      let r: Response;
+      if (parentPlatform === "dv360") {
+        r = await fetch("/api/naming/rename/dv360", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            clientId: dv360ClientId, clientSecret: dv360ClientSecret,
+            refreshToken: dv360RefreshToken, advertiserId: dv360AdvertiserId,
+            partnerId: dv360PartnerId || undefined,
+            entityId: nodeId, newName, kind,
+          }),
+        });
+      } else if (parentPlatform === "google_ads") {
+        r = await fetch("/api/naming/rename/google-ads", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            customerId: googleAdsCustomerId,
+            loginCustomerId: googleAdsLoginCustomerId || undefined,
+            entityId: nodeId, newName,
+            kind: kind === "lineItem" ? "adGroup" : "campaign",
+          }),
+        });
+      } else if (parentPlatform === "snapchat") {
+        r = await fetch("/api/naming/rename/snapchat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            clientId: snapchatClientId, clientSecret: snapchatClientSecret,
+            refreshToken: snapchatRefreshToken, adAccountId: snapchatAdAccountId,
+            entityId: nodeId, newName,
+            kind: kind === "lineItem" ? "adSquad" : "campaign",
+          }),
+        });
+      } else {
+        r = await fetch("/api/naming/rename/meta", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ accessToken: metaAccessToken, nodeId, newName }),
+        });
+      }
       const data = await r.json();
       if (r.ok && data.success) {
         setChildStatus((s) => ({ ...s, [nodeId]: "success" }));
@@ -181,30 +204,49 @@ export default function NamingConventionAudit({ campaigns }: AuditProps) {
     }
     setRenameStatus((s) => ({ ...s, [key]: "loading" }));
     try {
-      const res = campaign.platform === "dv360"
-        ? await fetch("/api/naming/rename/dv360", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              clientId: dv360ClientId,
-              clientSecret: dv360ClientSecret,
-              refreshToken: dv360RefreshToken,
-              advertiserId: dv360AdvertiserId,
-              partnerId: dv360PartnerId || undefined,
-              entityId: campaign.id,
-              newName,
-              kind: "campaign",
-            }),
-          })
-        : await fetch("/api/naming/rename/meta", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              accessToken: metaAccessToken,
-              campaignId: campaign.id,
-              newName,
-            }),
-          });
+      let res: Response;
+      if (campaign.platform === "dv360") {
+        res = await fetch("/api/naming/rename/dv360", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            clientId: dv360ClientId, clientSecret: dv360ClientSecret,
+            refreshToken: dv360RefreshToken, advertiserId: dv360AdvertiserId,
+            partnerId: dv360PartnerId || undefined,
+            entityId: campaign.id, newName, kind: "campaign",
+          }),
+        });
+      } else if (campaign.platform === "google_ads") {
+        res = await fetch("/api/naming/rename/google-ads", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            customerId: googleAdsCustomerId,
+            loginCustomerId: googleAdsLoginCustomerId || undefined,
+            entityId: campaign.id, newName, kind: "campaign",
+          }),
+        });
+      } else if (campaign.platform === "snapchat") {
+        res = await fetch("/api/naming/rename/snapchat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            clientId: snapchatClientId, clientSecret: snapchatClientSecret,
+            refreshToken: snapchatRefreshToken, adAccountId: snapchatAdAccountId,
+            entityId: campaign.id, newName, kind: "campaign",
+          }),
+        });
+      } else {
+        res = await fetch("/api/naming/rename/meta", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            accessToken: metaAccessToken,
+            campaignId: campaign.id,
+            newName,
+          }),
+        });
+      }
       const data = await res.json();
       if (!res.ok || !data.success) {
         throw new Error(data?.error || `HTTP ${res.status}`);

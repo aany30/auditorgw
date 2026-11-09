@@ -116,6 +116,9 @@ export default function ChangeLogPanel() {
       if (inverse.platform === "meta") {
         if (auth.metaAccessToken) body.accessToken = auth.metaAccessToken;
         if (auth.metaBusinessId) body.businessId = auth.metaBusinessId;
+      } else if (inverse.platform === "google_ads") {
+        if (auth.googleAdsCustomerId) body.customerId = auth.googleAdsCustomerId;
+        if (auth.googleAdsLoginCustomerId) body.loginCustomerId = auth.googleAdsLoginCustomerId;
       } else if (inverse.platform === "snapchat") {
         if (auth.snapchatClientId) body.clientId = auth.snapchatClientId;
         if (auth.snapchatClientSecret) body.clientSecret = auth.snapchatClientSecret;
@@ -178,7 +181,7 @@ export default function ChangeLogPanel() {
         <div>
           <h2 className="text-xl font-semibold text-slate-900">Change Log</h2>
           <p className="mt-1 text-sm text-slate-600">
-            History of recommendations applied to Meta and DV360. Changes within 5 minutes can be undone.
+            History of recommendations applied across platforms. Changes within 5 minutes can be undone.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -258,10 +261,17 @@ export default function ChangeLogPanel() {
                       className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
                         entry.action.platform === "meta"
                           ? "bg-blue-100 text-blue-800"
+                          : entry.action.platform === "google_ads"
+                          ? "bg-red-100 text-red-800"
+                          : entry.action.platform === "snapchat"
+                          ? "bg-yellow-100 text-yellow-800"
                           : "bg-purple-100 text-purple-800"
                       }`}
                     >
-                      {entry.action.platform === "meta" ? "Meta" : "DV360"}
+                      {entry.action.platform === "meta" ? "Meta"
+                        : entry.action.platform === "google_ads" ? "Google Ads"
+                        : entry.action.platform === "snapchat" ? "Snapchat"
+                        : "DV360"}
                     </span>
                     <span className="text-xs text-slate-500">
                       {relativeTime(entry.appliedAt, now)}
