@@ -2249,8 +2249,9 @@ function GoogleAdsCampaignDrill({ campaign, currency }: { campaign: CampaignData
 // ─────────────────────────────────────────────────────────────────────────────
 // Snapchat section — minimal campaign-level budget table reusing SpendTable
 // ─────────────────────────────────────────────────────────────────────────────
-function SnapchatBudgetSection({ campaigns, currency, platformName = "Snapchat", platformApi = "Snapchat Marketing API" }: { campaigns: CampaignData[]; currency: string; platformName?: string; platformApi?: string }) {
+function SnapchatBudgetSection({ campaigns, currency, platformName = "Snapchat", platformApi = "Snapchat Marketing API", platformKey = "snapchat", customStart, customEnd }: { campaigns: CampaignData[]; currency: string; platformName?: string; platformApi?: string; platformKey?: string; customStart?: string; customEnd?: string }) {
   const cur = (n: number) => formatMoney(n, currency, 0);
+  const win = customStart && customEnd ? { startDate: customStart, endDate: customEnd } : undefined;
   const [statusFilter, setStatusFilter] = useState<"all" | "active">("all");
   const visible = useMemo(
     () => (statusFilter === "active" ? campaigns.filter(isActive) : campaigns),
@@ -2271,7 +2272,9 @@ function SnapchatBudgetSection({ campaigns, currency, platformName = "Snapchat",
   const rows = useMemo(
     () => visible.map((c) => {
       const spend = c.spend || 0;
-      const tip = computeGadsTip(c, currency); // same shape — delivering vs paused vs no delivery
+      const tip = computeGadsTip(c, currency, win);
+      const budgetMajor = c.dailyBudget ?? 0;
+      const avgDaily = win ? spend / Math.max(1, Math.round((new Date(win.endDate).getTime() - new Date(win.startDate).getTime()) / 86_400_000)) : spend / 7;
       return {
         c, name: c.name, status: c.status || "—",
         statusOrder: isActive(c) ? 0 : 1,
@@ -2279,9 +2282,10 @@ function SnapchatBudgetSection({ campaigns, currency, platformName = "Snapchat",
         budget: c.lifetimeBudget ?? c.dailyBudget ?? 0,
         budgetType: c.lifetimeBudget !== undefined ? "lifetime" : c.dailyBudget !== undefined ? "daily" : "none",
         spend, impressions: c.impressions || 0, clicks: c.clicks || 0, tip, tipSeverity: tip.sevRank,
+        recommendedBudget: recommendedBudgetMajor(tip.kind, budgetMajor, avgDaily),
       };
     }),
-    [visible, currency]
+    [visible, currency, win]
   );
 
   return (
@@ -2315,7 +2319,7 @@ function SnapchatBudgetSection({ campaigns, currency, platformName = "Snapchat",
         totalClicks={totals.clicks}
         totalCount={visible.length}
         isDemo={false}
-        platform="snapchat"
+        platform={platformKey}
         subtitle={`Real per-campaign delivery from the ${platformApi} for the selected window.`}
       />
 
@@ -2408,7 +2412,7 @@ export default function BudgetAllocationAudit({ campaigns, dateRange, customStar
               <h2 className="text-base font-bold text-gray-900">Snapchat — Budget Allocation</h2>
             </div>
           )}
-          <SnapchatBudgetSection campaigns={snapCampaigns} currency={snapCurrency} />
+          <SnapchatBudgetSection campaigns={snapCampaigns} currency={snapCurrency} customStart={customStart} customEnd={customEnd} />
         </section>
       )}
 
@@ -2422,7 +2426,7 @@ export default function BudgetAllocationAudit({ campaigns, dateRange, customStar
               <h2 className="text-base font-bold text-gray-900">Spotify — Budget Allocation</h2>
             </div>
           )}
-          <SnapchatBudgetSection campaigns={spotifyCampaigns} currency={spotifyCurrency} platformName="Spotify" platformApi="Spotify Ads API" />
+          <SnapchatBudgetSection campaigns={spotifyCampaigns} currency={spotifyCurrency} platformName="Spotify" platformApi="Spotify Ads API" platformKey="spotify" customStart={customStart} customEnd={customEnd} />
         </section>
       )}
     </div>
