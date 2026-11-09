@@ -51,7 +51,6 @@ export interface GAdsCampaign {
   costMicros?: number;
   conversions?: number;
   conversionsValue?: number;
-  videoViews?: number;
   allConversions?: number;
 }
 
@@ -429,7 +428,6 @@ export class GoogleAdsApiClient {
         conversions: string;
         conversionsValue: string;
         allConversions: string;
-        videoViews: string;
       };
     }>(`
       SELECT
@@ -439,8 +437,7 @@ export class GoogleAdsApiClient {
         campaign_budget.amount_micros,
         metrics.impressions, metrics.clicks, metrics.cost_micros,
         metrics.conversions, metrics.conversions_value,
-        metrics.all_conversions,
-        metrics.video_views
+        metrics.all_conversions
       FROM campaign
       WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
         AND campaign.status != 'REMOVED'
@@ -459,7 +456,6 @@ export class GoogleAdsApiClient {
       conversions: Number(r.metrics.conversions) || 0,
       conversionsValue: Number(r.metrics.conversionsValue) || 0,
       allConversions: Number(r.metrics.allConversions) || 0,
-      videoViews: Number(r.metrics.videoViews) || 0,
     }));
   }
 
