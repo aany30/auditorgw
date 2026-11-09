@@ -47,6 +47,7 @@ export interface SnapchatStatsRow {
 }
 
 const tokenCache = new Map<string, { accessToken: string; expiresAt: number }>();
+const tokenInflight = new Map<string, Promise<string>>();
 
 /** Snapchat stats endpoint expects RFC3339 datetime strings with timezone.
  *  end_time is exclusive, so we shift to midnight of the next day. */
@@ -67,33 +68,46 @@ export class SnapchatApiClient {
   }
 
   async getAccessToken(): Promise<string> {
-    const cached = tokenCache.get(this.creds.refreshToken);
+    const key = this.creds.refreshToken;
+    const cached = tokenCache.get(key);
     if (cached && cached.expiresAt > Date.now()) return cached.accessToken;
 
-    const res = await fetch(TOKEN_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "refresh_token",
-        refresh_token: this.creds.refreshToken,
-        client_id: this.creds.clientId,
-        client_secret: this.creds.clientSecret,
-      }).toString(),
-    });
+    const inflight = tokenInflight.get(key);
+    if (inflight) return inflight;
 
-    if (!res.ok) {
-      const err = await res.text();
-      throw new Error(`Snapchat token refresh failed (${res.status}): ${err}`);
+    const promise = (async () => {
+      const res = await fetch(TOKEN_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "refresh_token",
+          refresh_token: this.creds.refreshToken,
+          client_id: this.creds.clientId,
+          client_secret: this.creds.clientSecret,
+        }).toString(),
+      });
+
+      if (!res.ok) {
+        const err = await res.text();
+        throw new Error(`Snapchat token refresh failed (${res.status}): ${err}`);
+      }
+
+      const data = await res.json();
+      const accessToken = data.access_token as string;
+      const expiresIn = (data.expires_in as number) || 3600;
+      tokenCache.set(key, {
+        accessToken,
+        expiresAt: Date.now() + (expiresIn - 100) * 1000,
+      });
+      return accessToken;
+    })();
+
+    tokenInflight.set(key, promise);
+    try {
+      return await promise;
+    } finally {
+      tokenInflight.delete(key);
     }
-
-    const data = await res.json();
-    const accessToken = data.access_token as string;
-    const expiresIn = (data.expires_in as number) || 3600;
-    tokenCache.set(this.creds.refreshToken, {
-      accessToken,
-      expiresAt: Date.now() + (expiresIn - 100) * 1000,
-    });
-    return accessToken;
   }
 
   async request<T = unknown>(
