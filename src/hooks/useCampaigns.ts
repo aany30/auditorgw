@@ -172,7 +172,7 @@ export function useCampaigns(
   const dvRetries = useRef(0);
   const fetchInFlight = useRef(false);
   const [reloadTick, setReloadTick] = useState(0);
-  const MAX_DV360_RETRIES = 8;
+  const MAX_DV360_RETRIES = 3;
 
   const { startDate, endDate } = rangeToDates(dateRange, customStart, customEnd);
 
@@ -323,20 +323,20 @@ export function useCampaigns(
           if (sp) setSpotifyCurrency(sp);
 
           fetchInFlight.current = false;
-          // DV360 re-poll: DV360 delivery comes from async Bid Manager reports that
-          // are often still generating on the first call — and unique reach lives in
-          // a SEPARATE, slower REACH report. Keep asking until both the delivery
-          // metrics AND reach have landed (or the poll budget runs out).
+          // DV360 re-poll: DV360 delivery comes from async Bid Manager reports
+          // that may still be generating on the first call. Re-poll only when
+          // delivery metrics (spend + impressions) are still zero — don't gate
+          // on reach, which may legitimately stay 0 if no reach report exists.
           let willRepoll = false;
           if (!errs.dv360 && (platform === "dv360" || platform === "both") && !demoMode) {
             const dv = all.filter((c) => c.platform === "dv360");
             const dvDelivered = dv.reduce((s, c) => s + (c.spend || 0) + (c.impressions || 0), 0);
-            const dvReach = dv.reduce((s, c) => s + (c.reach || 0), 0);
-            const pending = dv.length > 0 && (dvDelivered === 0 || dvReach === 0);
+            const pending = dv.length > 0 && dvDelivered === 0;
             if (pending && dvRetries.current < MAX_DV360_RETRIES) {
               willRepoll = true;
               dvRetries.current += 1;
-              retryTimer = setTimeout(() => { if (!cancelled) setReloadTick((t) => t + 1); }, 3000);
+              const delay = 3000 * Math.pow(2, dvRetries.current - 1);
+              retryTimer = setTimeout(() => { if (!cancelled) setReloadTick((t) => t + 1); }, delay);
             }
           }
           setDv360Repolling(willRepoll);
