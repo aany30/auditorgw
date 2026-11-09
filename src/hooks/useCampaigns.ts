@@ -171,6 +171,7 @@ export function useCampaigns(
   const swrSeeded = useRef(false);
   const dvRetries = useRef(0);
   const fetchInFlight = useRef(false);
+  const campaignsRef = useRef<CampaignData[]>([]);
   const [reloadTick, setReloadTick] = useState(0);
   const MAX_DV360_RETRIES = 3;
 
@@ -187,6 +188,7 @@ export function useCampaigns(
     const cached = swrRead(key);
     if (cached && cached.length > 0) {
       setCampaigns(cached);
+      campaignsRef.current = cached;
       // Only skip the spinner for DV360-only mode. In "both" mode the DV360
       // cache doesn't include Meta, so clearing loading here would briefly show
       // a misleading "no Meta data" state until the Meta fetch lands — keep
@@ -205,16 +207,20 @@ export function useCampaigns(
     // Prevent re-poll pileup: if a previous fetch is still in-flight (takes ~40s
     // for BM report polling), skip this tick and let it complete first.
     if (reloadTick > 0 && fetchInFlight.current) return;
+    const isRepoll = reloadTick > 0;
     const fetchCampaigns = async () => {
       fetchInFlight.current = true;
       // First tick without SWR cache → show spinner. Re-poll ticks and SWR-seeded
       // renders leave loading unchanged (stays true while DV360 is pending, avoids
       // a flash between polls).
-      if (reloadTick === 0 && !swrSeeded.current) setLoading(true);
-      setError(null);
-      setPlatformErrors({});
+      if (!isRepoll && !swrSeeded.current) setLoading(true);
+      if (!isRepoll) {
+        setError(null);
+        setPlatformErrors({});
+      }
       const errs: { meta?: string; dv360?: string; google_ads?: string; snapchat?: string; spotify?: string } = {};
-      const all: CampaignData[] = [];
+      // On repoll, seed with existing non-DV360 campaigns so they aren't wiped.
+      const all: CampaignData[] = isRepoll ? campaignsRef.current.filter((c) => c.platform !== "dv360") : [];
       const hasServerDefaults = !!process.env.NEXT_PUBLIC_HAS_DEFAULT_CREDS;
       try {
         const effectiveMetaToken = demoMode ? "demo-meta-token" : metaAccessToken;
@@ -234,7 +240,9 @@ export function useCampaigns(
         type PlatformKey = "meta" | "dv360" | "google_ads" | "snapchat" | "spotify";
         const fetches: Array<{ key: PlatformKey; promise: Promise<Response> }> = [];
 
-        if (canFetchMeta) fetches.push({ key: "meta", promise: fetch("/api/naming/campaigns/meta", {
+        // On DV360 repoll ticks, only refetch DV360 — keep existing data for
+        // other platforms to avoid flickering the whole dashboard to zero.
+        if (canFetchMeta && !isRepoll) fetches.push({ key: "meta", promise: fetch("/api/naming/campaigns/meta", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ accessToken: effectiveMetaToken || undefined, businessId: effectiveMetaBiz || undefined, startDate, endDate }),
         })});
@@ -248,7 +256,7 @@ export function useCampaigns(
             partnerId: dv360PartnerId || undefined, startDate, endDate, strictWindow,
           }),
         })});
-        if (canFetchGads) fetches.push({ key: "google_ads", promise: fetch("/api/naming/campaigns/google-ads", {
+        if (canFetchGads && !isRepoll) fetches.push({ key: "google_ads", promise: fetch("/api/naming/campaigns/google-ads", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             clientId: dv360ClientId || undefined, clientSecret: dv360ClientSecret || undefined,
@@ -256,7 +264,7 @@ export function useCampaigns(
             loginCustomerId: googleAdsLoginCustomerId || undefined, startDate, endDate,
           }),
         })});
-        if (canFetchSnap) fetches.push({ key: "snapchat", promise: fetch("/api/naming/campaigns/snapchat", {
+        if (canFetchSnap && !isRepoll) fetches.push({ key: "snapchat", promise: fetch("/api/naming/campaigns/snapchat", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             clientId: snapchatClientId || undefined, clientSecret: snapchatClientSecret || undefined,
@@ -264,7 +272,7 @@ export function useCampaigns(
             orgId: snapchatOrgId || undefined, startDate, endDate,
           }),
         })});
-        if (canFetchSpotify) fetches.push({ key: "spotify", promise: fetch("/api/naming/campaigns/spotify", {
+        if (canFetchSpotify && !isRepoll) fetches.push({ key: "spotify", promise: fetch("/api/naming/campaigns/spotify", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             clientId: spotifyClientId || undefined, clientSecret: spotifyClientSecret || undefined,
@@ -285,7 +293,10 @@ export function useCampaigns(
               if (key === "dv360" && effectiveAdvertiserId && rows.length > 0) {
                 swrWrite(swrKey(effectiveAdvertiserId, startDate, endDate, strictWindow), rows);
               }
-              if (!cancelled) setCampaigns([...all]);
+              if (!cancelled) {
+                campaignsRef.current = [...all];
+                setCampaigns([...all]);
+              }
             } else {
               const body = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
               errs[key] = body.error || `${key} API error (HTTP ${r.status})`;
@@ -304,6 +315,7 @@ export function useCampaigns(
       } finally {
         if (!cancelled) {
           setCampaigns(all);
+          campaignsRef.current = all;
           setPlatformErrors(errs);
           // Keep legacy `error` populated for existing consumers.
           const first = errs.meta || errs.dv360 || errs.google_ads || errs.snapchat || errs.spotify;

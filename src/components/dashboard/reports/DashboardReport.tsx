@@ -216,7 +216,16 @@ export default function DashboardReport({
   const [aiSummary, setAiSummary] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
 
-  const cur = metaCurrency || dv360Currency || "INR";
+  // Pick the most common currency across all platforms for the hero section.
+  // Falls back through platform-specific currencies, then to INR.
+  const cur = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const c of campaigns) {
+      if (c.currency) counts[c.currency] = (counts[c.currency] || 0) + 1;
+    }
+    const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    return sorted[0]?.[0] || metaCurrency || dv360Currency || "INR";
+  }, [campaigns, metaCurrency, dv360Currency]);
   const gadsCurrency = currencyFor(campaigns, "google_ads");
   const snapCurrency = currencyFor(campaigns, "snapchat");
   const spotifyCurrency = currencyFor(campaigns, "spotify");
