@@ -205,7 +205,7 @@ export default function DashboardReport({
   customStart?: string;
   customEnd?: string;
 }) {
-  const { campaigns, loading, metaCurrency, dv360Currency, startDate, endDate } =
+  const { campaigns, loading, metaCurrency, dv360Currency, startDate, endDate, platformErrors } =
     useCampaigns(platform === "dv360" ? "dv360" : platform, dateRange, customStart, customEnd, true /* strictWindow */);
   const { demoMode } = useAuthStore();
 
@@ -373,6 +373,20 @@ export default function DashboardReport({
           </div>
         ) : (
           <div>
+              {/* Platform fetch errors (collapsed, expandable) */}
+              {(() => {
+                const errEntries = Object.entries(platformErrors || {}).filter(([, v]) => !!v) as [string, string][];
+                if (errEntries.length === 0) return null;
+                const labels: Record<string, string> = { meta: "Meta", dv360: "DV360", google_ads: "Google Ads", snapchat: "Snapchat", spotify: "Spotify" };
+                return (
+                  <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-800">
+                    <span className="font-semibold">Some platforms returned errors:</span>
+                    {errEntries.map(([k, msg]) => (
+                      <div key={k} className="mt-1"><span className="font-semibold">{labels[k] || k}:</span> {msg}</div>
+                    ))}
+                  </div>
+                );
+              })()}
               {/* Overall Deliveries */}
               <div className="flex items-center justify-between mb-2">
                 <div className="text-xs font-bold text-gray-500 uppercase tracking-wider">Overall Deliveries</div>
