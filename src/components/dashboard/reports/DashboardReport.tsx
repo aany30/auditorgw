@@ -270,11 +270,6 @@ export default function DashboardReport({
     const totalFreq = totalReach > 0 ? overallRaw.impressions / totalReach : 0;
     return { ...overallRaw, reach: totalReach, frequency: totalFreq };
   }, [overallRaw, enrichedCampaigns, dvAdvReach]);
-  const metaD = useMemo(() => deliveredOfGroup(metaCampaigns, false), [metaCampaigns]);
-  const dvD = useMemo(() => deliveredOfGroup(dv360Campaigns, false), [dv360Campaigns]);
-  const gadsD = useMemo(() => deliveredOfGroup(gadsCampaigns, false), [gadsCampaigns]);
-  const snapD = useMemo(() => deliveredOfGroup(snapCampaigns, false), [snapCampaigns]);
-  const spotifyD = useMemo(() => deliveredOfGroup(spotifyCampaigns, false), [spotifyCampaigns]);
 
   const pacing = (key: string) => {
     const p = planned[key] || 0;
@@ -548,36 +543,6 @@ export default function DashboardReport({
                 </div>
               )}
 
-              {/* Platform Breakdown Table */}
-              {enrichedCampaigns.length > 0 && (
-                <div className="mt-4">
-                  <div className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Platform Breakdown</div>
-                  <div className="overflow-x-auto rounded-lg border border-gray-200">
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="bg-gray-50 text-gray-500">
-                          <th className="text-left px-3 py-2 font-semibold">Platform</th>
-                          <th className="text-right px-3 py-2 font-semibold">Net Spends</th>
-                          <th className="text-right px-3 py-2 font-semibold">Impressions</th>
-                          <th className="text-right px-3 py-2 font-semibold">Reach</th>
-                          <th className="text-right px-3 py-2 font-semibold">Frequency</th>
-                          <th className="text-right px-3 py-2 font-semibold">VTR</th>
-                          <th className="text-right px-3 py-2 font-semibold">CTR</th>
-                          <th className="text-right px-3 py-2 font-semibold">CPM</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {showMeta && metaCampaigns.length > 0 && <PlatformRow label="Meta" d={metaD} cur={metaCurrency} total={overall} color="#1877F2" />}
-                        {showDv && dv360Campaigns.length > 0 && <PlatformRow label="DV360" d={dvD} cur={dv360Currency} total={overall} color="#7B61FF" />}
-                        {showGads && gadsCampaigns.length > 0 && <PlatformRow label="Google Ads" d={gadsD} cur={gadsCurrency} total={overall} color="#EA4335" />}
-                        {showSnap && snapCampaigns.length > 0 && <PlatformRow label="Snapchat" d={snapD} cur={snapCurrency} total={overall} color="#F7D100" />}
-                        {showSpotify && spotifyCampaigns.length > 0 && <PlatformRow label="Spotify" d={spotifyD} cur={spotifyCurrency} total={overall} color="#1DB954" />}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
           </div>
         )}
       </div>
@@ -675,44 +640,3 @@ export default function DashboardReport({
   );
 }
 
-// ─── Platform row with data bars ───
-
-function notAvailHint(metric: string, platform: string): string {
-  if (metric === "reach") return "Not available via API";
-  if (metric === "frequency") return "Needs reach";
-  if (metric === "vtr") return "No video data";
-  return "";
-}
-
-function CellWithHint({ val, fmt, metric, platform }: { val: string; fmt: string; metric: string; platform: string }) {
-  if (val === "—") {
-    const hint = notAvailHint(metric, platform);
-    return hint ? (
-      <span className="relative group cursor-help">
-        <span>—</span>
-        <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1 whitespace-nowrap rounded bg-gray-800 px-2 py-1 text-[10px] font-normal text-white opacity-0 group-hover:opacity-100 transition-opacity z-50">{hint}</span>
-      </span>
-    ) : <span>—</span>;
-  }
-  return <>{val}</>;
-}
-
-function PlatformRow({ label, d, cur, total, color }: { label: string; d: Delivered; cur: string; total: Delivered; color: string }) {
-  const bar = (val: number, max: number) => {
-    if (max <= 0) return null;
-    const pct = Math.min((val / max) * 100, 100);
-    return <div className="inline-block h-[6px] rounded-full ml-1.5 align-middle" style={{ width: `${Math.max(pct * 0.6, 4)}px`, background: color }} />;
-  };
-  return (
-    <tr className="even:bg-gray-50 hover:bg-blue-50/30">
-      <td className="px-3 py-2 font-semibold">{label}</td>
-      <td className="text-right px-3 py-2 tabular-nums">{fmtVal("money", d.spend, cur)}{bar(d.spend, total.spend)}</td>
-      <td className="text-right px-3 py-2 tabular-nums">{fmtBig(d.impressions)}{bar(d.impressions, total.impressions)}</td>
-      <td className="text-right px-3 py-2 tabular-nums"><CellWithHint val={d.reach > 0 ? fmtBig(d.reach) : "—"} fmt="" metric="reach" platform={label} />{d.reach > 0 && bar(d.reach, total.reach)}</td>
-      <td className="text-right px-3 py-2 tabular-nums"><CellWithHint val={fmtVal("decimal", d.frequency, "")} fmt="" metric="frequency" platform={label} /></td>
-      <td className="text-right px-3 py-2 tabular-nums"><CellWithHint val={fmtVal("pct", d.vtr, "")} fmt="" metric="vtr" platform={label} /></td>
-      <td className="text-right px-3 py-2 tabular-nums">{fmtVal("pct", d.ctr, "")}</td>
-      <td className="text-right px-3 py-2 tabular-nums">{fmtVal("money", d.cpm, cur)}</td>
-    </tr>
-  );
-}
