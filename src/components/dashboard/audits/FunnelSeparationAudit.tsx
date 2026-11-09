@@ -4,7 +4,6 @@ import { Sparkles, AlertCircle, CheckCircle2, AlertTriangle, Target } from "luci
 import { KpiCard, AuditCard, StatusBadge } from "./AuditCard";
 import { TermText } from "@/components/shared/Term";
 import FunnelStagePerformance from "./FunnelStagePerformance";
-import { currencyFor } from "@/lib/currency";
 import type { AuditProps } from "./types";
 import type { CampaignData } from "@/types";
 
@@ -538,12 +537,18 @@ export default function FunnelSeparationAudit({ campaigns, accountTotal, dateRan
       </AuditCard>
       )}
 
-      {/* Combined funnel performance chart (both platforms together) — shown
-          FIRST when both are connected, then the per-platform charts below it. */}
+      {/* Combined funnel performance chart (all platforms together) — shown
+          FIRST when multiple platforms are connected, then the per-platform charts below it. */}
       {hasBoth && (() => {
-        const metaCur = currencyFor(campaigns, "meta");
-        const dvCur = currencyFor(campaigns, "dv360");
-        const mixedCurrency = metaCur !== dvCur;
+        const presentPlatforms = [
+          metaCampaigns.length > 0 ? "Meta" : null,
+          dv360Campaigns.length > 0 ? "DV360" : null,
+          gadsCampaigns.length > 0 ? "Google Ads" : null,
+          snapCampaigns.length > 0 ? "Snapchat" : null,
+          spotifyCampaigns.length > 0 ? "Spotify" : null,
+        ].filter(Boolean) as string[];
+        const currencies = [...new Set(campaigns.map((c) => c.currency).filter(Boolean))];
+        const mixedCurrency = currencies.length > 1;
         return (
           <>
             <FunnelStagePerformance
@@ -552,14 +557,14 @@ export default function FunnelSeparationAudit({ campaigns, accountTotal, dateRan
               dateRange={dateRange}
               customStart={customStart}
               customEnd={customEnd}
-              platformLabel="Combined — Meta + DV360"
+              platformLabel={`Combined — ${presentPlatforms.join(" + ")}`}
             />
             {mixedCurrency && (
               <div className="-mt-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-[11px] text-amber-800 flex items-start gap-2">
                 <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
                 <span>
-                  Meta is billed in <strong>{metaCur}</strong> and DV360 in <strong>{dvCur}</strong>. In the combined
-                  chart above, monetary metrics (Spend / CPM / CPC) sum across two currencies and shouldn&apos;t be read
+                  Platforms are billed in different currencies ({currencies.join(", ")}). In the combined
+                  chart above, monetary metrics (Spend / CPM / CPC) sum across currencies and shouldn&apos;t be read
                   as a single amount — use the per-platform charts below for money, or switch the combined chart to a
                   currency-free metric (Impressions, Reach, CTR, Frequency).
                 </span>
