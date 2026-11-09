@@ -217,9 +217,34 @@ export default function FunnelSeparationAudit({ campaigns, accountTotal, dateRan
   const gadsCampaigns = useMemo(() => campaigns.filter((c) => c.platform === "google_ads"), [campaigns]);
   const snapCampaigns = useMemo(() => campaigns.filter((c) => c.platform === "snapchat"), [campaigns]);
   const spotifyCampaigns = useMemo(() => campaigns.filter((c) => c.platform === "spotify"), [campaigns]);
-  const platformsPresent =
-    Number(metaCampaigns.length > 0) + Number(dv360Campaigns.length > 0) + Number(gadsCampaigns.length > 0) + Number(snapCampaigns.length > 0) + Number(spotifyCampaigns.length > 0);
+  const platformMap = useMemo(() => ({
+    meta: metaCampaigns,
+    dv360: dv360Campaigns,
+    google_ads: gadsCampaigns,
+    snapchat: snapCampaigns,
+    spotify: spotifyCampaigns,
+  }), [metaCampaigns, dv360Campaigns, gadsCampaigns, snapCampaigns, spotifyCampaigns]);
+
+  const PLATFORM_LABELS: Record<string, string> = {
+    meta: "Meta", dv360: "DV360", google_ads: "Google Ads", snapchat: "Snapchat", spotify: "Spotify",
+  };
+
+  const presentPlatformKeys = useMemo(
+    () => (["meta", "dv360", "google_ads", "snapchat", "spotify"] as const).filter((k) => platformMap[k].length > 0),
+    [platformMap],
+  );
+  const platformsPresent = presentPlatformKeys.length;
   const hasBoth = platformsPresent > 1;
+
+  // Two-platform comparison dropdowns — default to first two connected platforms
+  const [compareA, setCompareA] = useState<string>("");
+  const [compareB, setCompareB] = useState<string>("");
+  useEffect(() => {
+    if (presentPlatformKeys.length >= 2) {
+      setCompareA((prev) => (presentPlatformKeys.includes(prev as typeof presentPlatformKeys[number]) ? prev : presentPlatformKeys[0]));
+      setCompareB((prev) => (presentPlatformKeys.includes(prev as typeof presentPlatformKeys[number]) && prev !== presentPlatformKeys[0] ? prev : presentPlatformKeys[1]));
+    }
+  }, [presentPlatformKeys.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Overall counts for KPI cards
   const counts = { TOF: 0, MOF: 0, BOF: 0, Unknown: 0 };
@@ -573,6 +598,71 @@ export default function FunnelSeparationAudit({ campaigns, accountTotal, dateRan
           </>
         );
       })()}
+
+      {/* Two-platform comparison chart */}
+      {hasBoth && compareA && compareB && compareA !== compareB && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-3 flex-wrap">
+            <h3 className="text-base font-bold text-gray-900">Platform Comparison</h3>
+            <div className="flex items-center gap-2 text-sm">
+              <select
+                value={compareA}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val === compareB) setCompareB(compareA);
+                  setCompareA(val);
+                }}
+                className="border border-gray-300 rounded-md px-2 py-1 text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                {presentPlatformKeys.map((k) => (
+                  <option key={k} value={k}>{PLATFORM_LABELS[k]}</option>
+                ))}
+              </select>
+              <span className="text-gray-400 font-medium">vs</span>
+              <select
+                value={compareB}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val === compareA) setCompareA(compareB);
+                  setCompareB(val);
+                }}
+                className="border border-gray-300 rounded-md px-2 py-1 text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                {presentPlatformKeys.map((k) => (
+                  <option key={k} value={k}>{PLATFORM_LABELS[k]}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          {(() => {
+            const combined = [...(platformMap[compareA as keyof typeof platformMap] || []), ...(platformMap[compareB as keyof typeof platformMap] || [])];
+            const curA = (platformMap[compareA as keyof typeof platformMap] || []).find((c) => c.currency)?.currency;
+            const curB = (platformMap[compareB as keyof typeof platformMap] || []).find((c) => c.currency)?.currency;
+            const mixedCurrency = curA && curB && curA !== curB;
+            return (
+              <>
+                <FunnelStagePerformance
+                  campaigns={combined}
+                  accountTotal={combined.length}
+                  dateRange={dateRange}
+                  customStart={customStart}
+                  customEnd={customEnd}
+                  platformLabel={`${PLATFORM_LABELS[compareA]} + ${PLATFORM_LABELS[compareB]}`}
+                />
+                {mixedCurrency && (
+                  <div className="-mt-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-[11px] text-amber-800 flex items-start gap-2">
+                    <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                    <span>
+                      {PLATFORM_LABELS[compareA]} is billed in <strong>{curA}</strong> and {PLATFORM_LABELS[compareB]} in <strong>{curB}</strong>.
+                      Monetary metrics sum across currencies — use the per-platform charts below for accurate spend comparisons.
+                    </span>
+                  </div>
+                )}
+              </>
+            );
+          })()}
+        </div>
+      )}
 
       {/* Per-platform funnel performance charts */}
       {metaCampaigns.length > 0 && (
