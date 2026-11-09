@@ -549,8 +549,8 @@ function TipCell({ tip, campaignContext, isDemo, platform, campaign, currency, b
     : "campaign"
   ) as "campaign" | "adset" | "insertion_order";
 
-  const tipApplyContext: ApplyContext | undefined = isDemo || platform === "snapchat" || platform === "spotify" ? undefined : {
-    platform: platform as "meta" | "dv360" | "google_ads",
+  const tipApplyContext: ApplyContext | undefined = isDemo || platform === "spotify" ? undefined : {
+    platform: platform as "meta" | "dv360" | "google_ads" | "snapchat",
     entityType,
     entityId: campaign.id,
     entityName: campaign.name,

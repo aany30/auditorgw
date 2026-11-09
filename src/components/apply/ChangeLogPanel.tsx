@@ -108,11 +108,19 @@ export default function ChangeLogPanel() {
     async (entry: AuditLogEntry) => {
       setUndoingId(entry.id);
       const inverse = invertAction(entry.action);
-      const url = inverse.platform === "meta" ? "/api/apply/meta" : "/api/apply/dv360";
+      const url = inverse.platform === "meta" ? "/api/apply/meta"
+        : inverse.platform === "google_ads" ? "/api/apply/google-ads"
+        : inverse.platform === "snapchat" ? "/api/apply/snapchat"
+        : "/api/apply/dv360";
       const body: Record<string, unknown> = { action: inverse };
       if (inverse.platform === "meta") {
         if (auth.metaAccessToken) body.accessToken = auth.metaAccessToken;
         if (auth.metaBusinessId) body.businessId = auth.metaBusinessId;
+      } else if (inverse.platform === "snapchat") {
+        if (auth.snapchatClientId) body.clientId = auth.snapchatClientId;
+        if (auth.snapchatClientSecret) body.clientSecret = auth.snapchatClientSecret;
+        if (auth.snapchatRefreshToken) body.refreshToken = auth.snapchatRefreshToken;
+        if (auth.snapchatAdAccountId) body.adAccountId = auth.snapchatAdAccountId;
       } else {
         if (auth.dv360ClientId) body.clientId = auth.dv360ClientId;
         if (auth.dv360ClientSecret) body.clientSecret = auth.dv360ClientSecret;
