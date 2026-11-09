@@ -277,26 +277,32 @@ export function useCampaigns(
           }),
         })});
 
-        const results = await Promise.allSettled(fetches.map((f) => f.promise));
-        for (let i = 0; i < results.length; i++) {
-          const { key } = fetches[i];
-          const result = results[i];
-          if (result.status === "rejected") {
-            errs[key] = result.reason instanceof Error ? result.reason.message : `${key} fetch failed`;
-            continue;
-          }
-          const r = result.value;
-          if (r.ok) {
-            const rows: CampaignData[] = await r.json();
-            all.push(...rows);
-            if (key === "dv360" && effectiveAdvertiserId && rows.length > 0) {
-              swrWrite(swrKey(effectiveAdvertiserId, startDate, endDate, strictWindow), rows);
+        // Process each platform response as it arrives so the UI updates
+        // progressively instead of waiting for the slowest platform.
+        let resolved = 0;
+        await Promise.allSettled(fetches.map(async ({ key, promise }) => {
+          try {
+            const r = await promise;
+            if (r.ok) {
+              const rows: CampaignData[] = await r.json();
+              all.push(...rows);
+              if (key === "dv360" && effectiveAdvertiserId && rows.length > 0) {
+                swrWrite(swrKey(effectiveAdvertiserId, startDate, endDate, strictWindow), rows);
+              }
+              if (!cancelled) setCampaigns([...all]);
+            } else {
+              const body = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
+              errs[key] = body.error || `${key} API error (HTTP ${r.status})`;
             }
-          } else {
-            const body = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
-            errs[key] = body.error || `${key} API error (HTTP ${r.status})`;
+          } catch (e) {
+            errs[key] = e instanceof Error ? e.message : `${key} fetch failed`;
+          } finally {
+            resolved++;
+            if (!cancelled && resolved < fetches.length) {
+              setPlatformErrors({ ...errs });
+            }
           }
-        }
+        }));
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Fetch failed");
       } finally {
