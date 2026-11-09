@@ -18,6 +18,11 @@ import type { DateRange } from "@/components/shared/DateRangePicker";
 // Keyed by advertiserId + date range so different windows never cross-pollinate.
 const DV360_SWR_TTL_MS = 5 * 60 * 1000;
 
+/** Max age for the failure-fallback cache read. Longer than the normal TTL so a
+ *  sustained DV360 outage keeps showing last-known data rather than collapsing
+ *  the aggregate to other-platforms-only. */
+const DV360_SWR_STALE_MS = 60 * 60 * 1000;
+
 /** Max dv360_campaigns:* entries to keep. Each entry can be hundreds of KB
  *  for large advertisers; unbounded growth was evicting the auth-store (user's
  *  tokens) via localStorage quota pressure. Cap at 4 — enough for the current
@@ -37,6 +42,20 @@ function swrRead(key: string): CampaignData[] | null {
     if (!raw) return null;
     const { rows, ts } = JSON.parse(raw) as { rows: CampaignData[]; ts: number };
     if (Date.now() - ts > DV360_SWR_TTL_MS) { localStorage.removeItem(key); return null; }
+    return rows;
+  } catch { return null; }
+}
+
+// Stale-tolerant read used ONLY as a fallback when the live DV360 fetch fails.
+// Returns cached rows up to DV360_SWR_STALE_MS old without deleting them, so a
+// longer DV360 outage (gateway timeouts, 5xx) keeps the dashboard showing the
+// last-known delivery instead of collapsing the aggregate.
+function swrReadStale(key: string): CampaignData[] | null {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const { rows, ts } = JSON.parse(raw) as { rows: CampaignData[]; ts: number };
+    if (Date.now() - ts > DV360_SWR_STALE_MS) return null;
     return rows;
   } catch { return null; }
 }
@@ -281,6 +300,25 @@ export function useCampaigns(
           }),
         })});
 
+        // Robustness: DV360 delivery comes from async Bid Manager reports that
+        // can time out at the gateway ("Failed to fetch") or return a 5xx. When
+        // the live fetch fails, reuse the last-good SWR cache so the aggregate
+        // doesn't collapse to other-platforms-only (spend/impressions swinging
+        // between e.g. ₹1.25L and ₹6.44L across reloads). Returns true if the
+        // cache was applied.
+        const dv360CacheFallback = (): boolean => {
+          if (!effectiveAdvertiserId) return false;
+          if (all.some((c) => c.platform === "dv360")) return false; // already have fresh rows
+          const cached = swrReadStale(swrKey(effectiveAdvertiserId, startDate, endDate, strictWindow));
+          if (!cached || cached.length === 0) return false;
+          all.push(...cached);
+          if (!cancelled) {
+            campaignsRef.current = [...all];
+            setCampaigns([...all]);
+          }
+          return true;
+        };
+
         // Process each platform response as it arrives so the UI updates
         // progressively instead of waiting for the slowest platform.
         let resolved = 0;
@@ -300,9 +338,15 @@ export function useCampaigns(
             } else {
               const body = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
               errs[key] = body.error || `${key} API error (HTTP ${r.status})`;
+              if (key === "dv360" && dv360CacheFallback()) {
+                errs[key] = "DV360 live fetch failed — showing recent cached data";
+              }
             }
           } catch (e) {
             errs[key] = e instanceof Error ? e.message : `${key} fetch failed`;
+            if (key === "dv360" && dv360CacheFallback()) {
+              errs[key] = "DV360 live fetch failed — showing recent cached data";
+            }
           } finally {
             resolved++;
             if (!cancelled && resolved < fetches.length) {
