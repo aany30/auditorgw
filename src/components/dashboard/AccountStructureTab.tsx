@@ -50,7 +50,7 @@ export default function AccountStructureTab({ platform, dateRange, customStart, 
   // a *later* fetch — get picked up through its SWR revalidation + cache. The
   // previous one-shot fetch here froze on the first (creative-less) response,
   // which is why the LI → Creative drill level never appeared in this tab.
-  const { campaigns, loading, error: fetchError } = useCampaigns(
+  const { campaigns, loading, dv360Repolling, error: fetchError } = useCampaigns(
     platform,
     dateRange as DateRange,
     customStart,
@@ -183,6 +183,12 @@ export default function AccountStructureTab({ platform, dateRange, customStart, 
         <LoadingState message="Loading campaign data…" />
       ) : (
         <>
+          {dv360Repolling && (
+            <div className="flex items-center gap-2 px-4 py-2 mb-3 rounded-lg bg-blue-500/10 text-blue-400 text-sm">
+              <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeDasharray="31.4 31.4" strokeLinecap="round" /></svg>
+              Refreshing DV360 delivery data…
+            </div>
+          )}
           {active === "naming" && <NamingConventionAudit {...auditProps} />}
           {active === "funnel-sep" && <FunnelSeparationAudit {...auditProps} />}
           {active === "budget" && <BudgetAllocationAudit {...auditProps} />}

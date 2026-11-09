@@ -167,12 +167,8 @@ export function useCampaigns(
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [platformErrors, setPlatformErrors] = useState<{ meta?: string; dv360?: string; google_ads?: string; snapchat?: string; spotify?: string }>({});
-  // Track whether we seeded from the SWR cache so we don't flash a spinner.
+  const [dv360Repolling, setDv360Repolling] = useState(false);
   const swrSeeded = useRef(false);
-  // DV360 delivery arrives via an async Bid Manager report that is often still
-  // generating on the first request (the route returns campaigns with zeroed
-  // metrics and resumes on the next call). Re-poll — like the breakdown hooks —
-  // so the Delivered numbers fill in on their own instead of staying at zero.
   const dvRetries = useRef(0);
   const fetchInFlight = useRef(false);
   const [reloadTick, setReloadTick] = useState(0);
@@ -343,10 +339,8 @@ export function useCampaigns(
               retryTimer = setTimeout(() => { if (!cancelled) setReloadTick((t) => t + 1); }, 3000);
             }
           }
-          // Keep loading=true while DV360 delivery/reach data is still
-          // pending and re-polls will fire — the UI shows a loading state
-          // until all platforms have full data instead of flashing "—".
-          setLoading(willRepoll);
+          setDv360Repolling(willRepoll);
+          setLoading(false);
         }
       }
     };
@@ -398,5 +392,5 @@ export function useCampaigns(
   const snapchatCurrency = detectedSnap || storedSnapchatCurrency || "USD";
   const spotifyCurrency = detectedSpotify || storedSpotifyCurrency || "USD";
 
-  return { campaigns, loading, error, platformErrors, startDate, endDate, metaCurrency, dv360Currency, googleAdsCurrency, snapchatCurrency, spotifyCurrency };
+  return { campaigns, loading, dv360Repolling, error, platformErrors, startDate, endDate, metaCurrency, dv360Currency, googleAdsCurrency, snapchatCurrency, spotifyCurrency };
 }
