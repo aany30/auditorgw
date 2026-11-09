@@ -118,6 +118,8 @@ export default async function handler(
         spend: totalSpend,
         impressions: c.impressions ?? 0,
         clicks: c.clicks ?? 0,
+        reach: c.reach ?? 0,
+        videoViews: c.videoViews ?? 0,
         conversions: c.conversions ?? 0,
         conversionValue: c.conversionsValue ?? 0,
         lifetimeBudget: c.budgetAmountMicros

@@ -185,6 +185,7 @@ export default async function handler(
         spend: stats?.spend ?? 0,
         impressions: stats?.impressions ?? 0,
         clicks: stats?.clicks ?? 0,
+        reach: stats?.reach ?? 0,
         conversions: 0,
         conversionValue: 0,
         currency: "INR",

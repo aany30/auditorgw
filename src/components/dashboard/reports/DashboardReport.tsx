@@ -239,7 +239,7 @@ export default function DashboardReport({
   const metaCampaigns = useMemo(() => campaigns.filter((c) => c.platform === "meta"), [campaigns]);
 
   // Enrich DV360 campaigns with reach from the dedicated endpoint.
-  const { reachByCampaign, reachByLineItem } = useDV360Reach(dateRange, customStart, customEnd, showDv, campaigns);
+  const { reachByCampaign, reachByLineItem, advertiserReach: dvAdvReach, advertiserFrequency: dvAdvFreq } = useDV360Reach(dateRange, customStart, customEnd, showDv, campaigns);
   const dv360Campaigns = useMemo(() =>
     campaigns.filter((c) => c.platform === "dv360").map((c) => {
       const rc = reachByCampaign[c.id];
@@ -258,7 +258,18 @@ export default function DashboardReport({
   // picked window, it contributes 0 — this way the numbers actually change
   // when the user switches 7d/30d/90d/custom, instead of collapsing back to
   // lifetime totals for ended-flight campaigns.
-  const overall = useMemo(() => deliveredOfGroup(enrichedCampaigns, false), [enrichedCampaigns]);
+  const overallRaw = useMemo(() => deliveredOfGroup(enrichedCampaigns, false), [enrichedCampaigns]);
+  // The per-campaign DV360 reach enrichment can miss campaigns (LI→campaign
+  // mapping gaps), so use the account-level advertiserReach from the dedicated
+  // REACH report. Non-DV360 reach (Meta etc.) keeps its per-campaign sum.
+  const overall = useMemo(() => {
+    const nonDvReach = enrichedCampaigns
+      .filter((c) => c.platform !== "dv360")
+      .reduce((s, c) => s + (c.reach ?? 0), 0);
+    const totalReach = nonDvReach + (dvAdvReach || 0);
+    const totalFreq = totalReach > 0 ? overallRaw.impressions / totalReach : 0;
+    return { ...overallRaw, reach: totalReach, frequency: totalFreq };
+  }, [overallRaw, enrichedCampaigns, dvAdvReach]);
   const metaD = useMemo(() => deliveredOfGroup(metaCampaigns, false), [metaCampaigns]);
   const dvD = useMemo(() => deliveredOfGroup(dv360Campaigns, false), [dv360Campaigns]);
   const gadsD = useMemo(() => deliveredOfGroup(gadsCampaigns, false), [gadsCampaigns]);
@@ -345,7 +356,7 @@ export default function DashboardReport({
           <h2 className="text-2xl font-bold text-gray-900">Dashboard</h2>
         </div>
         <p className="text-sm text-gray-500 mb-5">
-          Live performance overview — combined Meta + DV360 delivery vs your planned targets.
+          Live performance overview — combined delivery across all connected platforms vs your planned targets.
         </p>
 
         {/* Blue date-range bar */}
@@ -353,7 +364,7 @@ export default function DashboardReport({
           <span>
             Last updated on {new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "2-digit", year: "numeric" })}{" "}
             {new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true })}
-            {dv360Campaigns.length > 0 && " (Google Reach is delayed by 24 Hours)"}
+            {dv360Campaigns.length > 0 && " (DV360 Reach is delayed by 24 hrs)"}
           </span>
           <span className="text-white/80 text-xs font-normal">
             {startDate} → {endDate} · {enrichedCampaigns.length} campaigns
@@ -397,23 +408,23 @@ export default function DashboardReport({
                         </div>
                       )}
                       {i > 0 && prevPc === null && <div className="w-3" />}
-                      <div className={`flex-1 min-w-[120px] text-center border border-gray-200 bg-white py-3 px-2 ${i === 0 ? "rounded-l-lg" : ""} ${i === HERO_METRICS.length - 1 ? "rounded-r-lg" : ""}`}>
+                      <div className={`flex-1 min-w-[120px] text-center border border-gray-200 bg-white py-3 px-2 overflow-visible ${i === 0 ? "rounded-l-lg" : ""} ${i === HERO_METRICS.length - 1 ? "rounded-r-lg" : ""}`}>
                         <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1 flex items-center justify-center gap-1">
                           {m.label}
                           {m.key === "reach" && dv360Campaigns.length > 0 && (
-                            <span
-                              className="inline-flex items-center justify-center cursor-help text-gray-400 hover:text-gray-600"
-                              title="DV360 unique reach is fetched over a wide window (flight-level) because Google's REACH reports return empty for short windows. Spend and Impressions honor the date picker; Reach reflects the campaign's flight."
-                            >
+                            <span className="relative group inline-flex items-center justify-center cursor-help text-gray-400 hover:text-gray-600">
                               <Info className="w-3 h-3" />
+                              <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 rounded-lg bg-gray-900 px-3 py-2 text-[11px] leading-relaxed font-normal normal-case tracking-normal text-white shadow-lg opacity-0 group-hover:opacity-100 transition-opacity z-50">
+                                DV360 unique reach is fetched over a wide window (flight-level) because Google&apos;s REACH reports return empty for short windows. Spend &amp; Impressions honor the date picker; Reach reflects the campaign&apos;s flight.
+                              </span>
                             </span>
                           )}
                           {m.key === "frequency" && dv360Campaigns.length > 0 && overall.reach > overall.impressions && (
-                            <span
-                              className="inline-flex items-center justify-center cursor-help text-gray-400 hover:text-gray-600"
-                              title="Frequency is impressions ÷ reach. DV360 reach uses the campaign's flight window while impressions honor your date picker, so Frequency isn't meaningful when they don't match. Switch the picker to cover the full flight to see a real frequency."
-                            >
+                            <span className="relative group inline-flex items-center justify-center cursor-help text-gray-400 hover:text-gray-600">
                               <Info className="w-3 h-3" />
+                              <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 rounded-lg bg-gray-900 px-3 py-2 text-[11px] leading-relaxed font-normal normal-case tracking-normal text-white shadow-lg opacity-0 group-hover:opacity-100 transition-opacity z-50">
+                                Frequency is impressions &divide; reach. DV360 reach uses the campaign&apos;s flight window while impressions honor your date picker, so Frequency may not be meaningful when they don&apos;t match.
+                              </span>
                             </span>
                           )}
                         </div>
@@ -425,14 +436,24 @@ export default function DashboardReport({
                                   ? "—"
                                   : val >= 1
                                     ? val.toFixed(1)
-                                    : "—")
-                              : fmtBig(val)}
+                                    : val > 0
+                                      ? val.toFixed(2)
+                                      : "—")
+                              : val > 0 ? fmtBig(val) : "—"}
                         </div>
-                        {m.key === "reach" && dv360Campaigns.length > 0 && (
+                        {m.key === "reach" && val <= 0 && (
+                          <div className="mt-1 text-[9px] text-gray-400 leading-tight">
+                            {dv360Campaigns.length > 0 ? "Reach report pending or unavailable" : "No reach data from active platforms"}
+                          </div>
+                        )}
+                        {m.key === "reach" && val > 0 && dv360Campaigns.length > 0 && (
                           <div className="mt-1 text-[9px] text-gray-400 leading-tight">DV360 reach uses flight window</div>
                         )}
+                        {m.key === "frequency" && (overall.reach <= 0 || (val < 1 && val <= 0)) && (
+                          <div className="mt-1 text-[9px] text-gray-400 leading-tight">Requires reach data to compute</div>
+                        )}
                         {m.key === "frequency" && dv360Campaigns.length > 0 && overall.reach > overall.impressions && (
-                          <div className="mt-1 text-[9px] text-gray-400 leading-tight">reach & impressions windows differ</div>
+                          <div className="mt-1 text-[9px] text-gray-400 leading-tight">Reach &amp; impressions windows differ</div>
                         )}
                       </div>
                     </div>
@@ -527,7 +548,35 @@ export default function DashboardReport({
                 </div>
               )}
 
-
+              {/* Platform Breakdown Table */}
+              {enrichedCampaigns.length > 0 && (
+                <div className="mt-4">
+                  <div className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Platform Breakdown</div>
+                  <div className="overflow-x-auto rounded-lg border border-gray-200">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="bg-gray-50 text-gray-500">
+                          <th className="text-left px-3 py-2 font-semibold">Platform</th>
+                          <th className="text-right px-3 py-2 font-semibold">Net Spends</th>
+                          <th className="text-right px-3 py-2 font-semibold">Impressions</th>
+                          <th className="text-right px-3 py-2 font-semibold">Reach</th>
+                          <th className="text-right px-3 py-2 font-semibold">Frequency</th>
+                          <th className="text-right px-3 py-2 font-semibold">VTR</th>
+                          <th className="text-right px-3 py-2 font-semibold">CTR</th>
+                          <th className="text-right px-3 py-2 font-semibold">CPM</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {showMeta && metaCampaigns.length > 0 && <PlatformRow label="Meta" d={metaD} cur={metaCurrency} total={overall} color="#1877F2" />}
+                        {showDv && dv360Campaigns.length > 0 && <PlatformRow label="DV360" d={dvD} cur={dv360Currency} total={overall} color="#7B61FF" />}
+                        {showGads && gadsCampaigns.length > 0 && <PlatformRow label="Google Ads" d={gadsD} cur={gadsCurrency} total={overall} color="#EA4335" />}
+                        {showSnap && snapCampaigns.length > 0 && <PlatformRow label="Snapchat" d={snapD} cur={snapCurrency} total={overall} color="#F7D100" />}
+                        {showSpotify && spotifyCampaigns.length > 0 && <PlatformRow label="Spotify" d={spotifyD} cur={spotifyCurrency} total={overall} color="#1DB954" />}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
 
           </div>
         )}
@@ -542,6 +591,9 @@ export default function DashboardReport({
           loading={loading}
           metaCurrency={metaCurrency}
           dv360Currency={dv360Currency}
+          gadsCurrency={gadsCurrency}
+          snapCurrency={snapCurrency}
+          spotifyCurrency={spotifyCurrency}
           dateRange={dateRange}
           customStart={customStart}
           customEnd={customEnd}
@@ -593,11 +645,57 @@ export default function DashboardReport({
           />
         </div>
       )}
+      {showSnap && snapCampaigns.length > 0 && (
+        <div className="space-y-4">
+          <SectionHeader label="Snapchat" sub="Snapchat Ads" />
+          <PlanningSection
+            campaigns={snapCampaigns}
+            loading={loading}
+            currency={snapCurrency}
+            storageSuffix="snapchat"
+            dateRange={dateRange}
+            aiPlatform="snapchat"
+          />
+        </div>
+      )}
+      {showSpotify && spotifyCampaigns.length > 0 && (
+        <div className="space-y-4">
+          <SectionHeader label="Spotify" sub="Spotify Ad Studio" />
+          <PlanningSection
+            campaigns={spotifyCampaigns}
+            loading={loading}
+            currency={spotifyCurrency}
+            storageSuffix="spotify"
+            dateRange={dateRange}
+            aiPlatform="spotify"
+          />
+        </div>
+      )}
     </div>
   );
 }
 
 // ─── Platform row with data bars ───
+
+function notAvailHint(metric: string, platform: string): string {
+  if (metric === "reach") return "Not available via API";
+  if (metric === "frequency") return "Needs reach";
+  if (metric === "vtr") return "No video data";
+  return "";
+}
+
+function CellWithHint({ val, fmt, metric, platform }: { val: string; fmt: string; metric: string; platform: string }) {
+  if (val === "—") {
+    const hint = notAvailHint(metric, platform);
+    return hint ? (
+      <span className="relative group cursor-help">
+        <span>—</span>
+        <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1 whitespace-nowrap rounded bg-gray-800 px-2 py-1 text-[10px] font-normal text-white opacity-0 group-hover:opacity-100 transition-opacity z-50">{hint}</span>
+      </span>
+    ) : <span>—</span>;
+  }
+  return <>{val}</>;
+}
 
 function PlatformRow({ label, d, cur, total, color }: { label: string; d: Delivered; cur: string; total: Delivered; color: string }) {
   const bar = (val: number, max: number) => {
@@ -610,9 +708,9 @@ function PlatformRow({ label, d, cur, total, color }: { label: string; d: Delive
       <td className="px-3 py-2 font-semibold">{label}</td>
       <td className="text-right px-3 py-2 tabular-nums">{fmtVal("money", d.spend, cur)}{bar(d.spend, total.spend)}</td>
       <td className="text-right px-3 py-2 tabular-nums">{fmtBig(d.impressions)}{bar(d.impressions, total.impressions)}</td>
-      <td className="text-right px-3 py-2 tabular-nums">{fmtBig(d.reach)}{bar(d.reach, total.reach)}</td>
-      <td className="text-right px-3 py-2 tabular-nums">{fmtVal("decimal", d.frequency, "")}</td>
-      <td className="text-right px-3 py-2 tabular-nums">{fmtVal("pct", d.vtr, "")}</td>
+      <td className="text-right px-3 py-2 tabular-nums"><CellWithHint val={d.reach > 0 ? fmtBig(d.reach) : "—"} fmt="" metric="reach" platform={label} />{d.reach > 0 && bar(d.reach, total.reach)}</td>
+      <td className="text-right px-3 py-2 tabular-nums"><CellWithHint val={fmtVal("decimal", d.frequency, "")} fmt="" metric="frequency" platform={label} /></td>
+      <td className="text-right px-3 py-2 tabular-nums"><CellWithHint val={fmtVal("pct", d.vtr, "")} fmt="" metric="vtr" platform={label} /></td>
       <td className="text-right px-3 py-2 tabular-nums">{fmtVal("pct", d.ctr, "")}</td>
       <td className="text-right px-3 py-2 tabular-nums">{fmtVal("money", d.cpm, cur)}</td>
     </tr>

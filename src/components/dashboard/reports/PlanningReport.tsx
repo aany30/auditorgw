@@ -317,7 +317,7 @@ function DeepDiveDropdown({ items, focusId, setFocusId, platform }: {
   items: DeepDiveItem[];
   focusId: string;
   setFocusId: (id: string) => void;
-  platform?: "meta" | "dv360" | "google_ads";
+  platform?: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify";
 }) {
   const labels: Record<string, string> = platform === "dv360"
     ? { campaign: "Campaign", adset: "IO", ad: "Line Item", adgroup: "Ad Group", creative: "Creative" }
@@ -410,7 +410,7 @@ function ExtraDeepDivePanel({
   byId: Map<string, CampaignData>;
   currency: string;
   metaLifetime: Record<string, any>;
-  aiPlatform: "meta" | "dv360" | "google_ads";
+  aiPlatform: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify";
   dateRange: DateRange;
   onRemove: () => void;
   entityDeliveredMap: Map<string, Delivered>;
@@ -632,7 +632,7 @@ export function PlanningSection({ campaigns, loading, currency, storageSuffix, d
   currency: string;
   storageSuffix: string;
   dateRange: DateRange;
-  aiPlatform: "meta" | "dv360" | "google_ads";
+  aiPlatform: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify";
   lineItemReach?: LIReachMap;
 }) {
   const byId = useMemo(() => new Map(campaigns.map((c) => [c.id, c])), [campaigns]);
@@ -1003,7 +1003,7 @@ export function PlanningSection({ campaigns, loading, currency, storageSuffix, d
       {/* Per-section AI summary */}
       {rows.length > 0 && (
         <div className="flex justify-end">
-          <AIExecutiveSummary tabName={`Planning — ${aiPlatform === "dv360" ? "DV360" : "Meta"}`} context={aiContext} platform={aiPlatform} dateRange={String(dateRange)} inline />
+          <AIExecutiveSummary tabName={`Planning — ${aiPlatform === "dv360" ? "DV360" : aiPlatform === "google_ads" ? "Google Ads" : aiPlatform === "snapchat" ? "Snapchat" : aiPlatform === "spotify" ? "Spotify" : "Meta"}`} context={aiContext} platform={aiPlatform} dateRange={String(dateRange)} inline />
         </div>
       )}
 
@@ -1378,7 +1378,7 @@ export function PlanningSection({ campaigns, loading, currency, storageSuffix, d
               <p className="mt-3 text-[11px] text-gray-500">
                 {isMulti
                   ? `Aggregated delivery for ${focusEntries.length} campaigns. Enter planned targets for the group and save as a named plan.`
-                  : <>Enter planned targets for each metric; delivered is matched from real {aiPlatform === "dv360" ? "DV360" : "Meta"} data and pacing is delivered ÷ planned. Click <span className="font-semibold">Explain the gap</span> for a 2-3 line read on <span className="font-medium">{focus.name}</span>.</>}
+                  : <>Enter planned targets for each metric; delivered is matched from real {aiPlatform === "dv360" ? "DV360" : aiPlatform === "google_ads" ? "Google Ads" : aiPlatform === "snapchat" ? "Snapchat" : aiPlatform === "spotify" ? "Spotify" : "Meta"} data and pacing is delivered ÷ planned. Click <span className="font-semibold">Explain the gap</span> for a 2-3 line read on <span className="font-medium">{focus.name}</span>.</>}
               </p>
 
               {/* ── Hierarchy drill-down — clickable ad set / IO breakdown ── */}
@@ -1742,7 +1742,7 @@ function pacingBadge(planned: number, delivered: number): { text: string; cls: s
   return { text: `${pct}%`, cls };
 }
 
-interface AggTable { key: string; label: string; sub?: string; count: number; delivered: Delivered; gcur: string; platform?: "meta" | "dv360" | "google_ads" }
+interface AggTable { key: string; label: string; sub?: string; count: number; delivered: Delivered; gcur: string; platform?: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify" }
 // A dated capture of planned-vs-delivered for the current view, so a plan can be
 // saved today and re-saved later when delivery changes — kept as a history.
 interface AggSnapshot {
@@ -1769,18 +1769,20 @@ const CHART_RANGES: { label: string; value: DateRange }[] = [
   { label: "90 Days", value: "90d" },
 ];
 
-const CHART_PLATFORMS: { label: string; value: "both" | "meta" | "dv360" | "google_ads" }[] = [
-  { label: "Both", value: "both" },
+const CHART_PLATFORMS: { label: string; value: "both" | "meta" | "dv360" | "google_ads" | "snapchat" | "spotify" }[] = [
+  { label: "All", value: "both" },
   { label: "Meta", value: "meta" },
   { label: "DV360", value: "dv360" },
   { label: "Google Ads", value: "google_ads" },
+  { label: "Snapchat", value: "snapchat" },
+  { label: "Spotify", value: "spotify" },
 ];
 
 export function DailyTrendCharts({ dateRange: parentRange, customStart, customEnd, platform: parentPlatform }: {
   dateRange: DateRange; customStart?: string; customEnd?: string; platform: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify" | "both";
 }) {
   const [localRange, setLocalRange] = useState<DateRange | null>(null);
-  const [localPlatform, setLocalPlatform] = useState<"both" | "meta" | "dv360" | "google_ads" | null>(null);
+  const [localPlatform, setLocalPlatform] = useState<"both" | "meta" | "dv360" | "google_ads" | "snapchat" | "spotify" | null>(null);
   const [localCustomStart, setLocalCustomStart] = useState(customStart || "");
   const [localCustomEnd, setLocalCustomEnd] = useState(customEnd || "");
   const dateRange = localRange ?? parentRange;
@@ -1788,8 +1790,8 @@ export function DailyTrendCharts({ dateRange: parentRange, customStart, customEn
   const effectiveCustomStart = localRange === ("custom" as DateRange) ? localCustomStart : (localRange ? undefined : customStart);
   const effectiveCustomEnd = localRange === ("custom" as DateRange) ? localCustomEnd : (localRange ? undefined : customEnd);
   const platform = localPlatform ?? parentPlatform;
-  const showMeta = platform !== "dv360";
-  const showDv = platform !== "meta";
+  const showMeta = platform === "meta" || platform === "both";
+  const showDv = platform === "dv360" || platform === "both";
 
   const customReady = !isCustom || (!!effectiveCustomStart && !!effectiveCustomEnd);
   const { rows: metaDaily, loading: metaLoading } = useMetaBreakdown("daily", dateRange, effectiveCustomStart, effectiveCustomEnd, showMeta && customReady);
@@ -2238,8 +2240,9 @@ function AggComboPanel({
   );
 }
 
-export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Currency, dateRange, customStart, customEnd, strictWindow = false }: {
+export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Currency, gadsCurrency: gadsCurrencyProp, snapCurrency: snapCurrencyProp, spotifyCurrency: spotifyCurrencyProp, dateRange, customStart, customEnd, strictWindow = false }: {
   campaigns: CampaignData[]; loading: boolean; metaCurrency: string; dv360Currency: string;
+  gadsCurrency?: string; snapCurrency?: string; spotifyCurrency?: string;
   dateRange: DateRange; customStart?: string; customEnd?: string;
   /** When true, honor the date picker strictly — no DV360 all-time / Meta lifetime fallbacks. */
   strictWindow?: boolean;
@@ -2443,7 +2446,14 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
 
   const metaCampaigns = useMemo(() => campaigns.filter((c) => c.platform === "meta"), [campaigns]);
   const dv360Campaigns = useMemo(() => campaigns.filter((c) => c.platform === "dv360"), [campaigns]);
+  const gadsCampaigns = useMemo(() => campaigns.filter((c) => c.platform === "google_ads"), [campaigns]);
+  const snapCampaigns = useMemo(() => campaigns.filter((c) => c.platform === "snapchat"), [campaigns]);
+  const spotifyCampaigns = useMemo(() => campaigns.filter((c) => c.platform === "spotify"), [campaigns]);
   const hasMeta = metaCampaigns.length > 0, hasDv = dv360Campaigns.length > 0;
+  const hasGads = gadsCampaigns.length > 0, hasSnap = snapCampaigns.length > 0, hasSpotify = spotifyCampaigns.length > 0;
+  const gadsCurrency = gadsCurrencyProp || "INR";
+  const snapCurrency = snapCurrencyProp || "INR";
+  const spotifyCurrency = spotifyCurrencyProp || "INR";
 
   // Auto-purge stale DV360 Channel selections whose dimensionValue no longer
   // matches any current campaign name (leftovers from when Channel was an
@@ -2909,11 +2919,10 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
   const tables = useMemo<AggTable[]>(() => {
     if (groupBy === "overall") {
       const delivered = deliveredOfGroup(campaigns, strictWindow);
-      // Currency choice: when only one platform is active, use its currency.
-      // When both are active, prefer DV360's (typically the account's local
-      // currency, e.g. INR) so the combined figure isn't shown in Meta's
-      // billing currency (often USD).
-      const gcur = hasDv && hasMeta ? dv360Currency : (hasDv ? dv360Currency : metaCurrency);
+      // Most-common currency across all campaigns.
+      const freq: Record<string, number> = {};
+      for (const c of campaigns) { const k = c.currency || "INR"; freq[k] = (freq[k] || 0) + 1; }
+      const gcur = Object.entries(freq).sort((a, b) => b[1] - a[1])[0]?.[0] || metaCurrency || dv360Currency || "INR";
       return [{ key: "overall", label: "Overall — all campaigns", count: campaigns.length, delivered, gcur }];
     }
     // For channel/objective/creative, when hier is engaged, delegate to
@@ -2942,14 +2951,20 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
         out.push({ key: mainComboKey("channel", "meta", metaChannel), label: "Meta", sub, count: metaCampaigns.length, delivered: d, gcur: metaCurrency, platform: "meta" });
       }
       if (hasDv) {
-        // DV360 Channel is now a Campaign → IO → LI drill (dimensionValue =
-        // campaign name), so always route through hierDelivered when hier
-        // has entries — the old dvExch flat filter would miss every row.
         const d = dv360ChannelHier.length > 0
           ? dv360HierDelivered(dv360ChannelHier)
           : deliveredOfGroup(dv360Campaigns, strictWindow);
         const sub = subLabelForHier(dv360ChannelHier, "All campaigns");
         out.push({ key: mainComboKey("channel", "dv360", dv360Channel), label: "DV360", sub, count: dv360Campaigns.length, delivered: d, gcur: dv360Currency, platform: "dv360" });
+      }
+      if (hasGads) {
+        out.push({ key: "channel:google_ads:all", label: "Google Ads", sub: "All campaigns", count: gadsCampaigns.length, delivered: deliveredOfGroup(gadsCampaigns, strictWindow), gcur: gadsCurrency, platform: "google_ads" });
+      }
+      if (hasSnap) {
+        out.push({ key: "channel:snapchat:all", label: "Snapchat", sub: "All campaigns", count: snapCampaigns.length, delivered: deliveredOfGroup(snapCampaigns, strictWindow), gcur: snapCurrency, platform: "snapchat" });
+      }
+      if (hasSpotify) {
+        out.push({ key: "channel:spotify:all", label: "Spotify", sub: "All campaigns", count: spotifyCampaigns.length, delivered: deliveredOfGroup(spotifyCampaigns, strictWindow), gcur: spotifyCurrency, platform: "spotify" });
       }
       return out;
     }
@@ -2970,6 +2985,15 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
           : deliveredOfGroup(dc, strictWindow);
         const sub = subLabelForHier(dv360ObjectiveHier, "All objectives");
         out.push({ key: mainComboKey("objective", "dv360", dv360Objective), label: "DV360", sub, count: dc.length, delivered: d, gcur: dv360Currency, platform: "dv360" });
+      }
+      if (hasGads) {
+        out.push({ key: "obj:google_ads:all", label: "Google Ads", sub: "All objectives", count: gadsCampaigns.length, delivered: deliveredOfGroup(gadsCampaigns, strictWindow), gcur: gadsCurrency, platform: "google_ads" });
+      }
+      if (hasSnap) {
+        out.push({ key: "obj:snapchat:all", label: "Snapchat", sub: "All objectives", count: snapCampaigns.length, delivered: deliveredOfGroup(snapCampaigns, strictWindow), gcur: snapCurrency, platform: "snapchat" });
+      }
+      if (hasSpotify) {
+        out.push({ key: "obj:spotify:all", label: "Spotify", sub: "All objectives", count: spotifyCampaigns.length, delivered: deliveredOfGroup(spotifyCampaigns, strictWindow), gcur: spotifyCurrency, platform: "spotify" });
       }
       return out;
     }
@@ -2992,6 +3016,15 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
             : sumRowsDelivered(dvCreativeType.rows.filter((r) => dv360Creative.includes(r.label)));
         const sub = subLabelForHier(dv360CreativeHier, "All creative types");
         out.push({ key: mainComboKey("creative", "dv360", dv360Creative), label: "DV360", sub, count: dv360Campaigns.length, delivered: d, gcur: dv360Currency, platform: "dv360" });
+      }
+      if (hasGads) {
+        out.push({ key: "creative:google_ads:all", label: "Google Ads", sub: "All campaigns", count: gadsCampaigns.length, delivered: deliveredOfGroup(gadsCampaigns, strictWindow), gcur: gadsCurrency, platform: "google_ads" });
+      }
+      if (hasSnap) {
+        out.push({ key: "creative:snapchat:all", label: "Snapchat", sub: "All campaigns", count: snapCampaigns.length, delivered: deliveredOfGroup(snapCampaigns, strictWindow), gcur: snapCurrency, platform: "snapchat" });
+      }
+      if (hasSpotify) {
+        out.push({ key: "creative:spotify:all", label: "Spotify", sub: "All campaigns", count: spotifyCampaigns.length, delivered: deliveredOfGroup(spotifyCampaigns, strictWindow), gcur: spotifyCurrency, platform: "spotify" });
       }
       return out;
     }
@@ -3100,16 +3133,36 @@ export function AggregatePlanning({ campaigns, loading, metaCurrency, dv360Curre
         : subLabelForHier(dv360AudienceHier, `All line items (${filteredLi.length})`);
       out.push({ key: "aud:dv360", label: "DV360", sub: subLabel, count: filteredLi.length, delivered: d, gcur: dv360Currency, platform: "dv360" });
     }
+    if (hasGads) {
+      out.push({ key: "aud:google_ads", label: "Google Ads", sub: "All campaigns", count: gadsCampaigns.length, delivered: deliveredOfGroup(gadsCampaigns, strictWindow), gcur: gadsCurrency, platform: "google_ads" });
+    }
+    if (hasSnap) {
+      out.push({ key: "aud:snapchat", label: "Snapchat", sub: "All campaigns", count: snapCampaigns.length, delivered: deliveredOfGroup(snapCampaigns, strictWindow), gcur: snapCurrency, platform: "snapchat" });
+    }
+    if (hasSpotify) {
+      out.push({ key: "aud:spotify", label: "Spotify", sub: "All campaigns", count: spotifyCampaigns.length, delivered: deliveredOfGroup(spotifyCampaigns, strictWindow), gcur: spotifyCurrency, platform: "spotify" });
+    }
     return out;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groupBy, campaigns, metaCampaigns, dv360Campaigns, hasMeta, hasDv, metaChannel, dv360Channel, metaObjective, dv360Objective, metaCreative, dv360Creative, metaChannelHier, dv360ChannelHier, metaObjectiveHier, dv360ObjectiveHier, metaCreativeHier, dv360CreativeHier, metaPub.rows, dvExch.rows, dvCreativeType.rows, metaFormatRows, metaAdRowsFull, metaAdSets.rows, metaCurrency, dv360Currency, metaAudFilter, dv360AudFilter, metaAdSets.loading, dv360LineItems.rows, dv360LineItems.loading, audNameToAdSetMatch, strictWindow]);
+  }, [groupBy, campaigns, metaCampaigns, dv360Campaigns, gadsCampaigns, snapCampaigns, spotifyCampaigns, hasMeta, hasDv, hasGads, hasSnap, hasSpotify, metaChannel, dv360Channel, metaObjective, dv360Objective, metaCreative, dv360Creative, metaChannelHier, dv360ChannelHier, metaObjectiveHier, dv360ObjectiveHier, metaCreativeHier, dv360CreativeHier, metaPub.rows, dvExch.rows, dvCreativeType.rows, metaFormatRows, metaAdRowsFull, metaAdSets.rows, metaCurrency, dv360Currency, gadsCurrency, snapCurrency, spotifyCurrency, metaAudFilter, dv360AudFilter, metaAdSets.loading, dv360LineItems.rows, dv360LineItems.loading, audNameToAdSetMatch, strictWindow]);
 
   const joinSel = (v: string[]) => (v.length === 0 ? "All" : v.join(" + "));
+  const scopeParts = (dimension: string, metaSel: string[], dvSel: string[]) => {
+    const parts: string[] = [];
+    if (hasMeta) parts.push(`Meta: ${joinSel(metaSel)}`);
+    if (hasDv) parts.push(`DV360: ${joinSel(dvSel)}`);
+    if (hasGads) parts.push("Google Ads: All");
+    if (hasSnap) parts.push("Snapchat: All");
+    if (hasSpotify) parts.push("Spotify: All");
+    return `By ${dimension} (${parts.join(", ")})`;
+  };
   const scopeLabel = groupBy === "overall" ? "Overall"
-    : groupBy === "channel" ? `By channel (Meta: ${joinSel(metaChannel)}, DV360: ${joinSel(dv360Channel)})`
-    : groupBy === "objective" ? `By objective (Meta: ${joinSel(metaObjective)}, DV360: ${joinSel(dv360Objective)})`
-    : groupBy === "audience" ? `By audience (Meta: ${metaAudienceHier.length === 0 ? "All" : metaAudienceHier.map((n) => n.dimensionValue).join(" + ")}, DV360: ${dv360AudienceHier.length === 0 ? "All" : dv360AudienceHier.map((n) => n.dimensionValue).join(" + ")})`
-    : `By creative (Meta: ${joinSel(metaCreative)}, DV360: ${joinSel(dv360Creative)})`;
+    : groupBy === "channel" ? scopeParts("channel", metaChannel, dv360Channel)
+    : groupBy === "objective" ? scopeParts("objective", metaObjective, dv360Objective)
+    : groupBy === "audience" ? scopeParts("audience",
+        metaAudienceHier.length === 0 ? [] : metaAudienceHier.map((n) => n.dimensionValue),
+        dv360AudienceHier.length === 0 ? [] : dv360AudienceHier.map((n) => n.dimensionValue))
+    : scopeParts("creative", metaCreative, dv360Creative);
 
   // Gap explainer data — the current view's PLANNED (user inputs) vs DELIVERED,
   // combined across the visible groups. Additive metrics are summed; ratio
@@ -3800,7 +3853,7 @@ ${deepDivePlanPagesAll}
 
   // Main-row selectors are multi-select — pick several values (e.g. Facebook +
   // Instagram + WhatsApp) to see them combined into one aggregated row.
-  const channelDropdown = (platform: "meta" | "dv360" | "google_ads") => {
+  const channelDropdown = (platform: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify") => {
     const isMeta = platform === "meta";
     const sel = isMeta ? metaChannelHier : dv360ChannelHier;
     const setSel = isMeta ? setMetaChannelHier : setDv360ChannelHier;
@@ -3824,7 +3877,7 @@ ${deepDivePlanPagesAll}
     );
   };
 
-  const objectiveDropdown = (platform: "meta" | "dv360" | "google_ads") => {
+  const objectiveDropdown = (platform: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify") => {
     const isMeta = platform === "meta";
     const sel = isMeta ? metaObjectiveHier : dv360ObjectiveHier;
     const setSel = isMeta ? setMetaObjectiveHier : setDv360ObjectiveHier;
@@ -3842,7 +3895,7 @@ ${deepDivePlanPagesAll}
     );
   };
 
-  const creativeDropdown = (platform: "meta" | "dv360" | "google_ads") => {
+  const creativeDropdown = (platform: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify") => {
     const isMeta = platform === "meta";
     const sel = isMeta ? metaCreativeHier : dv360CreativeHier;
     const setSel = isMeta ? setMetaCreativeHier : setDv360CreativeHier;
@@ -3868,7 +3921,7 @@ ${deepDivePlanPagesAll}
     );
   };
 
-  const audienceDropdown = (platform: "meta" | "dv360" | "google_ads") => {
+  const audienceDropdown = (platform: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify") => {
     const isMeta = platform === "meta";
     const sel = isMeta ? metaAudienceHier : dv360AudienceHier;
     const setSel = isMeta ? setMetaAudienceHier : setDv360AudienceHier;

@@ -128,6 +128,7 @@ export default async function handler(
         spend: stats?.spend ?? 0,
         impressions: stats?.impressions ?? 0,
         clicks: stats?.swipes ?? 0, // Snapchat uses "swipes" as click-equivalent
+        videoViews: stats?.videoViews ?? 0,
         conversions: stats?.conversions ?? 0,
         conversionValue: 0,
         dailyBudget: c.dailyBudgetMicro ? c.dailyBudgetMicro / 1_000_000 : undefined,
