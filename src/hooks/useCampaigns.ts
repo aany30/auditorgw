@@ -18,9 +18,13 @@ import type { DateRange } from "@/components/shared/DateRangePicker";
 // Keyed by advertiserId + date range so different windows never cross-pollinate.
 const DV360_SWR_TTL_MS = 5 * 60 * 1000;
 
-/** Soft notice (not a hard error) shown when DV360's live fetch failed but we
+/** Soft notice (not a hard error) shown when DV360's live fetch timed out but we
  *  served the last-good cache. Excluded from the red `error` banner. */
 const DV360_CACHED_NOTICE = "DV360 showing recent cached data (live refresh pending)";
+
+/** Hard, actionable error for a persistent DV360 auth failure (expired/revoked
+ *  Google token). Shown in the red banner because it won't self-resolve. */
+const DV360_AUTH_ERROR = "DV360: Google session expired — reconnect your Google account under Manage Accounts to refresh data.";
 
 /** Max age for the failure-fallback cache read. Longer than the normal TTL so a
  *  sustained DV360 outage keeps showing last-known data rather than collapsing
@@ -341,12 +345,28 @@ export function useCampaigns(
               }
             } else {
               const body = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
-              errs[key] = body.error || `${key} API error (HTTP ${r.status})`;
-              if (key === "dv360" && dv360CacheFallback()) {
-                errs[key] = DV360_CACHED_NOTICE;
+              const msg = body.error || `${key} API error (HTTP ${r.status})`;
+              if (key === "dv360") {
+                // A persistent auth failure (expired/revoked Google token) will
+                // never self-refresh — surface it as a clear, actionable error
+                // instead of masking it behind the soft "cached data" notice.
+                const isAuth = r.status === 401 || r.status === 403 ||
+                  /invalid_grant|expired|revoked|unauthor/i.test(msg);
+                if (isAuth) {
+                  dv360CacheFallback(); // still show cached data so the page isn't empty
+                  errs[key] = DV360_AUTH_ERROR;
+                } else if (dv360CacheFallback()) {
+                  errs[key] = DV360_CACHED_NOTICE;
+                } else {
+                  errs[key] = msg;
+                }
+              } else {
+                errs[key] = msg;
               }
             }
           } catch (e) {
+            // Network-level failure (gateway timeout on the async Bid Manager
+            // report) — transient, so serve the cache as a soft notice.
             errs[key] = e instanceof Error ? e.message : `${key} fetch failed`;
             if (key === "dv360" && dv360CacheFallback()) {
               errs[key] = DV360_CACHED_NOTICE;
