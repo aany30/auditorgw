@@ -66,16 +66,18 @@ function buttonIcon(a: ApplyAction) {
   return <Zap className="h-3.5 w-3.5" />;
 }
 
-function reauthLink(platform: "meta" | "dv360" | "google_ads" | "snapchat"): string {
+function reauthLink(platform: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify"): string {
   if (platform === "meta") return "/api/auth/meta/start";
   if (platform === "snapchat") return "/api/auth/snapchat/start";
+  if (platform === "spotify") return "/api/auth/spotify/start";
   return "/api/auth/google/start";
 }
 
-function platformLabel(p: "meta" | "dv360" | "google_ads" | "snapchat"): string {
+function platformLabel(p: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify"): string {
   if (p === "meta") return "Meta";
   if (p === "google_ads") return "Google Ads";
   if (p === "snapchat") return "Snapchat";
+  if (p === "spotify") return "Spotify";
   return "DV360";
 }
 
@@ -169,6 +171,8 @@ export default function ApplyActionButton({ action, onApplied, compact, disabled
           ? "/api/apply/google-ads"
           : actionToRun.platform === "snapchat"
           ? "/api/apply/snapchat"
+          : actionToRun.platform === "spotify"
+          ? "/api/apply/spotify"
           : "/api/apply/dv360";
       const body: Record<string, unknown> = { action: actionToRun };
       if (actionToRun.platform === "meta") {
@@ -185,6 +189,11 @@ export default function ApplyActionButton({ action, onApplied, compact, disabled
         if (auth.snapchatClientSecret) body.clientSecret = auth.snapchatClientSecret;
         if (auth.snapchatRefreshToken) body.refreshToken = auth.snapchatRefreshToken;
         if (auth.snapchatAdAccountId) body.adAccountId = auth.snapchatAdAccountId;
+      } else if (actionToRun.platform === "spotify") {
+        if (auth.spotifyClientId) body.clientId = auth.spotifyClientId;
+        if (auth.spotifyClientSecret) body.clientSecret = auth.spotifyClientSecret;
+        if (auth.spotifyRefreshToken) body.refreshToken = auth.spotifyRefreshToken;
+        if (auth.spotifyAdAccountId) body.adAccountId = auth.spotifyAdAccountId;
       } else {
         if (auth.dv360ClientId) body.clientId = auth.dv360ClientId;
         if (auth.dv360ClientSecret) body.clientSecret = auth.dv360ClientSecret;

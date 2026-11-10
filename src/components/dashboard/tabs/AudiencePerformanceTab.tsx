@@ -41,7 +41,7 @@ function buildAdSetApplyContext(a: AdSetRow, currency: string): ApplyContext {
   const eff = (a.effectiveStatus || a.status || "").toUpperCase();
   const plat = (a as any)._nonMetaPlatform || "meta";
   return {
-    platform: plat as "meta" | "dv360" | "google_ads" | "snapchat",
+    platform: plat as "meta" | "dv360" | "google_ads" | "snapchat" | "spotify",
     entityType: plat === "meta" ? "adset" : "campaign",
     entityId: a.id,
     entityName: a.name,
@@ -92,8 +92,6 @@ function adSetRecoStatus(a: AdSetRow): "bad" | "warn" | "moderate" {
 let _applyIdSeq = 0;
 function buildAdSetApplyAction(a: AdSetRow, currency: string): ApplyAction | null {
   const plat = ((a as any)._nonMetaPlatform || "meta") as string;
-  // Spotify is read-only — no Apply actions
-  if (plat === "spotify") return null;
   const eff = (a.effectiveStatus || a.status || "").toUpperCase();
   const roas = a.spend > 0 ? a.conversionValue / a.spend : 0;
   const entityType = plat === "meta" ? "adset" : "campaign";

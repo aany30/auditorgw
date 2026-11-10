@@ -12,7 +12,7 @@ import type { ApplyAction } from "./types";
 import { parseSuggestedAction, type AiSuggestedAction } from "./suggest-from-text";
 
 export interface ApplyContext {
-  platform: "meta" | "dv360" | "google_ads" | "snapchat";
+  platform: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify";
   entityType: "campaign" | "adset" | "ad" | "lineitem" | "insertion_order" | "ad_squad";
   entityId: string;
   entityName: string;
