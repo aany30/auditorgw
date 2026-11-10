@@ -268,6 +268,10 @@ export interface AdSetData {
    * each campaign's OWN attribution to the Insights edge so conversions match
    * Ads Manager exactly. Example: [{event_type:"CLICK_THROUGH", window_days:1}]. */
   attributionSpec?: Array<{ event_type: string; window_days: number }>;
+  /** Ad-set budget in account currency major units. On Spotify budget lives on
+   *  the ad set (ABO), so this is the authoritative budget for budget changes. */
+  dailyBudget?: number;
+  lifetimeBudget?: number;
   ads: AdData[];
 }
 

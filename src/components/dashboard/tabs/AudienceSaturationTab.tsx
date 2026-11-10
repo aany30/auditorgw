@@ -25,7 +25,7 @@ import { ColumnPickerButton, ALL_STANDARD_KPIS, type ColDef } from "@/components
 import { formatStandardKpi, FETCHABLE_KPIS } from "@/lib/standard-kpis";
 import { usePersistentColumns } from "@/hooks/useColumnPrefs";
 import ApplyActionButton from "@/components/apply/ApplyActionButton";
-import type { SetFrequencyCapAction } from "@/lib/apply/types";
+import type { SetFrequencyCapAction, SetBudgetAction } from "@/lib/apply/types";
 
 interface Props {
   platform: "meta" | "dv360" | "google_ads" | "snapchat" | "spotify" | "both";
@@ -743,12 +743,18 @@ interface CampaignSatRow {
   conversions: number; conversionValue: number;
   ctr: number; cpm: number; cpc: number; cpa: number; roas: number;
   spendPct: number; reachPct: number; fatigueSev: number;
+  /** For platforms whose budget lives on a single ad set (Spotify): the ad set
+   *  to target for a budget change, and its current daily budget (currency units). */
+  budgetAdSetId?: string; adSetDailyBudget?: number;
 }
 
 function toCampaignSatRows(camps: CampaignData[], reachAvailable: boolean): CampaignSatRow[] {
   const totalSpend = camps.reduce((s, c) => s + (c.spend || 0), 0);
   const totalReach = reachAvailable ? camps.reduce((s, c) => s + (c.reach || 0), 0) : 0;
   return camps.map((c) => {
+    // A single ad set with a daily budget → a clean budget-change target.
+    const budgetedSets = (c.adSets ?? []).filter((a) => (a.dailyBudget ?? 0) > 0);
+    const singleSet = budgetedSets.length === 1 ? budgetedSets[0] : undefined;
     const spend = c.spend || 0, impressions = c.impressions || 0, clicks = c.clicks || 0;
     const reach = reachAvailable ? (c.reach || 0) : 0;
     const conversions = c.conversions || 0, conversionValue = c.conversionValue || 0;
@@ -764,6 +770,8 @@ function toCampaignSatRows(camps: CampaignData[], reachAvailable: boolean): Camp
       spendPct: totalSpend > 0 ? (spend / totalSpend) * 100 : 0,
       reachPct: totalReach > 0 ? (reach / totalReach) * 100 : 0,
       fatigueSev: frequency >= 5 ? 2 : frequency >= 3 ? 1 : 0,
+      budgetAdSetId: singleSet?.id,
+      adSetDailyBudget: singleSet?.dailyBudget,
     };
   });
 }
@@ -983,7 +991,7 @@ function CampaignExpansionView({ platformKey, label, rows, loading, currency }: 
                           ? <span className="text-gray-300" title={rec.reason}>—</span>
                           : <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${rec.color}`} title={rec.reason}>{rec.label}</span>}
                         {(rec.label === "Scale" || rec.label === "Reduce") && (
-                          <div className="mt-1">
+                          <div className="mt-1 flex items-center justify-center gap-1">
                             <AIRecommendationButton
                               metric={`${rec.label} "${r.name}" — ${rec.reason}`}
                               value={mode === "roas" ? r.roas : mode === "cpa" ? r.cpa : r.cpm}
@@ -991,6 +999,26 @@ function CampaignExpansionView({ platformKey, label, rows, loading, currency }: 
                               platform={platformKey}
                               auditContext={{ module: `${label} Expansion Opportunity`, siblingMetrics: { action: rec.label, spendSharePct: +r.spendPct.toFixed(1), roas: +r.roas.toFixed(2), cpa: r.cpa, cpm: +r.cpm.toFixed(2), spend: r.spend } }}
                             />
+                            {platformKey === "spotify" && r.budgetAdSetId && (r.adSetDailyBudget ?? 0) > 0 && (() => {
+                              // Spotify budget lives on the ad set. Scale = +25%, Reduce = −20%.
+                              const factor = rec.label === "Scale" ? 1.25 : 0.8;
+                              const fromMinor = Math.round((r.adSetDailyBudget as number) * 100);
+                              const toMinor = Math.round(fromMinor * factor);
+                              const action: SetBudgetAction = {
+                                id: `spotify-budget-${r.budgetAdSetId}`,
+                                platform: "spotify",
+                                entityType: "ad_set",
+                                entityId: r.budgetAdSetId as string,
+                                entityName: r.name,
+                                kind: "set_budget",
+                                budgetType: "daily",
+                                from: fromMinor,
+                                to: toMinor,
+                                currency,
+                                reason: `${rec.label} Spotify ad-set budget (${rec.reason})`,
+                              };
+                              return <ApplyActionButton action={action} compact />;
+                            })()}
                           </div>
                         )}
                       </td>

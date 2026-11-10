@@ -158,6 +158,8 @@ export default async function handler(
         spend: 0,
         impressions: 0,
         clicks: 0,
+        dailyBudget: as_.dailyBudget,
+        lifetimeBudget: as_.lifetimeBudget,
         ads: setAds,
       };
       const arr = adSetsByCampaign.get(as_.campaignId) ?? [];
@@ -176,6 +178,10 @@ export default async function handler(
       } else if (sets.length > 0 && sets.every((s) => s.status === "PAUSED" || s.status === "COMPLETED")) {
         effectiveStatus = "PAUSED";
       }
+      // Spotify budget lives on ad sets (ABO). Sum active ad-set daily budgets
+      // for campaign-level display; apply still targets the individual ad set.
+      const dailyBudget = sets.reduce((s, a) => s + (a.dailyBudget ?? 0), 0) || undefined;
+      const lifetimeBudget = sets.reduce((s, a) => s + (a.lifetimeBudget ?? 0), 0) || undefined;
       return {
         id: c.id,
         name: c.name,
@@ -188,6 +194,9 @@ export default async function handler(
         reach: stats?.reach ?? 0,
         conversions: 0,
         conversionValue: 0,
+        dailyBudget,
+        lifetimeBudget,
+        budgetLevel: "adset" as const,
         currency: "INR",
         adSets: sets,
       };

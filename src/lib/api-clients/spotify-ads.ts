@@ -69,6 +69,10 @@ export interface SpotifyAdSet {
   spend?: number;
   reach?: number;
   completionRate?: number;
+  /** Budget in currency units (micros ÷ 1,000,000), from the ad set's
+   *  `budget` object. Budget lives on the ad set in Spotify, not the campaign. */
+  dailyBudget?: number;
+  lifetimeBudget?: number;
 }
 
 export interface SpotifyAd {
@@ -209,27 +213,31 @@ export class SpotifyAdsApiClient {
   // ─── Ad Sets ──────────────────────────────────────────────────────────
 
   async listAdSets(): Promise<SpotifyAdSet[]> {
-    const data = await this.request<{
-      ad_sets?: Array<{
-        ad_set_id?: string; id?: string;
-        name?: string; ad_set_name?: string;
-        campaign_id?: string;
-        status?: string;
-      }>;
-      data?: Array<{
-        ad_set_id?: string; id?: string;
-        name?: string; ad_set_name?: string;
-        campaign_id?: string;
-        status?: string;
-      }>;
-    }>(`/ad_accounts/${this.creds.adAccountId}/ad_sets`);
+    type RawAdSet = {
+      ad_set_id?: string; id?: string;
+      name?: string; ad_set_name?: string;
+      campaign_id?: string;
+      status?: string;
+      budget?: { micro_amount?: number | string; type?: string };
+    };
+    const data = await this.request<{ ad_sets?: RawAdSet[]; data?: RawAdSet[] }>(
+      `/ad_accounts/${this.creds.adAccountId}/ad_sets`,
+    );
     const adSets = data.ad_sets || data.data || [];
-    return adSets.map((a) => ({
-      id: a.ad_set_id || a.id || "",
-      campaignId: a.campaign_id || "",
-      name: a.name || a.ad_set_name || "",
-      status: a.status || "UNKNOWN",
-    }));
+    return adSets.map((a) => {
+      // Budget is micros (÷ 1,000,000) on a { micro_amount, type } object.
+      const micro = Number(a.budget?.micro_amount ?? 0);
+      const amount = micro > 0 ? micro / 1_000_000 : undefined;
+      const isLifetime = (a.budget?.type || "").toUpperCase() === "LIFETIME";
+      return {
+        id: a.ad_set_id || a.id || "",
+        campaignId: a.campaign_id || "",
+        name: a.name || a.ad_set_name || "",
+        status: a.status || "UNKNOWN",
+        dailyBudget: !isLifetime ? amount : undefined,
+        lifetimeBudget: isLifetime ? amount : undefined,
+      };
+    });
   }
 
   // ─── Ads ──────────────────────────────────────────────────────────────
