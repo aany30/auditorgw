@@ -691,7 +691,9 @@ function Dv360ExpansionView({ rows, revenueAvailable, loading, pending, currency
                         <td key={id} className="px-4 py-2.5 text-right text-gray-700 whitespace-nowrap">{fmtDvCol(id, r, currency)}</td>
                       ))}
                       <td className="px-4 py-2.5 text-center">
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${rec.color}`} title={rec.reason}>{rec.label}</span>
+                        {rec.label === "—"
+                          ? <span className="text-gray-300" title={rec.reason}>—</span>
+                          : <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${rec.color}`} title={rec.reason}>{rec.label}</span>}
                         {(rec.label === "Scale" || rec.label === "Reduce") && (
                           <div className="mt-1">
                             <AIRecommendationButton
@@ -881,16 +883,23 @@ function CampaignSaturationView({ platformKey, label, rows, reachAvailable, load
   );
 }
 
-function CampaignExpansionView({ platformKey, label, rows, mode, loading, currency }: {
+function CampaignExpansionView({ platformKey, label, rows, loading, currency }: {
   platformKey: "google_ads" | "snapchat" | "spotify"; label: string;
-  rows: CampaignSatRow[]; mode: "roas" | "cpa" | "cpm"; loading: boolean; currency: string;
+  rows: CampaignSatRow[]; loading: boolean; currency: string;
 }) {
+  // Pick the ranking metric from the data actually present, so a platform/window
+  // with no revenue or conversions still gets meaningful Scale/Reduce actions
+  // (via CPM reach-cost efficiency) instead of "Review" on every row.
+  const mode: "roas" | "cpa" | "cpm" =
+    rows.some((r) => r.conversionValue > 0) ? "roas"
+    : rows.some((r) => r.conversions > 0) ? "cpa"
+    : "cpm";
   const cols = mode === "roas" ? ["spend", "spendPct", "revenue", "roas"]
     : mode === "cpa" ? ["spend", "spendPct", "conversions", "cpa"]
-    : ["spend", "spendPct", "reach", "cpm"];
+    : ["spend", "spendPct", "impressions", "cpm"];
   const colLabels: Record<string, string> = {
     spend: "Spend", spendPct: "Spend %", revenue: "Revenue", roas: "ROAS",
-    conversions: "Conv.", cpa: "CPA", reach: "Reach", cpm: "CPM",
+    conversions: "Conv.", cpa: "CPA", impressions: "Impr.", cpm: "CPM",
   };
   const { sorted, sort, toggle } = useSort(rows, "spendPct", "desc");
 
@@ -907,6 +916,9 @@ function CampaignExpansionView({ platformKey, label, rows, mode, loading, curren
     const REDUCE = { label: "Reduce", color: "bg-red-100 text-red-800" };
     const MAINTAIN = { label: "Maintain", color: "bg-blue-100 text-blue-800" };
     const REVIEW = { label: "Review", color: "bg-gray-100 text-gray-600" };
+    const NONE = { label: "—", color: "", reason: "No delivery in this window — nothing to act on." };
+    // No spend = no delivery; don't push a "Review" on dormant campaigns.
+    if (r.spend === 0) return NONE;
     if (mode === "roas") {
       if (r.roas === 0) return { ...REVIEW, reason: "No attributed revenue — verify conversion tracking before acting." };
       if (avgRoas > 0 && r.roas >= avgRoas * 1.2) return { ...SCALE, reason: `ROAS ${r.roas.toFixed(2)}× is above the account average (${avgRoas.toFixed(2)}×) — shift more budget here.` };
@@ -967,7 +979,9 @@ function CampaignExpansionView({ platformKey, label, rows, mode, loading, curren
                         <td key={id} className="px-4 py-2.5 text-right text-gray-700 whitespace-nowrap">{fmtCampCol(id, r, currency)}</td>
                       ))}
                       <td className="px-4 py-2.5 text-center">
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${rec.color}`} title={rec.reason}>{rec.label}</span>
+                        {rec.label === "—"
+                          ? <span className="text-gray-300" title={rec.reason}>—</span>
+                          : <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${rec.color}`} title={rec.reason}>{rec.label}</span>}
                         {(rec.label === "Scale" || rec.label === "Reduce") && (
                           <div className="mt-1">
                             <AIRecommendationButton
@@ -1109,19 +1123,19 @@ export default function AudienceSaturationTab({ platform, dateRange, customStart
           {showGads && (
             <>
               {platform === "both" && <PlatformDivider label="Google Ads" sub="Google Ads" />}
-              <CampaignExpansionView platformKey="google_ads" label="Google Ads" rows={gadsRows} mode="roas" loading={campLoading} currency={googleAdsCurrency || "USD"} />
+              <CampaignExpansionView platformKey="google_ads" label="Google Ads" rows={gadsRows} loading={campLoading} currency={googleAdsCurrency || "USD"} />
             </>
           )}
           {showSnap && (
             <>
               {platform === "both" && <PlatformDivider label="Snapchat" sub="Snapchat Ads" />}
-              <CampaignExpansionView platformKey="snapchat" label="Snapchat" rows={snapRows} mode="cpa" loading={campLoading} currency={snapchatCurrency || "USD"} />
+              <CampaignExpansionView platformKey="snapchat" label="Snapchat" rows={snapRows} loading={campLoading} currency={snapchatCurrency || "USD"} />
             </>
           )}
           {showSpotify && (
             <>
               {platform === "both" && <PlatformDivider label="Spotify" sub="Spotify Ad Studio" />}
-              <CampaignExpansionView platformKey="spotify" label="Spotify" rows={spotifyRows} mode="cpm" loading={campLoading} currency={spotifyCurrency || "USD"} />
+              <CampaignExpansionView platformKey="spotify" label="Spotify" rows={spotifyRows} loading={campLoading} currency={spotifyCurrency || "USD"} />
             </>
           )}
         </>
