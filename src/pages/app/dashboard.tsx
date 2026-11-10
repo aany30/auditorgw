@@ -50,6 +50,7 @@ import {
   CreativesHistoryTab,
 } from "@/components/dashboard/AdLibraryTabs";
 import AccountSelector from "@/components/dashboard/AccountSelector";
+import GoogleReconnectBanner from "@/components/dashboard/GoogleReconnectBanner";
 import CampaignObjectiveFilter from "@/components/dashboard/CampaignObjectiveFilter";
 import PlatformFilter, { PlatformValue, toLegacyPlatform } from "@/components/dashboard/PlatformFilter";
 import DateRangePicker, { DateRange } from "@/components/shared/DateRangePicker";
@@ -949,8 +950,9 @@ export default function Dashboard() {
               refetches data for the newly selected account. */}
           <div
             key={`acct:${metaBusinessId || "-"}:${dv360AdvertiserId || "-"}:${googleAdsCustomerId || "-"}:${snapchatAdAccountId || "-"}:${spotifyAdAccountId || "-"}`}
-            className="p-8"
+            className="p-8 space-y-4"
           >
+            <GoogleReconnectBanner />
             {renderTabContent()}
           </div>
         </main>
