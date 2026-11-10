@@ -192,6 +192,27 @@ function audienceBadge(cls: AudienceClassification) {
   return badge;
 }
 
+// ─── Platform badge ──────────────────────────────────────────────────────────
+// Each row/campaign carries a small colored chip naming its platform, so a
+// mixed "All platforms" view stays readable instead of a flat list of campaigns.
+
+const PLATFORM_BADGE: Record<string, { label: string; cls: string }> = {
+  meta:       { label: "Meta",       cls: "bg-blue-100 text-blue-700" },
+  dv360:      { label: "DV360",      cls: "bg-purple-100 text-purple-700" },
+  google_ads: { label: "Google Ads", cls: "bg-red-100 text-red-700" },
+  snapchat:   { label: "Snapchat",   cls: "bg-amber-100 text-amber-700" },
+  spotify:    { label: "Spotify",    cls: "bg-green-100 text-green-700" },
+};
+
+function platformOf(a: AdSetRow): string {
+  return ((a as any)._nonMetaPlatform as string) || "meta";
+}
+
+function PlatformBadge({ platform }: { platform: string }) {
+  const m = PLATFORM_BADGE[platform] ?? { label: platform, cls: "bg-gray-100 text-gray-600" };
+  return <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold leading-none ${m.cls}`}>{m.label}</span>;
+}
+
 // ─── Shared formatters ───────────────────────────────────────────────────────
 
 function fmtMoney(n: number, cur: string) { return formatMoney(n, cur, 0); }
@@ -392,7 +413,12 @@ function DrillDownRow({ adSets, currency, colCount, audienceMap }: { adSets: AdS
                 const applyAction = buildAdSetApplyAction(a, currency);
                 return (
                   <tr key={a.id} className="border-b border-blue-50 hover:bg-blue-50">
-                    <td className="px-6 py-1.5 text-gray-700 font-mono break-words max-w-[280px]" title={a.name}>{a.name}</td>
+                    <td className="px-6 py-1.5 text-gray-700 font-mono break-words max-w-[280px]" title={a.name}>
+                      <span className="inline-flex items-start gap-1.5">
+                        <PlatformBadge platform={platformOf(a)} />
+                        <span>{a.name}</span>
+                      </span>
+                    </td>
                     <td className="px-4 py-1.5 text-right font-semibold text-gray-700">{cur(a.spend)}</td>
                     <td className="px-4 py-1.5 text-right text-gray-600">{Math.round(a.impressions).toLocaleString("en-IN")}</td>
                     <td className="px-4 py-1.5 text-right text-gray-600">{Math.round(a.clicks).toLocaleString("en-IN")}</td>
@@ -653,6 +679,7 @@ function IntentTab({ adsets, audienceMap, loading, currency }: { adsets: AdSetRo
               return (
                 <tr key={a.id} className="border-b border-gray-100 hover:bg-gray-50">
                   <td className="px-4 py-2.5 max-w-[260px]">
+                    <div className="mb-1"><PlatformBadge platform={platformOf(a)} /></div>
                     <div className="font-mono text-gray-900 break-words text-xs">{a.name}</div>
                     {a.campaignName && <div className="text-[10px] text-gray-400 mt-0.5 break-words">{a.campaignName}</div>}
                   </td>
@@ -804,11 +831,16 @@ function NewVsExistingTab({ adsets, audienceMap, loading, currency }: { adsets: 
             {sortedRows.map((r) => (
               <tr key={r.group} className="border-b border-gray-100 hover:bg-gray-50">
                 <td className="px-4 py-2.5">
-                  {r.group === "Unknown"
-                    ? <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-gray-100 text-gray-500 border border-dashed border-gray-400" title="No targeting data and no recognisable name keywords — these ad sets couldn't be classified">— Unknown</span>
-                    : <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${TYPE_COLORS[r.group as AudienceType]}`}>{r.group}</span>
-                  }
-                  <span className="ml-2 text-xs text-gray-500">{r.adSetNames.length} ad set{r.adSetNames.length !== 1 ? "s" : ""}</span>
+                  <div className="flex items-center flex-wrap gap-1.5">
+                    {r.group === "Unknown"
+                      ? <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-gray-100 text-gray-500 border border-dashed border-gray-400" title="No targeting data and no recognisable name keywords — these ad sets couldn't be classified">— Unknown</span>
+                      : <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${TYPE_COLORS[r.group as AudienceType]}`}>{r.group}</span>
+                    }
+                    <span className="text-xs text-gray-500">{r.adSetNames.length} ad set{r.adSetNames.length !== 1 ? "s" : ""}</span>
+                  </div>
+                  <div className="flex items-center flex-wrap gap-1 mt-1">
+                    {[...new Set(r.adSets.map(platformOf))].map((p) => <PlatformBadge key={p} platform={p} />)}
+                  </div>
                 </td>
                 {cols.map((id) => (
                   <td key={id} className="px-3 py-2.5 text-right text-gray-700 whitespace-nowrap">
@@ -828,7 +860,7 @@ function NewVsExistingTab({ adsets, audienceMap, loading, currency }: { adsets: 
 
 interface FunnelGroupRow {
   stage: FunnelStage | "Unknown"; audienceLabel: string; classification: AudienceClassification;
-  adSetNames: string[]; campaignNames: string[];
+  adSets: AdSetRow[]; adSetNames: string[]; campaignNames: string[];
   spend: number; conversions: number; conversionValue: number; impressions: number; clicks: number; reach: number;
 }
 interface FunnelStageGroup {
@@ -858,7 +890,7 @@ function buildFunnelGroups(adsets: AdSetRow[], audienceMap: Map<string, CustomAu
       if (!stageMap.has(stage)) stageMap.set(stage, []);
       stageMap.get(stage)!.push({
         stage, audienceLabel, classification: entry.classification,
-        adSetNames: rows.map(r => r.name), campaignNames: uniqueCampaigns,
+        adSets: rows, adSetNames: rows.map(r => r.name), campaignNames: uniqueCampaigns,
         spend: rows.reduce((s, r) => s + r.spend, 0),
         conversions: rows.reduce((s, r) => s + r.conversions, 0),
         conversionValue: rows.reduce((s, r) => s + r.conversionValue, 0),
@@ -888,7 +920,7 @@ function buildFunnelGroups(adsets: AdSetRow[], audienceMap: Map<string, CustomAu
       const uniqueCampaigns = [...new Set(rows.map(r => r.campaignName).filter(Boolean) as string[])];
       return {
         stage: "Unknown" as const, audienceLabel: key.split("|||")[1], classification: entry.classification,
-        adSetNames: rows.map(r => r.name), campaignNames: uniqueCampaigns,
+        adSets: rows, adSetNames: rows.map(r => r.name), campaignNames: uniqueCampaigns,
         spend: rows.reduce((s, r) => s + r.spend, 0),
         conversions: rows.reduce((s, r) => s + r.conversions, 0),
         conversionValue: rows.reduce((s, r) => s + r.conversionValue, 0),
@@ -1024,7 +1056,10 @@ function FunnelStageTab({ adsets, audienceMap, loading, currency }: { adsets: Ad
                             {adSetsOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
                           </td>
                           <td className="px-6 py-2">
-                            <div className="flex items-center gap-1.5">{audienceBadge(r.classification)}</div>
+                            <div className="flex items-center flex-wrap gap-1.5">
+                              {audienceBadge(r.classification)}
+                              {[...new Set(r.adSets.map(platformOf))].map((p) => <PlatformBadge key={p} platform={p} />)}
+                            </div>
                             {r.campaignNames.map((name, ci) => (
                               <div key={ci} className="text-[10px] text-gray-500 mt-0.5 break-words max-w-[280px]">{name}</div>
                             ))}
@@ -1036,11 +1071,14 @@ function FunnelStageTab({ adsets, audienceMap, loading, currency }: { adsets: Ad
                             </td>
                           ))}
                         </tr>
-                        {adSetsOpen && r.adSetNames.map((name, ni) => (
+                        {adSetsOpen && r.adSets.map((as_, ni) => (
                           <tr key={`${adSetsKey}-${ni}`} className="border-b border-indigo-50/50 bg-indigo-50/20">
                             <td className="px-4 py-1" />
                             <td className="px-10 py-1.5" colSpan={cols.length + 1}>
-                              <span className="text-[10px] text-gray-600 font-mono break-all">{name}</span>
+                              <span className="inline-flex items-start gap-1.5">
+                                <PlatformBadge platform={platformOf(as_)} />
+                                <span className="text-[10px] text-gray-600 font-mono break-all">{as_.name}</span>
+                              </span>
                             </td>
                           </tr>
                         ))}
