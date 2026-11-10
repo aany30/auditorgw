@@ -18,6 +18,10 @@ import type { DateRange } from "@/components/shared/DateRangePicker";
 // Keyed by advertiserId + date range so different windows never cross-pollinate.
 const DV360_SWR_TTL_MS = 5 * 60 * 1000;
 
+/** Soft notice (not a hard error) shown when DV360's live fetch failed but we
+ *  served the last-good cache. Excluded from the red `error` banner. */
+const DV360_CACHED_NOTICE = "DV360 showing recent cached data (live refresh pending)";
+
 /** Max age for the failure-fallback cache read. Longer than the normal TTL so a
  *  sustained DV360 outage keeps showing last-known data rather than collapsing
  *  the aggregate to other-platforms-only. */
@@ -339,13 +343,13 @@ export function useCampaigns(
               const body = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
               errs[key] = body.error || `${key} API error (HTTP ${r.status})`;
               if (key === "dv360" && dv360CacheFallback()) {
-                errs[key] = "DV360 live fetch failed — showing recent cached data";
+                errs[key] = DV360_CACHED_NOTICE;
               }
             }
           } catch (e) {
             errs[key] = e instanceof Error ? e.message : `${key} fetch failed`;
             if (key === "dv360" && dv360CacheFallback()) {
-              errs[key] = "DV360 live fetch failed — showing recent cached data";
+              errs[key] = DV360_CACHED_NOTICE;
             }
           } finally {
             resolved++;
@@ -361,8 +365,11 @@ export function useCampaigns(
           setCampaigns(all);
           campaignsRef.current = all;
           setPlatformErrors(errs);
-          // Keep legacy `error` populated for existing consumers.
-          const first = errs.meta || errs.dv360 || errs.google_ads || errs.snapchat || errs.spotify;
+          // Keep legacy `error` populated for existing consumers — but the DV360
+          // cached-data fallback is a soft notice (data loaded fine from cache),
+          // not a blocking error, so it must not drive the red error banners.
+          const dvHardErr = errs.dv360 === DV360_CACHED_NOTICE ? undefined : errs.dv360;
+          const first = errs.meta || dvHardErr || errs.google_ads || errs.snapchat || errs.spotify;
           if (first) setError(first);
           // Cache each platform's detected currency (sticky) so a later
           // rate-limited fetch that drops a platform still renders the right
