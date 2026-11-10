@@ -10,6 +10,7 @@
  */
 
 import type { NextApiRequest, NextApiResponse } from "next";
+import { requestOrigin } from "@/lib/oauth-redirect";
 
 export default function handler(req: NextApiRequest, res: NextApiResponse) {
   const clientId = process.env.SPOTIFY_CLIENT_ID;
@@ -20,7 +21,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
 
   const redirectUri =
     process.env.SPOTIFY_REDIRECT_URI ||
-    `${req.headers.origin || `http://${req.headers.host}`}/api/auth/spotify/callback`;
+    `${requestOrigin(req)}/api/auth/spotify/callback`;
 
   const params = new URLSearchParams({
     client_id: clientId,

@@ -13,6 +13,7 @@
  */
 
 import type { NextApiRequest, NextApiResponse } from "next";
+import { requestOrigin } from "@/lib/oauth-redirect";
 
 export default function handler(req: NextApiRequest, res: NextApiResponse) {
   const clientId = process.env.SNAPCHAT_PUBLIC_CLIENT_ID || process.env.SNAPCHAT_CLIENT_ID;
@@ -23,7 +24,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
 
   const redirectUri =
     process.env.SNAPCHAT_REDIRECT_URI ||
-    `${req.headers.origin || `http://${req.headers.host}`}/api/auth/snapchat/callback`;
+    `${requestOrigin(req)}/api/auth/snapchat/callback`;
 
   const params = new URLSearchParams({
     client_id: clientId,

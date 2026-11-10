@@ -14,6 +14,7 @@
  */
 
 import type { NextApiRequest, NextApiResponse } from "next";
+import { requestOrigin } from "@/lib/oauth-redirect";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const { code, error } = req.query;
@@ -29,7 +30,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
   const redirectUri =
     process.env.GOOGLE_REDIRECT_URI ||
-    `${req.headers.origin || `http://${req.headers.host}`}/api/auth/google/callback`;
+    `${requestOrigin(req)}/api/auth/google/callback`;
 
   if (!clientId || !clientSecret) {
     console.error("Missing Google OAuth env vars");

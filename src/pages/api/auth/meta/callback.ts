@@ -17,6 +17,7 @@
  */
 
 import { NextApiRequest, NextApiResponse } from "next";
+import { requestOrigin } from "@/lib/oauth-redirect";
 
 interface ShortLivedTokenResponse {
   access_token: string;
@@ -60,7 +61,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const appSecret = process.env.META_APP_SECRET;
   const redirectUri =
     process.env.NEXT_PUBLIC_META_REDIRECT_URI ||
-    `${req.headers.origin || `http://${req.headers.host}`}/api/auth/meta/callback`;
+    `${requestOrigin(req)}/api/auth/meta/callback`;
 
   if (!appId || !appSecret) {
     console.error("Missing Meta OAuth env vars");

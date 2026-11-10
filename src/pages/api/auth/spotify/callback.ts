@@ -14,6 +14,7 @@
  */
 
 import type { NextApiRequest, NextApiResponse } from "next";
+import { requestOrigin } from "@/lib/oauth-redirect";
 
 const SPOTIFY_ADS_BASE = "https://api-partner.spotify.com/ads/v3";
 
@@ -31,7 +32,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
   const redirectUri =
     process.env.SPOTIFY_REDIRECT_URI ||
-    `${req.headers.origin || `http://${req.headers.host}`}/api/auth/spotify/callback`;
+    `${requestOrigin(req)}/api/auth/spotify/callback`;
 
   if (!clientId || !clientSecret) {
     console.error("Missing Spotify OAuth env vars");

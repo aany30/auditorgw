@@ -15,6 +15,7 @@
  */
 
 import type { NextApiRequest, NextApiResponse } from "next";
+import { requestOrigin } from "@/lib/oauth-redirect";
 
 const SNAP_ADS_BASE = "https://adsapi.snapchat.com/v1";
 
@@ -32,7 +33,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const clientSecret = process.env.SNAPCHAT_CLIENT_SECRET;
   const redirectUri =
     process.env.SNAPCHAT_REDIRECT_URI ||
-    `${req.headers.origin || `http://${req.headers.host}`}/api/auth/snapchat/callback`;
+    `${requestOrigin(req)}/api/auth/snapchat/callback`;
 
   if (!clientId || !clientSecret) {
     console.error("Missing Snapchat OAuth env vars");

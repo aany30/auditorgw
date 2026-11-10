@@ -16,6 +16,7 @@
  */
 
 import type { NextApiRequest, NextApiResponse } from "next";
+import { requestOrigin } from "@/lib/oauth-redirect";
 
 const SCOPES = [
   "openid",
@@ -37,7 +38,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
 
   const redirectUri =
     process.env.GOOGLE_REDIRECT_URI ||
-    `${req.headers.origin || `http://${req.headers.host}`}/api/auth/google/callback`;
+    `${requestOrigin(req)}/api/auth/google/callback`;
 
   const params = new URLSearchParams({
     client_id: clientId,

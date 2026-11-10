@@ -15,12 +15,13 @@
  */
 
 import type { NextApiRequest, NextApiResponse } from "next";
+import { requestOrigin } from "@/lib/oauth-redirect";
 
 export default function handler(req: NextApiRequest, res: NextApiResponse) {
   const appId = process.env.NEXT_PUBLIC_META_APP_ID;
   const redirectUri =
     process.env.NEXT_PUBLIC_META_REDIRECT_URI ||
-    `${req.headers.origin || `http://${req.headers.host}`}/api/auth/meta/callback`;
+    `${requestOrigin(req)}/api/auth/meta/callback`;
 
   if (!appId) {
     return res.redirect("/?error=meta_oauth_not_configured");
