@@ -1075,11 +1075,24 @@ export class DV360ApiClient {
     return (await r.json()) as T;
   }
 
-  /** Create + run a ONE_TIME query. Returns ids for polling. */
-  async createAndRunQuery(req: BMReportRequest): Promise<{ queryId: string; reportId: string }> {
+  private async bmGet<T>(path: string): Promise<T> {
+    const token = await this.getAccessToken();
+    const r = await fetchWithTimeout(`${BM_BASE}/${path}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }, 30_000);
+    if (!r.ok) {
+      const text = await r.text();
+      throw new Error(`Bid Manager GET ${path} failed (HTTP ${r.status}): ${text.slice(0, 300)}`);
+    }
+    return (await r.json()) as T;
+  }
+
+  /** Create + run a query. A stable `title` lets later cold-start requests find
+   *  and reuse this query instead of creating a new one each time. */
+  async createAndRunQuery(req: BMReportRequest, title?: string): Promise<{ queryId: string; reportId: string }> {
     const query = await this.bmPost<{ queryId: string }>("queries", {
       metadata: {
-        title: `auditor-${Date.now()}`,
+        title: title ?? `auditor-${Date.now()}`,
         dataRange: {
           range: "CUSTOM_DATES",
           customStartDate: isoToRawDate(req.startDate),
@@ -1133,14 +1146,94 @@ export class DV360ApiClient {
     return parseBmCsv(text);
   }
 
+  /** Stable, deterministic query title per (advertiser, report signature) so the
+   *  same report can be found and reused across requests and serverless cold
+   *  starts (where the in-memory queryId cache is empty). */
+  private bmQueryTitle(req: BMReportRequest): string {
+    const sig = [
+      req.reportType ?? "STANDARD",
+      (req.dimensions ?? []).join(","),
+      (req.metrics ?? []).join(","),
+      (req.filters ?? []).map((f) => `${f.type}=${f.value}`).join(","),
+      req.startDate, req.endDate,
+    ].join("|");
+    return `auditor:v1:${this.creds.advertiserId}:${hashString(sig)}`;
+  }
+
+  /** Find an existing query by its exact title. Returns its queryId or null. */
+  private async findQueryByTitle(title: string): Promise<string | null> {
+    let pageToken = "";
+    for (let i = 0; i < 10; i++) {
+      const qs = `queries?pageSize=100${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ""}`;
+      const data = await this.bmGet<{
+        queries?: Array<{ queryId: string; metadata?: { title?: string } }>;
+        nextPageToken?: string;
+      }>(qs);
+      const match = (data.queries ?? []).find((q) => q.metadata?.title === title);
+      if (match?.queryId) return match.queryId;
+      if (!data.nextPageToken) break;
+      pageToken = data.nextPageToken;
+    }
+    return null;
+  }
+
+  /** Latest DONE report for this query, for the same end date and generated
+   *  within `freshMs` — lets us skip run+poll entirely. */
+  private async latestFreshReport(queryId: string, endDate: string, freshMs: number): Promise<string | null> {
+    const data = await this.bmGet<{
+      reports?: Array<{
+        key?: { reportId?: string };
+        metadata?: {
+          status?: { state?: string; finishTime?: string };
+          googleCloudStoragePath?: string;
+          reportDataEndDate?: RawDate;
+        };
+      }>;
+    }>(`queries/${queryId}/reports?pageSize=25`);
+    let best: { path: string; finishMs: number } | null = null;
+    for (const r of data.reports ?? []) {
+      const m = r.metadata;
+      if (m?.status?.state !== "DONE" || !m.googleCloudStoragePath) continue;
+      if (rawDateToIso(m.reportDataEndDate) !== endDate) continue;
+      const finishMs = m.status?.finishTime ? Date.parse(m.status.finishTime) : 0;
+      if (!best || finishMs > best.finishMs) best = { path: m.googleCloudStoragePath, finishMs };
+    }
+    if (!best) return null;
+    if (best.finishMs > 0 && Date.now() - best.finishMs > freshMs) return null;
+    return best.path;
+  }
+
   /**
-   * Full flow with a poll budget. If the report isn't done within
-   * `timeoutMs`, returns {status:"pending", queryId, reportId} so the route
-   * can 202 and the client can resume with resumeReport().
+   * Full flow with a poll budget. Reuses a persistent per-report query (by
+   * stable title) so cold starts don't create a new query each time, and serves
+   * a recently generated report directly when one exists (skips run+poll). Any
+   * error in the reuse path falls back to the original create-and-run, so
+   * behavior never regresses. If the report isn't done within `timeoutMs`,
+   * returns {status:"pending", queryId, reportId} so the route can 202 and the
+   * client can resume with resumeReport().
    */
   async runBidManagerReport(req: BMReportRequest, timeoutMs = 45_000): Promise<BMResult> {
-    const { queryId, reportId } = await this.createAndRunQuery(req);
-    return this.pollToResult(queryId, reportId, timeoutMs);
+    const REUSE_FRESH_MS = 30 * 60 * 1000;
+    try {
+      const title = this.bmQueryTitle(req);
+      const existingId = await this.findQueryByTitle(title);
+      if (existingId) {
+        const freshPath = await this.latestFreshReport(existingId, req.endDate, REUSE_FRESH_MS);
+        if (freshPath) {
+          const rows = await this.downloadReport(freshPath);
+          return { status: "done", rows };
+        }
+        const run = await this.bmPost<{ key?: { reportId?: string } }>(
+          `queries/${existingId}:run?synchronous=false`, {},
+        );
+        return this.pollToResult(existingId, run.key?.reportId ?? "", timeoutMs);
+      }
+      const created = await this.createAndRunQuery(req, title);
+      return this.pollToResult(created.queryId, created.reportId, timeoutMs);
+    } catch {
+      const { queryId, reportId } = await this.createAndRunQuery(req);
+      return this.pollToResult(queryId, reportId, timeoutMs);
+    }
   }
 
   /** Resume a previously started report (cheap — poll + download only). */
@@ -1176,6 +1269,13 @@ export class DV360ApiClient {
 function isoToRawDate(iso: string): RawDate {
   const [y, m, d] = iso.split("-").map(Number);
   return { year: y, month: m, day: d };
+}
+
+/** Small stable hash (djb2) for building deterministic query titles. */
+function hashString(s: string): string {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+  return h.toString(36);
 }
 
 /** DV360 RawDate ({year,month,day}) → ISO "yyyy-mm-dd", or undefined if incomplete. */
