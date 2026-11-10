@@ -2,6 +2,8 @@ import { useMemo, useState, useEffect } from "react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { useMetaBreakdown } from "@/hooks/useMetaBreakdown";
 import { useDV360Breakdown } from "@/hooks/useDV360Breakdown";
+import { useGoogleAdsConversionDaily } from "@/hooks/useGoogleAdsConversionDaily";
+import { useSnapchatConversionDaily } from "@/hooks/useSnapchatConversionDaily";
 import { useAuthStore } from "@/store/auth";
 import type { DateRange } from "@/components/shared/DateRangePicker";
 import TabSummaryFooter from "@/components/shared/TabSummaryFooter";
@@ -241,8 +243,12 @@ export default function ConversionMonitoringTab({ platform, dateRange, customSta
   const useMeta = platform === "meta" || platform === "both";
   const useDv = platform === "dv360" || platform === "both";
   const useGoogleAds = platform === "google_ads" || platform === "both";
+  const useSnap = platform === "snapchat" || platform === "both";
+  const useSpotify = platform === "spotify" || platform === "both";
   const { rows: metaRows, loading: metaLoading } = useMetaBreakdown("daily", dateRange, customStart, customEnd, useMeta);
   const { rows: dvRows, loading: dvLoading } = useDV360Breakdown("daily", dateRange, customStart, customEnd, useDv);
+  const { rows: gaDailyRows, loading: gaDailyLoading } = useGoogleAdsConversionDaily(dateRange, customStart, customEnd, useGoogleAds);
+  const { rows: snapDailyRows, loading: snapDailyLoading } = useSnapchatConversionDaily(dateRange, customStart, customEnd, useSnap);
 
   const {
     googleAdsCustomerId,
@@ -300,6 +306,8 @@ export default function ConversionMonitoringTab({ platform, dateRange, customSta
   const sum = (arr: DailyRow[], k: keyof DailyRow) => arr.reduce((s, r) => s + (Number(r[k]) || 0), 0);
   const metaConv = sum(metaData, "conversions"), metaSpend = sum(metaData, "spend"), metaRev = sum(metaData, "conversionValue");
   const dvConv = sum(dvData, "conversions"), dvSpend = sum(dvData, "spend");
+  const gaConv = sum(gaDailyRows as DailyRow[], "conversions"), gaSpend = sum(gaDailyRows as DailyRow[], "spend"), gaRev = sum(gaDailyRows as DailyRow[], "conversionValue");
+  const snapConv = sum(snapDailyRows as DailyRow[], "conversions"), snapSpend = sum(snapDailyRows as DailyRow[], "spend");
   const inr = (n: number) => "₹" + n.toLocaleString("en-IN", { maximumFractionDigits: 0 });
 
   return (
@@ -335,7 +343,43 @@ export default function ConversionMonitoringTab({ platform, dateRange, customSta
       )}
 
       {useGoogleAds && (
-        <GoogleAdsConversionActionsSection actions={gaConversionActions} loading={gaLoading} />
+        <>
+          <ConversionSection
+            header={platform === "both" ? "Google Ads" : undefined}
+            sub="Google Ads"
+            rows={gaDailyRows as DailyRow[]}
+            loading={gaDailyLoading}
+            showRevenue
+          />
+          <GoogleAdsConversionActionsSection actions={gaConversionActions} loading={gaLoading} />
+        </>
+      )}
+
+      {useSnap && (
+        <ConversionSection
+          header={platform === "both" ? "Snapchat" : undefined}
+          sub="Snapchat Ads"
+          rows={snapDailyRows as DailyRow[]}
+          loading={snapDailyLoading}
+          showRevenue={false}
+          revenueNote="Conversion value & ROAS aren't available — Snapchat's API returns conversion counts but no revenue. Showing conversions, spend, and CPA (all real)."
+        />
+      )}
+
+      {useSpotify && (
+        <div className="space-y-4">
+          {platform === "both" && (
+            <div className="flex items-center gap-3 pt-2 pb-1 border-b border-gray-200">
+              <h2 className="text-xl font-bold text-gray-900">Spotify</h2>
+              <span className="text-xs text-gray-400 font-medium">Spotify Ad Studio</span>
+            </div>
+          )}
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-800">
+            Conversion tracking isn&apos;t applicable to Spotify audio campaigns — the Ads API reports reach, streams,
+            listeners and completion rate, not conversions or revenue. See the Saturation and Dashboard tabs for
+            Spotify&apos;s available metrics.
+          </div>
+        </div>
       )}
 
       <TabSummaryFooter
@@ -349,7 +393,13 @@ export default function ConversionMonitoringTab({ platform, dateRange, customSta
               : `${platform === "both" ? "DV360: " : ""}${dvConv.toLocaleString("en-IN")} conversions, ${inr(dvSpend)} spend, CPA ${dvConv > 0 ? inr(dvSpend / dvConv) : "—"} — conversion value/ROAS not available via API.`,
           ] : []),
           ...(useGoogleAds ? [
-            `${platform === "both" ? "Google Ads: " : ""}${gaConversionActions.length} conversion action${gaConversionActions.length !== 1 ? "s" : ""} configured.`,
+            `${platform === "both" ? "Google Ads: " : ""}${gaConv.toLocaleString("en-IN")} conversions, ${inr(gaSpend)} spend${gaRev > 0 && gaSpend > 0 ? ` — ROAS ${(gaRev / gaSpend).toFixed(2)}×` : ""} · ${gaConversionActions.length} conversion action${gaConversionActions.length !== 1 ? "s" : ""} configured.`,
+          ] : []),
+          ...(useSnap ? [
+            `${platform === "both" ? "Snapchat: " : ""}${snapConv.toLocaleString("en-IN")} conversions, ${inr(snapSpend)} spend, CPA ${snapConv > 0 ? inr(snapSpend / snapConv) : "—"} — conversion value/ROAS not available via API.`,
+          ] : []),
+          ...(useSpotify ? [
+            `${platform === "both" ? "Spotify: " : ""}conversion tracking not applicable for audio campaigns.`,
           ] : []),
         ]}
         tabName="Conversion Monitoring"

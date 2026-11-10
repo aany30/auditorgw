@@ -459,6 +459,38 @@ export class GoogleAdsApiClient {
     }));
   }
 
+  /** Daily conversion/spend trend across all campaigns, for Conversion
+   *  Monitoring. Google Ads returns real conversions and conversion value. */
+  async listDailyMetrics(
+    startDate: string,
+    endDate: string,
+  ): Promise<Array<{ date: string; spend: number; clicks: number; conversions: number; conversionValue: number }>> {
+    const rows = await this.search<{
+      segments: { date: string };
+      metrics: { costMicros: string; clicks: string; conversions: string; conversionsValue: string };
+    }>(`
+      SELECT segments.date, metrics.cost_micros, metrics.clicks,
+             metrics.conversions, metrics.conversions_value
+      FROM campaign
+      WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
+        AND campaign.status != 'REMOVED'
+    `);
+    const byDate = new Map<string, { spend: number; clicks: number; conversions: number; conversionValue: number }>();
+    for (const r of rows) {
+      const d = r.segments?.date;
+      if (!d) continue;
+      const e = byDate.get(d) ?? { spend: 0, clicks: 0, conversions: 0, conversionValue: 0 };
+      e.spend += (Number(r.metrics.costMicros) || 0) / 1_000_000;
+      e.clicks += Number(r.metrics.clicks) || 0;
+      e.conversions += Number(r.metrics.conversions) || 0;
+      e.conversionValue += Number(r.metrics.conversionsValue) || 0;
+      byDate.set(d, e);
+    }
+    return [...byDate.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, v]) => ({ date, ...v }));
+  }
+
   async listAdGroups(
     startDate: string,
     endDate: string,

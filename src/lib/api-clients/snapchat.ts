@@ -282,6 +282,47 @@ export class SnapchatApiClient {
     }
   }
 
+  /** Account-level daily stats time series for Conversion Monitoring. Snapchat
+   *  returns conversions (count) but no conversion value, so ROAS isn't
+   *  available — only conversions, spend and CPA. */
+  async getAccountDailyStats(
+    startDate: string,
+    endDate: string,
+  ): Promise<Array<{ date: string; spend: number; swipes: number; conversions: number }>> {
+    const params = new URLSearchParams({
+      granularity: "DAY",
+      start_time: toRFC3339(startDate),
+      end_time: toRFC3339(endDate, true),
+      fields: "spend,impressions,swipes,conversion_purchases",
+    });
+    try {
+      const data = await this.request<Record<string, unknown>>(
+        `/adaccounts/${this.creds.adAccountId}/stats?${params}`,
+      );
+      const series = (data.timeseries_stats || []) as Array<Record<string, unknown>>;
+      const out: Array<{ date: string; spend: number; swipes: number; conversions: number }> = [];
+      for (const row of series) {
+        const ts = (row.timeseries_stat || row) as Record<string, unknown>;
+        const points = (ts.timeseries || []) as Array<Record<string, unknown>>;
+        for (const point of points) {
+          const stats = (point.stats || {}) as Record<string, unknown>;
+          const date = String(point.start_time || "").slice(0, 10);
+          if (!date) continue;
+          out.push({
+            date,
+            spend: Number(stats.spend || 0) / 1_000_000,
+            swipes: Number(stats.swipes || 0),
+            conversions: Number(stats.conversion_purchases || 0),
+          });
+        }
+      }
+      return out.sort((a, b) => a.date.localeCompare(b.date));
+    } catch (err) {
+      console.error("[Snapchat] getAccountDailyStats failed:", err instanceof Error ? err.message : err);
+      return [];
+    }
+  }
+
   /** List audience segments (SAM segments) for the ad account. */
   async listSegments(): Promise<Array<{
     id: string;
