@@ -12,6 +12,8 @@ import { Zap, AlertCircle, Info, X } from "lucide-react";
 import AIRecommendationButton from "@/components/shared/AIRecommendationButton";
 import { useAdSetInsights } from "@/hooks/useAdSetInsights";
 import { useDV360Saturation } from "@/hooks/useDV360Saturation";
+import { useCampaigns } from "@/hooks/useCampaigns";
+import type { CampaignData } from "@/types";
 import type { DV360SaturationRow } from "@/pages/api/audience/dv360-saturation";
 import { formatMoney } from "@/lib/currency";
 import type { DateRange } from "@/components/shared/DateRangePicker";
@@ -728,6 +730,275 @@ function Dv360ExpansionView({ rows, revenueAvailable, loading, pending, currency
   );
 }
 
+// ─── Generic campaign-level Saturation / Expansion (Google Ads, Snapchat, Spotify) ──
+// These platforms expose no ad-set/line-item audience granularity here, so each
+// campaign is one row. Reach/frequency and revenue are shown only when the
+// platform's API actually returns them — never proxied.
+
+interface CampaignSatRow {
+  id: string; name: string;
+  spend: number; impressions: number; clicks: number; reach: number; frequency: number;
+  conversions: number; conversionValue: number;
+  ctr: number; cpm: number; cpc: number; cpa: number; roas: number;
+  spendPct: number; reachPct: number; fatigueSev: number;
+}
+
+function toCampaignSatRows(camps: CampaignData[], reachAvailable: boolean): CampaignSatRow[] {
+  const totalSpend = camps.reduce((s, c) => s + (c.spend || 0), 0);
+  const totalReach = reachAvailable ? camps.reduce((s, c) => s + (c.reach || 0), 0) : 0;
+  return camps.map((c) => {
+    const spend = c.spend || 0, impressions = c.impressions || 0, clicks = c.clicks || 0;
+    const reach = reachAvailable ? (c.reach || 0) : 0;
+    const conversions = c.conversions || 0, conversionValue = c.conversionValue || 0;
+    const frequency = reach > 0 ? impressions / reach : 0;
+    return {
+      id: c.id, name: c.name, spend, impressions, clicks, reach, frequency,
+      conversions, conversionValue,
+      ctr: impressions > 0 ? (clicks / impressions) * 100 : 0,
+      cpm: impressions > 0 ? (spend / impressions) * 1000 : 0,
+      cpc: clicks > 0 ? spend / clicks : 0,
+      cpa: conversions > 0 ? spend / conversions : 0,
+      roas: spend > 0 ? conversionValue / spend : 0,
+      spendPct: totalSpend > 0 ? (spend / totalSpend) * 100 : 0,
+      reachPct: totalReach > 0 ? (reach / totalReach) * 100 : 0,
+      fatigueSev: frequency >= 5 ? 2 : frequency >= 3 ? 1 : 0,
+    };
+  });
+}
+
+function fmtCampCol(id: string, r: CampaignSatRow, currency: string): string {
+  switch (id) {
+    case "frequency":   return r.frequency > 0 ? r.frequency.toFixed(1) : "—";
+    case "reach":       return r.reach > 0 ? Math.round(r.reach).toLocaleString("en-IN") : "—";
+    case "reachPct":    return r.reachPct > 0 ? `${r.reachPct.toFixed(1)}%` : "—";
+    case "impressions": return Math.round(r.impressions).toLocaleString("en-IN");
+    case "clicks":      return Math.round(r.clicks).toLocaleString("en-IN");
+    case "ctr":         return r.ctr > 0 ? `${r.ctr.toFixed(2)}%` : "—";
+    case "cpm":         return r.cpm > 0 ? fmtMoney0(r.cpm, currency) : "—";
+    case "cpc":         return r.cpc > 0 ? fmtMoney0(r.cpc, currency) : "—";
+    case "spend":       return fmtMoney0(r.spend, currency);
+    case "spendPct":    return `${r.spendPct.toFixed(1)}%`;
+    case "conversions": return Math.round(r.conversions).toLocaleString("en-IN");
+    case "revenue":     return fmtMoney0(r.conversionValue, currency);
+    case "cpa":         return r.cpa > 0 ? fmtMoney0(r.cpa, currency) : "—";
+    case "roas":        return r.roas > 0 ? `${r.roas.toFixed(2)}×` : "—";
+    default:            return "—";
+  }
+}
+
+const campThBase = "px-4 py-2.5 text-[11px] uppercase font-semibold text-gray-600";
+
+function CampaignSaturationView({ platformKey, label, rows, reachAvailable, loading, currency }: {
+  platformKey: "google_ads" | "snapchat" | "spotify"; label: string;
+  rows: CampaignSatRow[]; reachAvailable: boolean; loading: boolean; currency: string;
+}) {
+  const cols = reachAvailable
+    ? ["frequency", "reach", "reachPct", "impressions", "ctr", "cpm", "spend"]
+    : ["impressions", "ctr", "cpm", "cpc", "clicks", "spend"];
+  const colLabels: Record<string, string> = {
+    frequency: "Freq.", reach: "Reach", reachPct: "Reach %", impressions: "Impr.",
+    ctr: "CTR", cpm: "CPM", cpc: "CPC", clicks: "Clicks", spend: "Spend",
+  };
+  const { sorted, sort, toggle } = useSort(rows, reachAvailable ? "frequency" : "spend", "desc");
+  const critical = rows.filter((r) => r.fatigueSev === 2).length;
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-3">
+      <div className="flex items-center gap-2">
+        <Zap className="w-4 h-4 text-amber-500" />
+        <h3 className="text-sm font-bold text-gray-900">{label} — Campaign Saturation</h3>
+      </div>
+      {loading ? (
+        <div className="text-sm text-gray-500">Loading {label} saturation…</div>
+      ) : rows.length === 0 ? (
+        <div className="text-sm text-gray-500">No {label} campaign data for this window.</div>
+      ) : (
+        <>
+          {!reachAvailable && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800 flex items-start gap-2">
+              <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+              Unique <strong>reach &amp; frequency</strong> aren&apos;t available via the {label} API, so fatigue scoring can&apos;t be computed — showing real delivery efficiency (CTR, CPM, CPC) only.
+            </div>
+          )}
+          {reachAvailable && critical > 0 && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-center gap-2 text-xs text-red-800">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <strong>{critical} campaign{critical !== 1 ? "s" : ""} showing critical frequency</strong> (≥ 5) — consider widening targeting or capping frequency.
+            </div>
+          )}
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-20">
+                <tr>
+                  <SortTh col="name" sort={sort} onToggle={toggle} className={campThBase}>Campaign</SortTh>
+                  {cols.map((id) => (
+                    <SortTh key={id} col={id} sort={sort} onToggle={toggle} className={campThBase} align="right">{colLabels[id] ?? id}</SortTh>
+                  ))}
+                  {reachAvailable && <SortTh col="fatigueSev" sort={sort} onToggle={toggle} className={campThBase} align="center">Status</SortTh>}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {sorted.map((r) => {
+                  const fat = dvFatigueLabel(r.frequency);
+                  return (
+                    <tr key={r.id} className="hover:bg-gray-50">
+                      <td className="px-4 py-2.5 text-gray-900 font-medium max-w-[300px] truncate" title={r.name}>{r.name}</td>
+                      {cols.map((id) => (
+                        <td key={id} className={`px-4 py-2.5 text-right whitespace-nowrap ${id === "frequency" ? (r.frequency >= 5 ? "text-red-600 font-bold" : r.frequency >= 3 ? "text-orange-600 font-bold" : "text-gray-900 font-semibold") : "text-gray-700"}`}>
+                          {fmtCampCol(id, r, currency)}
+                        </td>
+                      ))}
+                      {reachAvailable && (
+                        <td className="px-4 py-2.5 text-center">
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${fat.color}`}>{fat.label}</span>
+                          {fat.label !== "Healthy" && (
+                            <div className="mt-1">
+                              <AIRecommendationButton
+                                metric={`Campaign saturation — ${r.name}`}
+                                value={r.frequency}
+                                status={fat.label === "Critical" ? "critical" : "warn"}
+                                platform={platformKey}
+                                auditContext={{ module: `${label} Saturation`, siblingMetrics: { frequency: +r.frequency.toFixed(1), reach: r.reach, ctr: +r.ctr.toFixed(2), cpm: +r.cpm.toFixed(2) } }}
+                              />
+                            </div>
+                          )}
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-[11px] text-gray-400">
+            {reachAvailable
+              ? "Frequency = impressions ÷ unique reach. Fatigue keys on frequency (≥ 5 Critical · ≥ 3 Fatigued). All values are real API data."
+              : `All values are real ${label} delivery data. Lower CPC/CPM = more efficient buying.`}
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
+function CampaignExpansionView({ platformKey, label, rows, mode, loading, currency }: {
+  platformKey: "google_ads" | "snapchat" | "spotify"; label: string;
+  rows: CampaignSatRow[]; mode: "roas" | "cpa" | "cpm"; loading: boolean; currency: string;
+}) {
+  const cols = mode === "roas" ? ["spend", "spendPct", "revenue", "roas"]
+    : mode === "cpa" ? ["spend", "spendPct", "conversions", "cpa"]
+    : ["spend", "spendPct", "reach", "cpm"];
+  const colLabels: Record<string, string> = {
+    spend: "Spend", spendPct: "Spend %", revenue: "Revenue", roas: "ROAS",
+    conversions: "Conv.", cpa: "CPA", reach: "Reach", cpm: "CPM",
+  };
+  const { sorted, sort, toggle } = useSort(rows, "spendPct", "desc");
+
+  // Account averages for the ±20% recommendation band.
+  const roasRows = rows.filter((r) => r.roas > 0);
+  const avgRoas = roasRows.length > 0 ? roasRows.reduce((s, r) => s + r.roas, 0) / roasRows.length : 0;
+  const cpaRows = rows.filter((r) => r.cpa > 0);
+  const avgCpa = cpaRows.length > 0 ? cpaRows.reduce((s, r) => s + r.cpa, 0) / cpaRows.length : 0;
+  const cpmRows = rows.filter((r) => r.cpm > 0);
+  const avgCpm = cpmRows.length > 0 ? cpmRows.reduce((s, r) => s + r.cpm, 0) / cpmRows.length : 0;
+
+  const recommend = (r: CampaignSatRow): { label: string; color: string; reason: string } => {
+    const SCALE = { label: "Scale", color: "bg-green-100 text-green-800" };
+    const REDUCE = { label: "Reduce", color: "bg-red-100 text-red-800" };
+    const MAINTAIN = { label: "Maintain", color: "bg-blue-100 text-blue-800" };
+    const REVIEW = { label: "Review", color: "bg-gray-100 text-gray-600" };
+    if (mode === "roas") {
+      if (r.roas === 0) return { ...REVIEW, reason: "No attributed revenue — verify conversion tracking before acting." };
+      if (avgRoas > 0 && r.roas >= avgRoas * 1.2) return { ...SCALE, reason: `ROAS ${r.roas.toFixed(2)}× is above the account average (${avgRoas.toFixed(2)}×) — shift more budget here.` };
+      if (avgRoas > 0 && r.roas <= avgRoas * 0.8) return { ...REDUCE, reason: `ROAS ${r.roas.toFixed(2)}× is below the account average (${avgRoas.toFixed(2)}×) — trim budget or fix targeting/creative.` };
+      return { ...MAINTAIN, reason: `ROAS ${r.roas.toFixed(2)}× is within ±20% of the account average.` };
+    }
+    if (mode === "cpa") {
+      if (r.conversions === 0) return { ...REVIEW, reason: "No conversions in window — check tracking before scaling." };
+      if (avgCpa > 0 && r.cpa <= avgCpa * 0.8) return { ...SCALE, reason: `CPA ${fmtMoney0(r.cpa, currency)} is below the account average (${fmtMoney0(avgCpa, currency)}) — efficient, room to scale.` };
+      if (avgCpa > 0 && r.cpa >= avgCpa * 1.2) return { ...REDUCE, reason: `CPA ${fmtMoney0(r.cpa, currency)} is above the account average (${fmtMoney0(avgCpa, currency)}) — trim budget or tighten targeting.` };
+      return { ...MAINTAIN, reason: `CPA ${fmtMoney0(r.cpa, currency)} is within ±20% of the account average.` };
+    }
+    // cpm mode — reach-cost efficiency (no conversions/revenue available)
+    if (r.cpm === 0) return { ...REVIEW, reason: "No delivery in window." };
+    if (avgCpm > 0 && r.cpm <= avgCpm * 0.8) return { ...SCALE, reason: `CPM ${fmtMoney0(r.cpm, currency)} is below the account average (${fmtMoney0(avgCpm, currency)}) — cheaper reach, room to scale.` };
+    if (avgCpm > 0 && r.cpm >= avgCpm * 1.2) return { ...REDUCE, reason: `CPM ${fmtMoney0(r.cpm, currency)} is above the account average (${fmtMoney0(avgCpm, currency)}) — expensive reach, trim budget.` };
+    return { ...MAINTAIN, reason: `CPM ${fmtMoney0(r.cpm, currency)} is within ±20% of the account average.` };
+  };
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-3">
+      <div className="flex items-center gap-2">
+        <Zap className="w-4 h-4 text-amber-500" />
+        <h3 className="text-sm font-bold text-gray-900">{label} — Expansion Opportunity</h3>
+      </div>
+      {loading ? (
+        <div className="text-sm text-gray-500">Loading {label} expansion…</div>
+      ) : rows.length === 0 ? (
+        <div className="text-sm text-gray-500">No {label} campaign data for this window.</div>
+      ) : (
+        <>
+          {mode !== "roas" && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800 flex items-start gap-2">
+              <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+              {mode === "cpa"
+                ? <>ROAS needs conversion revenue, which {label} doesn&apos;t return here — ranking by <strong>spend share vs CPA</strong> (cost per conversion) instead. All values are real.</>
+                : <>Revenue &amp; conversions aren&apos;t available via the {label} API — ranking by <strong>spend share vs CPM</strong> (reach-cost efficiency) instead. All values are real.</>}
+            </div>
+          )}
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-20">
+                <tr>
+                  <SortTh col="name" sort={sort} onToggle={toggle} className={campThBase}>Campaign</SortTh>
+                  {cols.map((id) => (
+                    <SortTh key={id} col={id} sort={sort} onToggle={toggle} className={campThBase} align="right">{colLabels[id] ?? id}</SortTh>
+                  ))}
+                  <th className={`${campThBase} text-center`}>Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {sorted.map((r) => {
+                  const rec = recommend(r);
+                  return (
+                    <tr key={r.id} className="hover:bg-gray-50">
+                      <td className="px-4 py-2.5 text-gray-900 font-medium max-w-[300px] truncate" title={r.name}>{r.name}</td>
+                      {cols.map((id) => (
+                        <td key={id} className="px-4 py-2.5 text-right text-gray-700 whitespace-nowrap">{fmtCampCol(id, r, currency)}</td>
+                      ))}
+                      <td className="px-4 py-2.5 text-center">
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${rec.color}`} title={rec.reason}>{rec.label}</span>
+                        {(rec.label === "Scale" || rec.label === "Reduce") && (
+                          <div className="mt-1">
+                            <AIRecommendationButton
+                              metric={`${rec.label} "${r.name}" — ${rec.reason}`}
+                              value={mode === "roas" ? r.roas : mode === "cpa" ? r.cpa : r.cpm}
+                              status={rec.label === "Reduce" ? "warn" : "moderate"}
+                              platform={platformKey}
+                              auditContext={{ module: `${label} Expansion Opportunity`, siblingMetrics: { action: rec.label, spendSharePct: +r.spendPct.toFixed(1), roas: +r.roas.toFixed(2), cpa: r.cpa, cpm: +r.cpm.toFixed(2), spend: r.spend } }}
+                            />
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-[11px] text-gray-400">
+            {mode === "roas"
+              ? "Scale = ROAS ≥ 20% above account avg · Reduce = ≥ 20% below · Maintain = within ±20%. Hover an action for the reason."
+              : mode === "cpa"
+                ? "Scale = CPA ≥ 20% below account avg (more efficient) · Reduce = ≥ 20% above. Lower CPA is better."
+                : "Scale = CPM ≥ 20% below account avg (cheaper reach) · Reduce = ≥ 20% above. Lower CPM is better."}
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
 function PlatformDivider({ label, sub }: { label: string; sub: string }) {
   return (
     <div className="flex items-center gap-3 pt-2 pb-1 border-b border-gray-200">
@@ -744,28 +1015,20 @@ export default function AudienceSaturationTab({ platform, dateRange, customStart
   const { adsets, loading, error, currency } = useAdSetInsights(platform, dateRange, customStart, customEnd);
   const showMeta = platform === "meta" || platform === "both";
   const showDv360 = platform === "dv360" || platform === "both";
+  const showGads = platform === "google_ads" || platform === "both";
+  const showSnap = platform === "snapchat" || platform === "both";
+  const showSpotify = platform === "spotify" || platform === "both";
+  const needsCampaigns = showGads || showSnap || showSpotify;
   const { rows: dvRows, loading: dvLoading, pending: dvPending, reachAvailable, revenueAvailable } =
     useDV360Saturation(dateRange, customStart, customEnd, showDv360);
 
-  // Google Ads exposes no de-duplicated reach or frequency via the API, so the
-  // fatigue/saturation model (built on frequency + reach %) cannot be computed.
-  // Rendered after all hooks to respect the rules of hooks.
-  if (platform === "google_ads") {
-    return (
-      <div className="space-y-6">
-        <div className="flex items-center gap-3">
-          <Zap className="w-8 h-8 text-blue-600" />
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">Saturation &amp; Expansion</h1>
-            <p className="text-gray-600 mt-1">Frequency, reach%, and fatigue scoring per ad set.</p>
-          </div>
-        </div>
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-800">
-          Reach and frequency aren&apos;t available via the Google Ads API, so saturation and fatigue scoring can&apos;t be computed for Google Ads. Use Meta or DV360 for this audit.
-        </div>
-      </div>
-    );
-  }
+  // Google Ads / Snapchat / Spotify: campaign-level rows from the shared fetch.
+  const { campaigns: campRows, loading: campLoading, googleAdsCurrency, snapchatCurrency, spotifyCurrency } =
+    useCampaigns(needsCampaigns ? platform : "meta", dateRange, customStart, customEnd);
+  // Spotify is the only one of the three whose API returns unique reach.
+  const gadsRows = useMemo(() => toCampaignSatRows(campRows.filter((c) => c.platform === "google_ads"), false), [campRows]);
+  const snapRows = useMemo(() => toCampaignSatRows(campRows.filter((c) => c.platform === "snapchat"), false), [campRows]);
+  const spotifyRows = useMemo(() => toCampaignSatRows(campRows.filter((c) => c.platform === "spotify"), true), [campRows]);
 
   if (showMeta && loading && adsets.length === 0) return <LoadingState message="Loading saturation data…" />;
 
@@ -809,6 +1072,24 @@ export default function AudienceSaturationTab({ platform, dateRange, customStart
               <Dv360SaturationView rows={dvRows} reachAvailable={reachAvailable} loading={dvLoading} pending={dvPending} currency={currency} />
             </>
           )}
+          {showGads && (
+            <>
+              {platform === "both" && <PlatformDivider label="Google Ads" sub="Google Ads" />}
+              <CampaignSaturationView platformKey="google_ads" label="Google Ads" rows={gadsRows} reachAvailable={false} loading={campLoading} currency={googleAdsCurrency || "USD"} />
+            </>
+          )}
+          {showSnap && (
+            <>
+              {platform === "both" && <PlatformDivider label="Snapchat" sub="Snapchat Ads" />}
+              <CampaignSaturationView platformKey="snapchat" label="Snapchat" rows={snapRows} reachAvailable={false} loading={campLoading} currency={snapchatCurrency || "USD"} />
+            </>
+          )}
+          {showSpotify && (
+            <>
+              {platform === "both" && <PlatformDivider label="Spotify" sub="Spotify Ad Studio" />}
+              <CampaignSaturationView platformKey="spotify" label="Spotify" rows={spotifyRows} reachAvailable={true} loading={campLoading} currency={spotifyCurrency || "USD"} />
+            </>
+          )}
         </>
       )}
       {active === "expansion" && (
@@ -823,6 +1104,24 @@ export default function AudienceSaturationTab({ platform, dateRange, customStart
             <>
               {platform === "both" && <PlatformDivider label="DV360" sub="Display & Video 360" />}
               <Dv360ExpansionView rows={dvRows} revenueAvailable={revenueAvailable} loading={dvLoading} pending={dvPending} currency={currency} />
+            </>
+          )}
+          {showGads && (
+            <>
+              {platform === "both" && <PlatformDivider label="Google Ads" sub="Google Ads" />}
+              <CampaignExpansionView platformKey="google_ads" label="Google Ads" rows={gadsRows} mode="roas" loading={campLoading} currency={googleAdsCurrency || "USD"} />
+            </>
+          )}
+          {showSnap && (
+            <>
+              {platform === "both" && <PlatformDivider label="Snapchat" sub="Snapchat Ads" />}
+              <CampaignExpansionView platformKey="snapchat" label="Snapchat" rows={snapRows} mode="cpa" loading={campLoading} currency={snapchatCurrency || "USD"} />
+            </>
+          )}
+          {showSpotify && (
+            <>
+              {platform === "both" && <PlatformDivider label="Spotify" sub="Spotify Ad Studio" />}
+              <CampaignExpansionView platformKey="spotify" label="Spotify" rows={spotifyRows} mode="cpm" loading={campLoading} currency={spotifyCurrency || "USD"} />
             </>
           )}
         </>
