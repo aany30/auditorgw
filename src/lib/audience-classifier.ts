@@ -227,7 +227,7 @@ export function classifyAdSet(
   }
 
   // ---- Name fallback ----
-  const guessed = classifyByName(adSetName);
+  const guessed = classifyByName(adSetName) ?? classifyLoose(adSetName);
   if (guessed) return buildClassification(guessed, "name-fallback");
   return buildClassification("Unclassified", "name-fallback");
 }
@@ -254,58 +254,51 @@ function buildClassification(
 // conservative: it marks rows it can't place as "Unclassified" rather than
 // guessing, and always records source: "name-fallback".
 
-const OBJECTIVE_TO_CLASS: Record<string, AudienceClass> = {
-  // DV360 objectives (from friendlyGoal)
-  "Brand awareness":    "Broad",
-  "Conversions":        "Catalog/DPA",
-  "Offline action":     "Retargeting — Website",
-  "App installs":       "Retargeting — App",
-  // Google Ads channel types (from channelTypeToObjective)
-  "Search":             "Interest",
-  "Display":            "Broad",
-  "Shopping":           "Catalog/DPA",
-  "Video":              "Broad",
-  "Performance Max":    "ASC / Shopping",
-  "Demand Gen":         "Broad",
-  "App":                "Retargeting — App",
-  "Local":              "Broad",
-  "Smart":              "Broad",
-  // Snapchat — objectives are stored as friendly labels (snapchatObjectiveLabel),
-  // not raw enums, so the keys must match those labels.
-  "Awareness":          "Broad",
-  "Engagement":         "Interest",
-  "Website Traffic":    "Interest",
-  "Web Conversion":     "Catalog/DPA",
-  "App Install":        "Retargeting — App",
-  "App Conversion":     "Retargeting — App",
-  "Catalog Sales":      "Catalog/DPA",
-  "Lead Generation":    "Interest",
-  "Video Views":        "Broad",
-  "Story Views":        "Broad",
-  "Promote Places":     "Broad",
-  // Spotify
-  "awareness":          "Broad",
-  "consideration":      "Interest",
-  "conversions":        "Catalog/DPA",
-};
+/** Substring/normalized classifier for a campaign objective OR name across
+ *  DV360 / Google Ads / Snapchat / Spotify. Format-insensitive (lowercases and
+ *  strips non-letters) so "Website Traffic", "WEBSITE_TRAFFIC" and "websiteTraffic"
+ *  all match. Ordered most-specific → least so e.g. "app conversion" beats
+ *  "conversion". Returns null only when no known keyword is present. */
+function classifyLoose(text: string | undefined): AudienceClass | null {
+  if (!text) return null;
+  const o = text.toLowerCase().replace(/[^a-z]/g, "");
+  if (/lookalike|lal/.test(o)) return "Lookalike";
+  if (/appinstall|appconversion|apppromo|appengag|appreengag/.test(o)) return "Retargeting — App";
+  if (/retarget|remarket/.test(o)) return "Retargeting — Website";
+  if (/catalog|\bdpa\b|dynamicproduct|productsales|catalogsales/.test(o)) return "Catalog/DPA";
+  if (/performancemax|pmax/.test(o)) return "ASC / Shopping";
+  if (/shopping/.test(o)) return "Catalog/DPA";
+  if (/customer|loyalty|\bvip\b/.test(o)) return "Customer List";
+  if (/conversion|sales|purchase|leadgen|leadgeneration|offlineaction|webconversion|\bbof\b/.test(o)) return "Catalog/DPA";
+  if (/visitor|website|webtraffic|\bweb\b/.test(o)) return "Retargeting — Website";
+  if (/engage|consideration|videoview|storyview|\bmof\b/.test(o)) return "Retargeting — Engagement";
+  if (/traffic|search|interest|behav|affin|generic|branded|prospect|acquisition/.test(o)) return "Interest";
+  if (/awareness|reach|frequency|brand|video|views|impact|display|discovery|demandgen|promoteplaces|local|smart|hotel|travel|broad|\btof\b|new/.test(o)) return "Broad";
+  return null;
+}
 
 /** Classify a DV360/Google Ads/Snapchat/Spotify entity from its campaign
- *  objective and its own name. No API-sourced targeting data is available. */
+ *  objective and its own name. No API-sourced targeting data is available, so
+ *  this infers from real signals (name keywords, then objective) and, as a last
+ *  resort, defaults to Broad (prospecting) rather than leaving it Unclassified —
+ *  these are campaigns with real delivery, just no explicit audience signal. */
 export function classifyByObjectiveAndName(
   objective: string | undefined,
   entityName: string,
 ): AudienceClassification {
-  // Try name-based first — it's more specific
-  const fromName = classifyByName(entityName);
+  // Name first — the campaign name is the most specific signal.
+  const fromName = classifyByName(entityName) ?? classifyLoose(entityName);
   if (fromName) return buildClassification(fromName, "name-fallback");
 
-  // Fall back to objective mapping
-  if (objective) {
-    const cls = OBJECTIVE_TO_CLASS[objective];
-    if (cls) return buildClassification(cls, "name-fallback", `Inferred from campaign objective: ${objective}`);
+  // Then the campaign objective.
+  const fromObjective = classifyLoose(objective);
+  if (fromObjective) {
+    return buildClassification(fromObjective, "name-fallback", `Inferred from campaign objective: ${objective}`);
   }
 
-  return buildClassification("Unclassified", "name-fallback");
+  // No explicit signal — default to Broad (prospecting) so every delivering
+  // campaign lands in a bucket instead of "Unclassified".
+  return buildClassification("Broad", "name-fallback", "Defaulted to Broad — no audience signal in name or objective");
 }
 
 /** Convenience: build the audienceMap once per render from an audiences array. */
