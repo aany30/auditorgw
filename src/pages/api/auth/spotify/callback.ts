@@ -71,7 +71,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       spotify_client_secret: clientSecret,
     });
 
-    // Fetch businesses (non-fatal)
+    // Auto-detect ad accounts. Spotify has no top-level ad-accounts list — they
+    // are business-scoped: GET /businesses, then GET /businesses/{id}/ad_accounts
+    // for each. If this yields nothing (or errors), we signal the dashboard so it
+    // can prompt for a manual Ad Account ID instead of failing silently.
+    const ids: string[] = [];
+    const names: string[] = [];
     try {
       const bizRes = await fetch(`${SPOTIFY_ADS_BASE}/businesses`, {
         headers: { Authorization: `Bearer ${accessToken}` },
@@ -80,41 +85,42 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const bizData = await bizRes.json();
         const businesses = bizData.businesses || bizData.data || [];
         if (businesses.length > 0) {
-          const biz = businesses[0];
-          const bizId = biz.id || biz.business_id || "";
-          if (bizId) params.set("spotify_biz_id", bizId);
+          const firstBizId = businesses[0].id || businesses[0].business_id || "";
+          if (firstBizId) params.set("spotify_biz_id", firstBizId);
         }
-      }
-    } catch {
-      // Non-fatal
-    }
-
-    // Fetch ad accounts (non-fatal)
-    try {
-      const memberAccountsRes = await fetch(
-        `${SPOTIFY_ADS_BASE}/ad_accounts/business_member`,
-        { headers: { Authorization: `Bearer ${accessToken}` } },
-      );
-      if (memberAccountsRes.ok) {
-        const aaData = await memberAccountsRes.json();
-        const adAccounts = aaData.ad_accounts || aaData.data || [];
-        const ids: string[] = [];
-        const names: string[] = [];
-        for (const aa of adAccounts) {
-          const id = aa.ad_account_id || aa.id || "";
-          const name = aa.name || aa.ad_account_name || id;
-          if (id) {
-            ids.push(id);
-            names.push(name);
+        const seen = new Set<string>();
+        for (const biz of businesses) {
+          const bizId = biz.id || biz.business_id || "";
+          if (!bizId) continue;
+          try {
+            const aaRes = await fetch(
+              `${SPOTIFY_ADS_BASE}/businesses/${encodeURIComponent(bizId)}/ad_accounts`,
+              { headers: { Authorization: `Bearer ${accessToken}` } },
+            );
+            if (!aaRes.ok) continue;
+            const aaData = await aaRes.json();
+            for (const aa of aaData.ad_accounts || aaData.data || []) {
+              const id = aa.id || aa.ad_account_id || "";
+              if (!id || seen.has(id)) continue;
+              seen.add(id);
+              ids.push(id);
+              names.push(aa.name || aa.ad_account_name || id);
+            }
+          } catch {
+            // Skip this business — others may still resolve.
           }
         }
-        if (ids.length > 0) {
-          params.set("spotify_ad_account_ids", ids.join(","));
-          params.set("spotify_ad_account_names", names.join("|"));
-        }
       }
     } catch {
-      // Non-fatal
+      // Non-fatal — fall through to the manual-entry signal below.
+    }
+
+    // If nothing was detected, we still redirect with the refresh token so the
+    // dashboard marks Spotify authenticated-but-not-connected and shows the
+    // manual Ad Account ID entry in Manage Accounts.
+    if (ids.length > 0) {
+      params.set("spotify_ad_account_ids", ids.join(","));
+      params.set("spotify_ad_account_names", names.join("|"));
     }
 
     res.redirect(`/app/dashboard?${params.toString()}`);

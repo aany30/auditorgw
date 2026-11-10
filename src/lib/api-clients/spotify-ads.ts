@@ -140,16 +140,39 @@ export class SpotifyAdsApiClient {
 
   // ─── Ad Accounts ──────────────────────────────────────────────────────
 
-  async listAdAccounts(): Promise<SpotifyAdAccount[]> {
+  // Spotify has no top-level ad-accounts list endpoint. The accounts are
+  // business-scoped: list the user's businesses, then list ad accounts under
+  // each. (The old `/ad_accounts/business_member` path does not exist and
+  // always 404'd, which is why auto-detect silently failed.)
+  async listBusinesses(): Promise<Array<{ id: string; name: string }>> {
     const data = await this.request<{
-      ad_accounts?: Array<{ ad_account_id?: string; id?: string; name?: string; ad_account_name?: string }>;
-      data?: Array<{ ad_account_id?: string; id?: string; name?: string; ad_account_name?: string }>;
-    }>("/ad_accounts/business_member");
-    const accounts = data.ad_accounts || data.data || [];
-    return accounts.map((a) => ({
-      id: a.ad_account_id || a.id || "",
-      name: a.name || a.ad_account_name || a.ad_account_id || a.id || "",
-    }));
+      businesses?: Array<{ id?: string; business_id?: string; name?: string }>;
+    }>("/businesses");
+    return (data.businesses || [])
+      .map((b) => ({ id: b.id || b.business_id || "", name: b.name || b.id || b.business_id || "" }))
+      .filter((b) => b.id);
+  }
+
+  async listAdAccounts(): Promise<SpotifyAdAccount[]> {
+    const businesses = await this.listBusinesses();
+    const out: SpotifyAdAccount[] = [];
+    const seen = new Set<string>();
+    for (const biz of businesses) {
+      try {
+        const data = await this.request<{
+          ad_accounts?: Array<{ id?: string; ad_account_id?: string; name?: string; ad_account_name?: string }>;
+        }>(`/businesses/${encodeURIComponent(biz.id)}/ad_accounts`);
+        for (const a of data.ad_accounts || []) {
+          const id = a.id || a.ad_account_id || "";
+          if (!id || seen.has(id)) continue;
+          seen.add(id);
+          out.push({ id, name: a.name || a.ad_account_name || id });
+        }
+      } catch {
+        // Skip this business — others may still resolve.
+      }
+    }
+    return out;
   }
 
   // ─── Campaigns ────────────────────────────────────────────────────────

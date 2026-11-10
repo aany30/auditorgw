@@ -154,7 +154,9 @@ function PlatformRow({
           <div className="bg-amber-50 rounded-lg p-2.5">
             <div className="flex items-start gap-1.5 mb-1.5">
               <AlertCircle className="w-3 h-3 text-amber-500 mt-0.5 flex-shrink-0" />
-              <span className="text-[10px] text-amber-700">{pasteHint}</span>
+              <span className="text-[10px] text-amber-700">
+                <span className="font-semibold">Couldn&apos;t auto-detect your ad account.</span> Enter the ID manually — {pasteHint}
+              </span>
             </div>
             <form
               className="flex gap-1.5"
