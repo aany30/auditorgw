@@ -221,6 +221,53 @@ export interface SnapchatAdSquadInput {
   targeting?: Record<string, unknown>;
 }
 
+// ── Spotify campaign creation ────────────────────────────────────────────
+
+export type SpotifyDeliveryGoalGroup =
+  | "AWARENESS"
+  | "WEBSITE_TRAFFIC"
+  | "APP_PROMOTION"
+  | "ENGAGEMENT_ON_SPOTIFY"
+  | "LEAD_GEN"
+  | "VIDEO_VIEWS";
+
+export type SpotifyDeliveryGoal =
+  | "IMPRESSIONS"
+  | "REACH"
+  | "VIDEO_VIEWS"
+  | "CLICKS"
+  | "PAGE_VIEWS"
+  | "APP_INSTALLS"
+  | "STREAMS"
+  | "LEADS";
+
+export type SpotifyBidStrategy =
+  | "AUTOBID"
+  | "COST_PER_RESULT"
+  | "MAX_BID";
+
+export interface SpotifyCampaignInput {
+  name: string;
+  delivery_goal_group?: SpotifyDeliveryGoalGroup;
+}
+
+export interface SpotifyAdSetInput {
+  campaign_id: string;
+  name: string;
+  start_time: string;                // ISO 8601
+  end_time?: string;
+  budget: { micro_amount: number; type: "DAILY" | "LIFETIME" };
+  targets: {
+    placements?: string[];
+    age_ranges?: string[];
+    genders?: string[];
+    platforms?: string[];
+    geo_targets?: Array<{ country_code: string }>;
+  };
+  delivery_goal?: SpotifyDeliveryGoal;
+  bid_strategy?: SpotifyBidStrategy;
+}
+
 // ── Shared response ───────────────────────────────────────────────────────
 
 export interface CreateCampaignResponse {

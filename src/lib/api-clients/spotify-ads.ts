@@ -267,6 +267,64 @@ export class SpotifyAdsApiClient {
     }));
   }
 
+  // ─── Create entities ──────────────────────────────────────────────────
+
+  async createCampaign(input: {
+    name: string;
+    delivery_goal_group?: string;
+    objective?: string;
+  }): Promise<{ id: string; name: string; status: string }> {
+    const data = await this.request<{ id: string; name: string; status: string }>(
+      `/ad_accounts/${this.creds.adAccountId}/campaigns`,
+      { method: "POST", body: JSON.stringify(input) },
+    );
+    return data;
+  }
+
+  async createAdSet(input: {
+    campaign_id: string;
+    name: string;
+    start_time: string;
+    end_time?: string;
+    budget: { micro_amount: number; type: "DAILY" | "LIFETIME" };
+    targets: {
+      placements?: string[];
+      age_ranges?: string[];
+      genders?: string[];
+      platforms?: string[];
+      geo_targets?: Array<{ country_code: string }>;
+    };
+    delivery_goal?: string;
+    bid_strategy?: string;
+    frequency_caps?: Array<{ frequency_unit: string; frequency_period: number; max_impressions: number }>;
+  }): Promise<{ id: string; name: string; status: string }> {
+    const data = await this.request<{ id: string; name: string; status: string }>(
+      `/ad_accounts/${this.creds.adAccountId}/ad_sets`,
+      { method: "POST", body: JSON.stringify(input) },
+    );
+    return data;
+  }
+
+  async createAd(input: {
+    ad_set_id: string;
+    name: string;
+    advertiser_name: string;
+    tagline: string;
+    assets: {
+      asset_id: string;
+      logo_asset_id: string;
+      companion_asset_id?: string;
+    };
+    call_to_action?: { key: string; url: string };
+    delivery?: "ON" | "OFF";
+  }): Promise<{ id: string; name: string; status: string }> {
+    const data = await this.request<{ id: string; name: string; status: string }>(
+      `/ad_accounts/${this.creds.adAccountId}/ads`,
+      { method: "POST", body: JSON.stringify(input) },
+    );
+    return data;
+  }
+
   // ─── Aggregate Reporting ──────────────────────────────────────────────
 
   async getAggregateReport(
