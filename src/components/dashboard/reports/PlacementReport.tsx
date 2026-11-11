@@ -564,7 +564,13 @@ export default function PlacementReport({ platform, dateRange, customStart, cust
         <div className="space-y-5">
           {platform === "both" && <SectionHeader label="DV360" sub="Display & Video 360" />}
 
-          {dvExchangeErr ? (
+          {(dvEnvPending || dvExchangePending) && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-800 flex items-center gap-2">
+              <svg className="w-4 h-4 shrink-0 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" strokeOpacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10" strokeLinecap="round"/></svg>
+              <span><span className="font-semibold">DV360 loading</span> — async report generation can take a few minutes. The page will update automatically once DV360 data arrives.</span>
+            </div>
+          )}
+          {dvExchangeErr && !dvExchangePending ? (
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
               <span className="font-semibold">DV360 placement data unavailable:</span> {dvExchangeErr}
             </div>

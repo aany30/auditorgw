@@ -26,6 +26,10 @@ const DV360_CACHED_NOTICE = "DV360 showing recent cached data (live refresh pend
  *  Google token). Shown in the red banner because it won't self-resolve. */
 const DV360_AUTH_ERROR = "DV360: Google session expired — reconnect your Google account under Manage Accounts to refresh data.";
 
+/** Soft notice shown while DV360 data is still being fetched (async Bid Manager
+ *  reports can take 3-4 minutes). Other platforms' data is displayed meanwhile. */
+const DV360_LOADING_NOTICE = "DV360 data is loading — this can take a few minutes. Other platforms are displayed below.";
+
 /** Turn a raw platform error into a clear, actionable message so users see which
  *  platform failed and why (timeout vs expired token vs permission) instead of a
  *  bare "Failed to fetch". Display-only — doesn't change any fetch behavior. */
@@ -218,12 +222,15 @@ export function useCampaigns(
   const [error, setError] = useState<string | null>(null);
   const [platformErrors, setPlatformErrors] = useState<{ meta?: string; dv360?: string; google_ads?: string; snapchat?: string; spotify?: string }>({});
   const [dv360Repolling, setDv360Repolling] = useState(false);
+  const [dv360Loading, setDv360Loading] = useState(false);
   const swrSeeded = useRef(false);
   const dvRetries = useRef(0);
   const fetchInFlight = useRef(false);
   const campaignsRef = useRef<CampaignData[]>([]);
   const [reloadTick, setReloadTick] = useState(0);
-  const MAX_DV360_RETRIES = 3;
+  // No hard cap — DV360 async Bid Manager reports can take 3-4 minutes;
+  // keep retrying with exponential backoff (capped at 15s per tick).
+  const MAX_DV360_RETRIES = 40;
 
   const { startDate, endDate } = rangeToDates(dateRange, customStart, customEnd);
 
@@ -272,6 +279,7 @@ export function useCampaigns(
       // On repoll, seed with existing non-DV360 campaigns so they aren't wiped.
       const all: CampaignData[] = isRepoll ? campaignsRef.current.filter((c) => c.platform !== "dv360") : [];
       const hasServerDefaults = !!process.env.NEXT_PUBLIC_HAS_DEFAULT_CREDS;
+      let dv360FailedRetry = false;
       try {
         const effectiveMetaToken = demoMode ? "demo-meta-token" : metaAccessToken;
         const effectiveMetaBiz = demoMode ? "demo-business-123" : metaBusinessId;
@@ -378,10 +386,12 @@ export function useCampaigns(
                 if (isAuth) {
                   dv360CacheFallback(); // still show cached data so the page isn't empty
                   errs[key] = DV360_AUTH_ERROR;
-                } else if (dv360CacheFallback()) {
-                  errs[key] = DV360_CACHED_NOTICE;
                 } else {
-                  errs[key] = msg;
+                  // Non-auth failure (timeout, 5xx, etc.) — mark DV360 as still
+                  // loading and schedule a retry. Don't fall back to stale cache;
+                  // the user prefers to wait for real data.
+                  errs[key] = DV360_LOADING_NOTICE;
+                  dv360FailedRetry = true;
                 }
               } else {
                 errs[key] = msg;
@@ -389,10 +399,12 @@ export function useCampaigns(
             }
           } catch (e) {
             // Network-level failure (gateway timeout on the async Bid Manager
-            // report) — transient, so serve the cache as a soft notice.
-            errs[key] = e instanceof Error ? e.message : `${key} fetch failed`;
-            if (key === "dv360" && dv360CacheFallback()) {
-              errs[key] = DV360_CACHED_NOTICE;
+            // report) — transient, mark as loading and retry.
+            if (key === "dv360") {
+              errs[key] = DV360_LOADING_NOTICE;
+              dv360FailedRetry = true;
+            } else {
+              errs[key] = e instanceof Error ? e.message : `${key} fetch failed`;
             }
           } finally {
             resolved++;
@@ -413,7 +425,7 @@ export function useCampaigns(
           // not a blocking error, so it must not drive the red error banners.
           // Surface the first HARD error as a friendly, platform-named message.
           const hard: Record<string, string | undefined> = { ...errs };
-          if (hard.dv360 === DV360_CACHED_NOTICE) hard.dv360 = undefined;
+          if (hard.dv360 === DV360_CACHED_NOTICE || hard.dv360 === DV360_LOADING_NOTICE) hard.dv360 = undefined;
           const firstPlatform = (["meta", "dv360", "google_ads", "snapchat", "spotify"] as const)
             .find((p) => hard[p]);
           if (firstPlatform) setError(friendlyError(firstPlatform, hard[firstPlatform]!));
@@ -437,18 +449,32 @@ export function useCampaigns(
           // delivery metrics (spend + impressions) are still zero — don't gate
           // on reach, which may legitimately stay 0 if no reach report exists.
           let willRepoll = false;
-          if (!errs.dv360 && (platform === "dv360" || platform === "both") && !demoMode) {
-            const dv = all.filter((c) => c.platform === "dv360");
-            const dvDelivered = dv.reduce((s, c) => s + (c.spend || 0) + (c.impressions || 0), 0);
-            const pending = dv.length > 0 && dvDelivered === 0;
-            if (pending && dvRetries.current < MAX_DV360_RETRIES) {
+          const dvNeeded = (platform === "dv360" || platform === "both") && !demoMode;
+          if (dvNeeded) {
+            // Repoll case 1: DV360 fetch outright failed (timeout/5xx) — retry to get data
+            if (dv360FailedRetry && dvRetries.current < MAX_DV360_RETRIES) {
               willRepoll = true;
               dvRetries.current += 1;
-              const delay = 3000 * Math.pow(2, dvRetries.current - 1);
+              // Exponential backoff capped at 15s: 3s, 6s, 12s, 15s, 15s, ...
+              const delay = Math.min(15_000, 3000 * Math.pow(2, dvRetries.current - 1));
               retryTimer = setTimeout(() => { if (!cancelled) setReloadTick((t) => t + 1); }, delay);
+            }
+            // Repoll case 2: DV360 returned campaigns but delivery metrics are
+            // still zero (BM report still generating server-side).
+            if (!willRepoll && !errs.dv360) {
+              const dv = all.filter((c) => c.platform === "dv360");
+              const dvDelivered = dv.reduce((s, c) => s + (c.spend || 0) + (c.impressions || 0), 0);
+              const pending = dv.length > 0 && dvDelivered === 0;
+              if (pending && dvRetries.current < MAX_DV360_RETRIES) {
+                willRepoll = true;
+                dvRetries.current += 1;
+                const delay = Math.min(15_000, 3000 * Math.pow(2, dvRetries.current - 1));
+                retryTimer = setTimeout(() => { if (!cancelled) setReloadTick((t) => t + 1); }, delay);
+              }
             }
           }
           setDv360Repolling(willRepoll);
+          setDv360Loading(willRepoll || (dvNeeded && !all.some((c) => c.platform === "dv360" && (c.spend || 0) + (c.impressions || 0) > 0)));
           setLoading(false);
         }
       }
@@ -501,5 +527,5 @@ export function useCampaigns(
   const snapchatCurrency = detectedSnap || storedSnapchatCurrency || "USD";
   const spotifyCurrency = detectedSpotify || storedSpotifyCurrency || "USD";
 
-  return { campaigns, loading, dv360Repolling, error, platformErrors, startDate, endDate, metaCurrency, dv360Currency, googleAdsCurrency, snapchatCurrency, spotifyCurrency };
+  return { campaigns, loading, dv360Repolling, dv360Loading, error, platformErrors, startDate, endDate, metaCurrency, dv360Currency, googleAdsCurrency, snapchatCurrency, spotifyCurrency };
 }

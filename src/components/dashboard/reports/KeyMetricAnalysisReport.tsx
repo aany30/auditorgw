@@ -1587,7 +1587,7 @@ function useAdInsightsFetch(platform: "meta" | "both", dateRange: DateRange, cus
 export default function KeyMetricAnalysisReport({ platform, dateRange, customStart, customEnd }: Props) {
   const effective: "meta" | "both" = (platform === "dv360" || platform === "google_ads") ? "meta" : (platform === "meta" ? "meta" : "both");
 
-  const { campaigns: campaignsCur, loading: loadingCamp, platformErrors, startDate, endDate } = useCampaigns(platform, dateRange, customStart, customEnd);
+  const { campaigns: campaignsCur, loading: loadingCamp, dv360Loading: dv360Repolling, platformErrors, startDate, endDate } = useCampaigns(platform, dateRange, customStart, customEnd);
   const { adsets: adsetsCur, loading: loadingAdsets, currency } = useAdSetInsights(platform, dateRange, customStart, customEnd);
   const { adsets: adsetsPrev, campaigns: campaignsPrev, prevStart, prevEnd } = usePrevAdSets(effective, dateRange, customStart, customEnd);
   const { current: daily, previous: dailyPrev, byPlatform, loading: loadingDaily } = useMetaDailyVsPrev(platform, dateRange, customStart, customEnd);
@@ -1913,7 +1913,13 @@ export default function KeyMetricAnalysisReport({ platform, dateRange, customSta
                 groupBy={groupBy} hideZero={hideZeroDV360} onToggleHideZero={() => setHideZeroDV360(v => !v)}
                 totalCount={dv360DrillFull.length} persistKey="key-metrics-drill-dv360" />
 
-              {platformErrors.dv360 && (
+              {dv360Repolling && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-800 flex items-center gap-2">
+                  <svg className="w-4 h-4 shrink-0 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" strokeOpacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10" strokeLinecap="round"/></svg>
+                  <span><span className="font-semibold">DV360 loading</span> — async report generation can take a few minutes. The page will update automatically once DV360 data arrives.</span>
+                </div>
+              )}
+              {platformErrors.dv360 && !dv360Repolling && !platformErrors.dv360.includes("loading") && (
                 <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
                   <span className="font-semibold">DV360 data unavailable:</span> {platformErrors.dv360}
                 </div>

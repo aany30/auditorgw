@@ -134,7 +134,9 @@ export function useMetaDailyVsPrev(
           })
             .then(async (r) => {
               if (cancelled) { resolve([]); return; }
-              if (r.status === 202 && n < 12) {
+              if (r.status === 202 && n < 50) {
+                // DV360 Bid Manager reports can take 3-4 min — keep polling
+                // every 5s (capped at ~4 min total) instead of giving up at 60s.
                 const t = setTimeout(() => attempt(n + 1), 5_000);
                 retryTimers.push(t);
                 return;

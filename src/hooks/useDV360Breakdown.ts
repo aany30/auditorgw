@@ -76,8 +76,8 @@ export function useDV360Breakdown(
             endDate,
           }),
         });
-        if (r.status === 202 && attempt < 12) {
-          // Report still generating — retry in 5s (the route resumes it).
+        if (r.status === 202 && attempt < 50) {
+          // Report still generating — retry in 5s (up to ~4 min total).
           setPending(true);
           retryTimer = setTimeout(() => fetchOnce(attempt + 1), 5_000);
           return;

@@ -596,7 +596,7 @@ function PlatformBlock({ name, accent, cur, prev, currency, reach = 0 }: {
 }
 
 export default function ReportingOverview({ platform, dateRange, customStart, customEnd }: Props) {
-  const { campaigns, platformErrors, startDate, endDate, metaCurrency, dv360Currency, snapchatCurrency, spotifyCurrency } = useCampaigns(platform, dateRange, customStart, customEnd);
+  const { campaigns, platformErrors, dv360Loading, startDate, endDate, metaCurrency, dv360Currency, snapchatCurrency, spotifyCurrency } = useCampaigns(platform, dateRange, customStart, customEnd);
   // Single-platform views format in that platform's currency; the "both" view
   // formats each PlatformBlock in its own currency (passed explicitly below).
   const gadsCurrency = currencyFor(campaigns, "google_ads");
@@ -741,17 +741,16 @@ export default function ReportingOverview({ platform, dateRange, customStart, cu
         />
       </div>
 
-      {platformErrors.dv360 && platform !== "meta" && (
-        platformErrors.dv360.includes("cached data") ? (
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-800 flex items-center gap-2">
-            <svg className="w-4 h-4 shrink-0 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2v4m0 12v4m-7.07-3.93l2.83-2.83m8.49-8.49l2.83-2.83M2 12h4m12 0h4M4.93 4.93l2.83 2.83m8.49 8.49l2.83 2.83"/></svg>
-            <span><span className="font-semibold">DV360:</span> Showing cached data while live refresh completes. DV360 reports use async generation and may take 30–60s — data displayed is from the last successful fetch.</span>
-          </div>
-        ) : (
-          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
-            <span className="font-semibold">DV360 data unavailable:</span> {platformErrors.dv360}
-          </div>
-        )
+      {dv360Loading && platform !== "meta" && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-800 flex items-center gap-2">
+          <svg className="w-4 h-4 shrink-0 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" strokeOpacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10" strokeLinecap="round"/></svg>
+          <span><span className="font-semibold">DV360 loading</span> — DV360 uses async report generation which can take a few minutes. Other platforms are displayed below. The page will update automatically once DV360 data arrives.</span>
+        </div>
+      )}
+      {platformErrors.dv360 && !dv360Loading && platform !== "meta" && !platformErrors.dv360.includes("loading") && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
+          <span className="font-semibold">DV360 data unavailable:</span> {platformErrors.dv360}
+        </div>
       )}
       {platformErrors.meta && platform !== "dv360" && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
