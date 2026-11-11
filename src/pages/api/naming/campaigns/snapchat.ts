@@ -109,6 +109,7 @@ export default async function handler(
         spend: 0,
         impressions: 0,
         clicks: 0,
+        dailyBudget: sq.dailyBudgetMicro ? sq.dailyBudgetMicro / 1_000_000 : undefined,
         ads: squadAds,
       };
       const arr = squadsByCampaign.get(sq.campaignId) ?? [];
@@ -119,6 +120,12 @@ export default async function handler(
     const out: CampaignData[] = campaigns.map((c) => {
       const squads = squadsByCampaign.get(c.id) ?? [];
       const stats = effectiveStats.get(c.id);
+      // Snapchat can set budget at campaign level OR ad-squad level.
+      // If no campaign-level budget, sum ad-squad daily budgets (like Spotify ABO).
+      const campDaily = c.dailyBudgetMicro ? c.dailyBudgetMicro / 1_000_000 : undefined;
+      const campLifetime = c.lifetimeSpendCapMicro ? c.lifetimeSpendCapMicro / 1_000_000 : undefined;
+      const squadDailySum = squads.reduce((s, a) => s + (a.dailyBudget ?? 0), 0) || undefined;
+      const effectiveDaily = campDaily || squadDailySum;
       return {
         id: c.id,
         name: c.name,
@@ -127,12 +134,13 @@ export default async function handler(
         platform: "snapchat" as const,
         spend: stats?.spend ?? 0,
         impressions: stats?.impressions ?? 0,
-        clicks: stats?.swipes ?? 0, // Snapchat uses "swipes" as click-equivalent
+        clicks: stats?.swipes ?? 0,
         videoViews: stats?.videoViews ?? 0,
         conversions: stats?.conversions ?? 0,
         conversionValue: 0,
-        dailyBudget: c.dailyBudgetMicro ? c.dailyBudgetMicro / 1_000_000 : undefined,
-        lifetimeBudget: c.lifetimeSpendCapMicro ? c.lifetimeSpendCapMicro / 1_000_000 : undefined,
+        dailyBudget: effectiveDaily,
+        lifetimeBudget: campLifetime,
+        budgetLevel: campDaily ? "campaign" : squadDailySum ? "adset" : undefined,
         currency,
         adSets: squads,
       };

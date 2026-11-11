@@ -2213,37 +2213,81 @@ function GoogleAdsBudgetSection({ campaigns, currency, customStart, customEnd }:
   );
 }
 
-function GoogleAdsCampaignDrill({ campaign, currency }: { campaign: CampaignData; currency: string }) {
-  const adGroups = campaign.adSets ?? [];
-  if (adGroups.length === 0) {
-    return <div className="px-4 py-3 text-xs text-gray-500">No ad groups returned for this campaign in the selected window.</div>;
+function GenericCampaignDrill({ campaign, currency, groupLabel, childLabel, showBudget }: {
+  campaign: CampaignData; currency: string;
+  groupLabel: string; childLabel: string; showBudget?: boolean;
+}) {
+  const groups = campaign.adSets ?? [];
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggleExp = (id: string) => setExpanded((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  if (groups.length === 0) {
+    return <div className="px-4 py-3 text-xs text-gray-500">No {groupLabel.toLowerCase()}s returned for this campaign.</div>;
   }
   return (
     <div className="px-4 py-3">
       <table className="w-full text-xs">
         <thead>
           <tr className="text-gray-500 text-left">
-            <th className="py-1.5 font-semibold">Ad Group</th>
-            <th className="py-1.5 font-semibold">Status</th>
+            <th className="py-1.5 w-6"></th>
+            <th className="py-1.5 font-semibold">{groupLabel}</th>
+            <th className="py-1.5 font-semibold text-center">Status</th>
+            {showBudget && <th className="py-1.5 font-semibold text-right">Budget</th>}
             <th className="py-1.5 font-semibold text-right">Spend</th>
             <th className="py-1.5 font-semibold text-right">Impr.</th>
             <th className="py-1.5 font-semibold text-right">Clicks</th>
           </tr>
         </thead>
         <tbody>
-          {adGroups.map((ag) => (
-            <tr key={ag.id} className="border-t border-gray-100">
-              <td className="py-1.5 text-gray-900">{ag.name}</td>
-              <td className="py-1.5 text-gray-600">{ag.status || "—"}</td>
-              <td className="py-1.5 text-right font-mono">{formatMoney(ag.spend || 0, currency, 0)}</td>
-              <td className="py-1.5 text-right font-mono">{(ag.impressions || 0).toLocaleString("en-IN")}</td>
-              <td className="py-1.5 text-right font-mono">{(ag.clicks || 0).toLocaleString("en-IN")}</td>
-            </tr>
-          ))}
+          {groups.map((g) => {
+            const ads = g.ads ?? [];
+            const hasAds = ads.length > 0;
+            const isExp = expanded.has(g.id);
+            return (
+              <Fragment key={g.id}>
+                <tr className="border-t border-gray-100 hover:bg-gray-50 cursor-pointer" onClick={() => hasAds && toggleExp(g.id)}>
+                  <td className="py-1.5 text-center text-gray-400">
+                    {hasAds ? (isExp ? <ChevronDown className="w-3.5 h-3.5 inline" /> : <ChevronRight className="w-3.5 h-3.5 inline" />) : null}
+                  </td>
+                  <td className="py-1.5 text-gray-900 font-medium max-w-[260px] break-words">{g.name}</td>
+                  <td className="py-1.5 text-center">{statusBadge(g.status)}</td>
+                  {showBudget && (
+                    <td className="py-1.5 text-right font-mono text-gray-700 whitespace-nowrap">
+                      {g.dailyBudget ? <>{formatMoney(g.dailyBudget, currency, 0)}<span className="text-[10px] text-gray-400">/day</span></> : g.lifetimeBudget ? <>{formatMoney(g.lifetimeBudget, currency, 0)}<span className="text-[10px] text-gray-400">/life</span></> : "—"}
+                    </td>
+                  )}
+                  <td className="py-1.5 text-right font-mono font-semibold">{formatMoney(g.spend || 0, currency, 0)}</td>
+                  <td className="py-1.5 text-right font-mono">{(g.impressions || 0).toLocaleString("en-IN")}</td>
+                  <td className="py-1.5 text-right font-mono">{(g.clicks || 0).toLocaleString("en-IN")}</td>
+                </tr>
+                {isExp && ads.map((ad) => (
+                  <tr key={ad.id} className="bg-gray-50/60 border-t border-gray-100/60">
+                    <td></td>
+                    <td className="py-1 pl-4 text-[11px] text-gray-600 max-w-[240px] break-words">
+                      <span className="inline-block bg-gray-200 text-gray-500 text-[9px] font-semibold uppercase px-1.5 py-0.5 rounded mr-1.5">{childLabel}</span>
+                      {ad.name}
+                    </td>
+                    <td className="py-1 text-center text-[11px]">{statusBadge(ad.status)}</td>
+                    {showBudget && <td></td>}
+                    <td className="py-1 text-right text-[11px] font-mono text-gray-500">{formatMoney(ad.spend || 0, currency, 0)}</td>
+                    <td className="py-1 text-right text-[11px] font-mono text-gray-500">{(ad.impressions || 0).toLocaleString("en-IN")}</td>
+                    <td className="py-1 text-right text-[11px] font-mono text-gray-500">{(ad.clicks || 0).toLocaleString("en-IN")}</td>
+                  </tr>
+                ))}
+              </Fragment>
+            );
+          })}
         </tbody>
       </table>
+      <div className="text-[10px] text-gray-400 mt-1.5 px-0.5">
+        {groups.length} {groupLabel.toLowerCase()}{groups.length !== 1 ? "s" : ""} · click a row to expand {childLabel.toLowerCase()}s
+      </div>
     </div>
   );
+}
+
+function GoogleAdsCampaignDrill({ campaign, currency }: { campaign: CampaignData; currency: string }) {
+  return <GenericCampaignDrill campaign={campaign} currency={currency} groupLabel="Ad Group" childLabel="Ad" />;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2320,7 +2364,16 @@ function SnapchatBudgetSection({ campaigns, currency, platformName = "Snapchat",
         totalCount={visible.length}
         isDemo={false}
         platform={platformKey}
-        subtitle={`Real per-campaign delivery from the ${platformApi} for the selected window.`}
+        subtitle={`Real per-campaign delivery from the ${platformApi} for the selected window. Expand a row to drill into ${platformKey === "snapchat" ? "ad squads" : "ad sets"}.`}
+        renderDrill={(c) => (
+          <GenericCampaignDrill
+            campaign={c}
+            currency={currency}
+            groupLabel={platformKey === "snapchat" ? "Ad Squad" : "Ad Set"}
+            childLabel="Ad"
+            showBudget
+          />
+        )}
       />
 
       <p className="text-[11px] text-gray-400 leading-relaxed px-1">
