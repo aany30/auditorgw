@@ -492,11 +492,16 @@ export default function Dashboard() {
       const adAccountIds = spotify_ad_account_ids ? (spotify_ad_account_ids as string).split(",") : [];
       const adAccountNames = spotify_ad_account_names ? (spotify_ad_account_names as string).split("|") : adAccountIds;
       if (adAccountIds.length > 0) {
+        // Don't hijack a working selection on reconnect: keep the currently
+        // selected ad account if one is already set (just refresh the token and
+        // the options list). Only default to the first account on a fresh connect.
+        const existingSpotifyAcct = useAuthStore.getState().spotifyAdAccountId;
+        const chosenSpotifyAcct = existingSpotifyAcct || adAccountIds[0];
         setSpotifyCredentials({
           clientId: spotify_client_id as string,
           clientSecret: spotify_client_secret as string,
           refreshToken: spotify_refresh as string,
-          adAccountId: adAccountIds[0],
+          adAccountId: chosenSpotifyAcct,
         });
         const spotifyOpts = adAccountIds.map((id, i) => ({ id, name: adAccountNames[i] || id }));
         useAuthStore.getState().setSpotifyAdAccountOptions(spotifyOpts);

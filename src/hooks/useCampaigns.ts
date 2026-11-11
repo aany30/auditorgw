@@ -26,6 +26,29 @@ const DV360_CACHED_NOTICE = "DV360 showing recent cached data (live refresh pend
  *  Google token). Shown in the red banner because it won't self-resolve. */
 const DV360_AUTH_ERROR = "DV360: Google session expired — reconnect your Google account under Manage Accounts to refresh data.";
 
+/** Turn a raw platform error into a clear, actionable message so users see which
+ *  platform failed and why (timeout vs expired token vs permission) instead of a
+ *  bare "Failed to fetch". Display-only — doesn't change any fetch behavior. */
+function friendlyError(platform: string, raw: string): string {
+  const label: Record<string, string> = { meta: "Meta", dv360: "DV360", google_ads: "Google Ads", snapchat: "Snapchat", spotify: "Spotify" };
+  const name = label[platform] || platform;
+  const reconnect = platform === "snapchat" ? "Snapchat" : platform === "spotify" ? "Spotify" : platform === "meta" ? "Meta" : "Google";
+  const r = (raw || "").toLowerCase();
+  if (/failed to fetch|timed out|timeout|aborted|network/.test(r)) {
+    return `${name} took too long to respond and timed out. This is usually temporary — reload to try again.`;
+  }
+  if (/invalid_grant|token.*(expired|revoked)|(expired|revoked).*token|unauthor/.test(r)) {
+    return `${name} session expired — reconnect ${reconnect} under Manage Accounts to refresh access.`;
+  }
+  if (/access denied|does not have permission|permission\b|forbidden|\b403\b/.test(r)) {
+    return `${name}: your connected account doesn't have access to this ad account. Switch to an account you have access to (Manage Accounts), or check your role in ${reconnect}.`;
+  }
+  if (/manager|mcc/.test(r)) {
+    return `${name}: this is a Manager (MCC) account — pick a client account in Manage Accounts.`;
+  }
+  return `${name}: ${raw}`;
+}
+
 /** Max age for the failure-fallback cache read. Longer than the normal TTL so a
  *  sustained DV360 outage keeps showing last-known data rather than collapsing
  *  the aggregate to other-platforms-only. */
@@ -388,9 +411,12 @@ export function useCampaigns(
           // Keep legacy `error` populated for existing consumers — but the DV360
           // cached-data fallback is a soft notice (data loaded fine from cache),
           // not a blocking error, so it must not drive the red error banners.
-          const dvHardErr = errs.dv360 === DV360_CACHED_NOTICE ? undefined : errs.dv360;
-          const first = errs.meta || dvHardErr || errs.google_ads || errs.snapchat || errs.spotify;
-          if (first) setError(first);
+          // Surface the first HARD error as a friendly, platform-named message.
+          const hard: Record<string, string | undefined> = { ...errs };
+          if (hard.dv360 === DV360_CACHED_NOTICE) hard.dv360 = undefined;
+          const firstPlatform = (["meta", "dv360", "google_ads", "snapchat", "spotify"] as const)
+            .find((p) => hard[p]);
+          if (firstPlatform) setError(friendlyError(firstPlatform, hard[firstPlatform]!));
           // Cache each platform's detected currency (sticky) so a later
           // rate-limited fetch that drops a platform still renders the right
           // symbol. Done here (not in a separate effect) to keep hook count fixed.
