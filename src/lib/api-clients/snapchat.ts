@@ -288,7 +288,7 @@ export class SnapchatApiClient {
   async getAccountDailyStats(
     startDate: string,
     endDate: string,
-  ): Promise<Array<{ date: string; spend: number; swipes: number; conversions: number }>> {
+  ): Promise<Array<{ date: string; spend: number; impressions: number; swipes: number; conversions: number }>> {
     const params = new URLSearchParams({
       granularity: "DAY",
       start_time: toRFC3339(startDate),
@@ -300,7 +300,7 @@ export class SnapchatApiClient {
         `/adaccounts/${this.creds.adAccountId}/stats?${params}`,
       );
       const series = (data.timeseries_stats || []) as Array<Record<string, unknown>>;
-      const out: Array<{ date: string; spend: number; swipes: number; conversions: number }> = [];
+      const out: Array<{ date: string; spend: number; impressions: number; swipes: number; conversions: number }> = [];
       for (const row of series) {
         const ts = (row.timeseries_stat || row) as Record<string, unknown>;
         const points = (ts.timeseries || []) as Array<Record<string, unknown>>;
@@ -311,6 +311,7 @@ export class SnapchatApiClient {
           out.push({
             date,
             spend: Number(stats.spend || 0) / 1_000_000,
+            impressions: Number(stats.impressions || 0),
             swipes: Number(stats.swipes || 0),
             conversions: Number(stats.conversion_purchases || 0),
           });

@@ -73,16 +73,20 @@ export function useMetaDailyVsPrev(
     metaAccessToken, metaBusinessId,
     dv360ClientId, dv360ClientSecret, dv360RefreshToken, dv360AdvertiserId, dv360PartnerId,
     googleAdsCustomerId, googleAdsLoginCustomerId,
+    snapchatClientId, snapchatClientSecret, snapchatRefreshToken, snapchatAdAccountId,
+    spotifyClientId, spotifyClientSecret, spotifyRefreshToken, spotifyAdAccountId,
     demoMode,
   } = useAuthStore();
   const [current, setCurrent] = useState<DailyPoint[]>([]);
   const [previous, setPrevious] = useState<DailyPoint[]>([]);
   // Per-platform split — populated in "both" mode so the Overview can render
-  // separated Meta / DV360 / Google Ads subtotal strips (never blended without labels).
-  const [byPlatform, setByPlatform] = useState<{ meta: PlatformDaily; dv360: PlatformDaily; google_ads: PlatformDaily }>({
+  // separated platform subtotal strips (never blended without labels).
+  const [byPlatform, setByPlatform] = useState<{ meta: PlatformDaily; dv360: PlatformDaily; google_ads: PlatformDaily; snapchat: PlatformDaily; spotify: PlatformDaily }>({
     meta: { current: [], previous: [] },
     dv360: { current: [], previous: [] },
     google_ads: { current: [], previous: [] },
+    snapchat: { current: [], previous: [] },
+    spotify: { current: [], previous: [] },
   });
   const [loading, setLoading] = useState(true);
 
@@ -165,10 +169,52 @@ export function useMetaDailyVsPrev(
         .catch(() => [] as DailyPoint[]);
     };
 
+    const fetchSnapchatDaily = (s: string, e: string): Promise<DailyPoint[]> => {
+      const hasServerDefaults4 = !!process.env.NEXT_PUBLIC_HAS_DEFAULT_CREDS;
+      if (!hasServerDefaults4 && (!snapchatClientId || !snapchatClientSecret || !snapchatRefreshToken || !snapchatAdAccountId))
+        return Promise.resolve([]);
+      return fetch("/api/reporting/breakdown/snapchat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clientId: snapchatClientId,
+          clientSecret: snapchatClientSecret,
+          refreshToken: snapchatRefreshToken,
+          adAccountId: snapchatAdAccountId,
+          startDate: s, endDate: e,
+        }),
+      })
+        .then(r => r.json())
+        .then(d => (d.rows || []) as DailyPoint[])
+        .catch(() => [] as DailyPoint[]);
+    };
+
+    const fetchSpotifyDaily = (s: string, e: string): Promise<DailyPoint[]> => {
+      const hasServerDefaults5 = !!process.env.NEXT_PUBLIC_HAS_DEFAULT_CREDS;
+      if (!hasServerDefaults5 && (!spotifyClientId || !spotifyClientSecret || !spotifyRefreshToken || !spotifyAdAccountId))
+        return Promise.resolve([]);
+      return fetch("/api/reporting/breakdown/spotify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clientId: spotifyClientId,
+          clientSecret: spotifyClientSecret,
+          refreshToken: spotifyRefreshToken,
+          adAccountId: spotifyAdAccountId,
+          startDate: s, endDate: e,
+        }),
+      })
+        .then(r => r.json())
+        .then(d => (d.rows || []) as DailyPoint[])
+        .catch(() => [] as DailyPoint[]);
+    };
+
     const emptyByPlatform = {
       meta: { current: [] as DailyPoint[], previous: [] as DailyPoint[] },
       dv360: { current: [] as DailyPoint[], previous: [] as DailyPoint[] },
       google_ads: { current: [] as DailyPoint[], previous: [] as DailyPoint[] },
+      snapchat: { current: [] as DailyPoint[], previous: [] as DailyPoint[] },
+      spotify: { current: [] as DailyPoint[], previous: [] as DailyPoint[] },
     };
 
     if (platform === "dv360") {
@@ -197,8 +243,34 @@ export function useMetaDailyVsPrev(
         })
         .catch(() => { if (!cancelled) { setCurrent([]); setPrevious([]); } })
         .finally(() => { if (!cancelled) setLoading(false); });
+    } else if (platform === "snapchat") {
+      setLoading(true);
+      Promise.all([
+        fetchSnapchatDaily(startDate, endDate),
+        fetchSnapchatDaily(prev.startDate, prev.endDate),
+      ])
+        .then(([cur, pr]) => {
+          if (cancelled) return;
+          setCurrent(cur); setPrevious(pr);
+          setByPlatform({ ...emptyByPlatform, snapchat: { current: cur, previous: pr } });
+        })
+        .catch(() => { if (!cancelled) { setCurrent([]); setPrevious([]); } })
+        .finally(() => { if (!cancelled) setLoading(false); });
+    } else if (platform === "spotify") {
+      setLoading(true);
+      Promise.all([
+        fetchSpotifyDaily(startDate, endDate),
+        fetchSpotifyDaily(prev.startDate, prev.endDate),
+      ])
+        .then(([cur, pr]) => {
+          if (cancelled) return;
+          setCurrent(cur); setPrevious(pr);
+          setByPlatform({ ...emptyByPlatform, spotify: { current: cur, previous: pr } });
+        })
+        .catch(() => { if (!cancelled) { setCurrent([]); setPrevious([]); } })
+        .finally(() => { if (!cancelled) setLoading(false); });
     } else if (platform === "both") {
-      // Fetch both platforms in parallel; trend = summed by date, and the
+      // Fetch all platforms in parallel; trend = summed by date, and the
       // per-platform split is kept for separated subtotal strips.
       setLoading(true);
       Promise.all([
@@ -208,15 +280,21 @@ export function useMetaDailyVsPrev(
         fetchDv360Daily(prev.startDate, prev.endDate),
         fetchGadsDaily(startDate, endDate),
         fetchGadsDaily(prev.startDate, prev.endDate),
+        fetchSnapchatDaily(startDate, endDate),
+        fetchSnapchatDaily(prev.startDate, prev.endDate),
+        fetchSpotifyDaily(startDate, endDate),
+        fetchSpotifyDaily(prev.startDate, prev.endDate),
       ])
-        .then(([mCur, mPrev, dCur, dPrev, gCur, gPrev]) => {
+        .then(([mCur, mPrev, dCur, dPrev, gCur, gPrev, sCur, sPrev, spCur, spPrev]) => {
           if (cancelled) return;
-          setCurrent(mergeDaily(mergeDaily(mCur, dCur), gCur));
-          setPrevious(mergeDaily(mergeDaily(mPrev, dPrev), gPrev));
+          setCurrent(mergeDaily(mergeDaily(mergeDaily(mergeDaily(mCur, dCur), gCur), sCur), spCur));
+          setPrevious(mergeDaily(mergeDaily(mergeDaily(mergeDaily(mPrev, dPrev), gPrev), sPrev), spPrev));
           setByPlatform({
             meta: { current: mCur, previous: mPrev },
             dv360: { current: dCur, previous: dPrev },
             google_ads: { current: gCur, previous: gPrev },
+            snapchat: { current: sCur, previous: sPrev },
+            spotify: { current: spCur, previous: spPrev },
           });
         })
         .catch(() => { if (!cancelled) { setCurrent([]); setPrevious([]); } })
@@ -239,7 +317,7 @@ export function useMetaDailyVsPrev(
 
     return () => { cancelled = true; retryTimers.forEach(clearTimeout); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [platform, startDate, endDate, prev.startDate, prev.endDate, metaAccessToken, metaBusinessId, dv360ClientId, dv360ClientSecret, dv360RefreshToken, dv360AdvertiserId, googleAdsCustomerId, googleAdsLoginCustomerId, demoMode]);
+  }, [platform, startDate, endDate, prev.startDate, prev.endDate, metaAccessToken, metaBusinessId, dv360ClientId, dv360ClientSecret, dv360RefreshToken, dv360AdvertiserId, googleAdsCustomerId, googleAdsLoginCustomerId, snapchatClientId, snapchatClientSecret, snapchatRefreshToken, snapchatAdAccountId, spotifyClientId, spotifyClientSecret, spotifyRefreshToken, spotifyAdAccountId, demoMode]);
 
   return { current, previous, byPlatform, loading, startDate, endDate, prevStartDate: prev.startDate, prevEndDate: prev.endDate };
 }

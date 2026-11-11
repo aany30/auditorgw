@@ -242,53 +242,106 @@ function totalsOf(rows: DailyPoint[]) {
   );
 }
 
-/** Combined chart shown at the top of "both" mode: 4 aggregate KPIs + dual-line Meta vs DV360. */
-function CombinedOverview({ meta, dv360, googleAds, metaCurrency }: {
-  meta:  { current: DailyPoint[]; previous: DailyPoint[] };
-  dv360: { current: DailyPoint[]; previous: DailyPoint[] };
-  googleAds?: { current: DailyPoint[]; previous: DailyPoint[] };
-  metaCurrency: string;
+type PlatformKey = "meta" | "dv360" | "google_ads" | "snapchat" | "spotify";
+
+const PLATFORM_LABELS: Record<PlatformKey, string> = {
+  meta: "Meta", dv360: "DV360", google_ads: "Google Ads", snapchat: "Snapchat", spotify: "Spotify",
+};
+const PLATFORM_COLORS: Record<PlatformKey, string> = {
+  meta: "#6366f1", dv360: "#10b981", google_ads: "#f59e0b", snapchat: "#facc15", spotify: "#22c55e",
+};
+
+function PlatformComparisonPicker({ value, onChange, exclude, label }: {
+  value: PlatformKey; onChange: (v: PlatformKey) => void; exclude?: PlatformKey; label: string;
 }) {
-  const metaT = totalsOf(meta.current);
-  const dvT   = totalsOf(dv360.current);
-  const gaT   = totalsOf(googleAds?.current ?? []);
-  const combined = {
-    spend:       metaT.spend       + dvT.spend       + gaT.spend,
-    impressions: metaT.impressions + dvT.impressions + gaT.impressions,
-    clicks:      metaT.clicks      + dvT.clicks      + gaT.clicks,
-    conversions: metaT.conversions + dvT.conversions + gaT.conversions,
-  };
+  const [open, setOpen] = useState(false);
+  const keys: PlatformKey[] = ["meta", "dv360", "google_ads", "snapchat", "spotify"];
+  return (
+    <div className="relative inline-block">
+      <button onClick={() => setOpen(v => !v)}
+        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 transition shadow-sm">
+        <span className="w-2.5 h-2.5 rounded-full" style={{ background: PLATFORM_COLORS[value] }} />
+        {PLATFORM_LABELS[value]}
+        <ChevronDown className="w-3 h-3" />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute left-0 top-full mt-1 z-50 w-36 bg-white rounded-xl shadow-xl border border-gray-200 overflow-hidden">
+            <div className="px-3 py-1.5 border-b border-gray-100 text-[10px] font-bold uppercase tracking-wider text-gray-500">{label}</div>
+            {keys.filter(k => k !== exclude).map(k => (
+              <button key={k} onClick={() => { onChange(k); setOpen(false); }}
+                className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left transition ${k === value ? "bg-blue-50 text-blue-700 font-semibold" : "text-gray-700 hover:bg-blue-50"}`}>
+                <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: PLATFORM_COLORS[k] }} />
+                {PLATFORM_LABELS[k]}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Combined chart shown at the top of "both" mode: 4 aggregate KPIs + selectable dual-platform comparison. */
+function CombinedOverview({ byPlatform, displayCurrency }: {
+  byPlatform: Record<PlatformKey, { current: DailyPoint[]; previous: DailyPoint[] }>;
+  displayCurrency: string;
+}) {
+  // Platform comparison state (persistent)
+  const [leftPlatform, setLeftPlatform]   = usePersistentValue<PlatformKey>("combined-compare-left", "meta");
+  const [rightPlatform, setRightPlatform] = usePersistentValue<PlatformKey>("combined-compare-right", "dv360");
+
+  // Sum all connected platforms
+  const allKeys: PlatformKey[] = ["meta", "dv360", "google_ads", "snapchat", "spotify"];
+  const connectedKeys = allKeys.filter(k => byPlatform[k].current.length > 0);
+  const connectedLabel = connectedKeys.map(k => PLATFORM_LABELS[k]).join(" + ");
+
+  const combined = allKeys.reduce(
+    (acc, k) => {
+      const t = totalsOf(byPlatform[k].current);
+      acc.spend += t.spend; acc.impressions += t.impressions; acc.clicks += t.clicks; acc.conversions += t.conversions;
+      return acc;
+    },
+    { spend: 0, impressions: 0, clicks: 0, conversions: 0 }
+  );
+
+  const leftData = byPlatform[leftPlatform].current;
+  const rightData = byPlatform[rightPlatform].current;
 
   const chartData = useMemo(() => {
-    const metaByDate = new Map(meta.current.map(r => [r.label, r]));
-    const dvByDate   = new Map(dv360.current.map(r => [r.label, r]));
+    const leftByDate  = new Map(leftData.map(r => [r.label, r]));
+    const rightByDate = new Map(rightData.map(r => [r.label, r]));
     const zero = { spend: 0, impressions: 0, clicks: 0, conversions: 0, conversionValue: 0 };
-    const allDates = Array.from(new Set([...metaByDate.keys(), ...dvByDate.keys()])).sort();
+    const allDates = Array.from(new Set([...leftByDate.keys(), ...rightByDate.keys()])).sort();
     return allDates.map(d => {
-      const m  = metaByDate.get(d) ?? zero;
-      const dv = dvByDate.get(d)   ?? zero;
+      const l = leftByDate.get(d)  ?? zero;
+      const r = rightByDate.get(d) ?? zero;
       return {
-        date:           d.slice(5),
-        metaSpend:      m.spend,
-        dvSpend:        dv.spend,
-        metaImpr:       m.impressions,
-        dvImpr:         dv.impressions,
+        date:       d.slice(5),
+        leftSpend:  l.spend,
+        rightSpend: r.spend,
+        leftImpr:   l.impressions,
+        rightImpr:  r.impressions,
       };
     });
-  }, [meta.current, dv360.current]);
+  }, [leftData, rightData]);
+
+  const leftColor  = PLATFORM_COLORS[leftPlatform];
+  const rightColor = PLATFORM_COLORS[rightPlatform];
 
   const kpis = [
-    { label: "Total Spend",        value: fmt(combined.spend,       "money", metaCurrency) },
-    { label: "Total Impressions",  value: fmt(combined.impressions,  "k",    metaCurrency) },
-    { label: "Total Clicks",       value: fmt(combined.clicks,       "k",    metaCurrency) },
-    { label: "Total Conversions",  value: fmt(combined.conversions,  "k",    metaCurrency) },
+    { label: "Total Spend",        value: fmt(combined.spend,       "money", displayCurrency) },
+    { label: "Total Impressions",  value: fmt(combined.impressions,  "k",    displayCurrency) },
+    { label: "Total Clicks",       value: fmt(combined.clicks,       "k",    displayCurrency) },
+    { label: "Total Conversions",  value: fmt(combined.conversions,  "k",    displayCurrency) },
   ];
 
   return (
     <div className="border border-gray-200 rounded-xl overflow-hidden">
       <div className="px-5 py-3 border-b border-gray-100 bg-gray-50 flex items-center gap-2">
         <span className="text-sm font-bold text-gray-600 uppercase tracking-wide">Combined Overview</span>
-        <span className="text-xs text-gray-400">Meta + DV360{(googleAds?.current.length ?? 0) > 0 ? " + Google Ads" : ""}</span>
+        <span className="text-xs text-gray-400">{connectedLabel || "No platforms connected"}</span>
       </div>
 
       <div className="bg-white p-5 space-y-5">
@@ -297,9 +350,17 @@ function CombinedOverview({ meta, dv360, googleAds, metaCurrency }: {
             <div key={k.label} className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
               <p className="text-[11px] text-gray-500 font-semibold uppercase tracking-wide">{k.label}</p>
               <p className="text-2xl font-bold text-gray-900 mt-1.5">{k.value}</p>
-              <p className="text-[10px] text-gray-400 mt-0.5">Meta + DV360</p>
+              <p className="text-[10px] text-gray-400 mt-0.5">{connectedLabel || "All platforms"}</p>
             </div>
           ))}
+        </div>
+
+        {/* Platform comparison selector */}
+        <div className="flex items-center gap-3 flex-wrap px-1">
+          <span className="text-xs text-gray-500 font-semibold">Compare:</span>
+          <PlatformComparisonPicker value={leftPlatform} onChange={setLeftPlatform} exclude={rightPlatform} label="Left platform" />
+          <span className="text-xs text-gray-400">vs</span>
+          <PlatformComparisonPicker value={rightPlatform} onChange={setRightPlatform} exclude={leftPlatform} label="Right platform" />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -307,7 +368,7 @@ function CombinedOverview({ meta, dv360, googleAds, metaCurrency }: {
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
             <div className="px-5 py-3 border-b border-gray-100">
               <h3 className="text-sm font-bold text-gray-900">Daily Spend</h3>
-              <p className="text-xs text-gray-500 mt-0.5">Meta vs DV360</p>
+              <p className="text-xs text-gray-500 mt-0.5">{PLATFORM_LABELS[leftPlatform]} vs {PLATFORM_LABELS[rightPlatform]}</p>
             </div>
             <div className="px-3 py-4">
               {chartData.length === 0 ? (
@@ -317,15 +378,15 @@ function CombinedOverview({ meta, dv360, googleAds, metaCurrency }: {
                   <ComposedChart data={chartData} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
                     <XAxis dataKey="date" stroke="#6b7280" fontSize={10} tickLine={false} interval="preserveStartEnd" />
-                    <YAxis yAxisId="meta"  stroke="#6366f1" fontSize={10} tickLine={false} tickFormatter={v => fmt(v, "money", metaCurrency)} />
-                    <YAxis yAxisId="dv360" orientation="right" stroke="#10b981" fontSize={10} tickLine={false} tickFormatter={v => fmt(v, "money", metaCurrency)} />
+                    <YAxis yAxisId="left"  stroke={leftColor}  fontSize={10} tickLine={false} tickFormatter={v => fmt(v, "money", displayCurrency)} />
+                    <YAxis yAxisId="right" orientation="right" stroke={rightColor} fontSize={10} tickLine={false} tickFormatter={v => fmt(v, "money", displayCurrency)} />
                     <Tooltip
                       contentStyle={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 8, fontSize: 12 }}
-                      formatter={(v: number, name: string) => [fmt(v, "money", metaCurrency), name]}
+                      formatter={(v: number, name: string) => [fmt(v, "money", displayCurrency), name]}
                     />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
-                    <Bar  yAxisId="meta"  dataKey="metaSpend" name="Meta"  fill="#6366f1" radius={[2,2,0,0]} animationDuration={600} />
-                    <Line yAxisId="dv360" dataKey="dvSpend"   name="DV360" stroke="#10b981" strokeWidth={2} dot={false} animationDuration={700} />
+                    <Bar  yAxisId="left"  dataKey="leftSpend"  name={PLATFORM_LABELS[leftPlatform]}  fill={leftColor}  radius={[2,2,0,0]} animationDuration={600} />
+                    <Line yAxisId="right" dataKey="rightSpend" name={PLATFORM_LABELS[rightPlatform]} stroke={rightColor} strokeWidth={2} dot={false} animationDuration={700} />
                   </ComposedChart>
                 </ResponsiveContainer>
               )}
@@ -336,7 +397,7 @@ function CombinedOverview({ meta, dv360, googleAds, metaCurrency }: {
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
             <div className="px-5 py-3 border-b border-gray-100">
               <h3 className="text-sm font-bold text-gray-900">Daily Impressions</h3>
-              <p className="text-xs text-gray-500 mt-0.5">Meta vs DV360</p>
+              <p className="text-xs text-gray-500 mt-0.5">{PLATFORM_LABELS[leftPlatform]} vs {PLATFORM_LABELS[rightPlatform]}</p>
             </div>
             <div className="px-3 py-4">
               {chartData.length === 0 ? (
@@ -346,15 +407,15 @@ function CombinedOverview({ meta, dv360, googleAds, metaCurrency }: {
                   <ComposedChart data={chartData} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
                     <XAxis dataKey="date" stroke="#6b7280" fontSize={10} tickLine={false} interval="preserveStartEnd" />
-                    <YAxis yAxisId="meta"  stroke="#6366f1" fontSize={10} tickLine={false} tickFormatter={v => fmt(v, "k", metaCurrency)} />
-                    <YAxis yAxisId="dv360" orientation="right" stroke="#10b981" fontSize={10} tickLine={false} tickFormatter={v => fmt(v, "k", metaCurrency)} />
+                    <YAxis yAxisId="left"  stroke={leftColor}  fontSize={10} tickLine={false} tickFormatter={v => fmt(v, "k", displayCurrency)} />
+                    <YAxis yAxisId="right" orientation="right" stroke={rightColor} fontSize={10} tickLine={false} tickFormatter={v => fmt(v, "k", displayCurrency)} />
                     <Tooltip
                       contentStyle={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 8, fontSize: 12 }}
-                      formatter={(v: number, name: string) => [fmt(v, "k", metaCurrency), name]}
+                      formatter={(v: number, name: string) => [fmt(v, "k", displayCurrency), name]}
                     />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
-                    <Bar  yAxisId="meta"  dataKey="metaImpr" name="Meta"  fill="#6366f1" radius={[2,2,0,0]} animationDuration={600} />
-                    <Line yAxisId="dv360" dataKey="dvImpr"   name="DV360" stroke="#10b981" strokeWidth={2} dot={false} animationDuration={700} />
+                    <Bar  yAxisId="left"  dataKey="leftImpr"  name={PLATFORM_LABELS[leftPlatform]}  fill={leftColor}  radius={[2,2,0,0]} animationDuration={600} />
+                    <Line yAxisId="right" dataKey="rightImpr" name={PLATFORM_LABELS[rightPlatform]} stroke={rightColor} strokeWidth={2} dot={false} animationDuration={700} />
                   </ComposedChart>
                 </ResponsiveContainer>
               )}
@@ -535,11 +596,20 @@ function PlatformBlock({ name, accent, cur, prev, currency, reach = 0 }: {
 }
 
 export default function ReportingOverview({ platform, dateRange, customStart, customEnd }: Props) {
-  const { campaigns, platformErrors, startDate, endDate, metaCurrency, dv360Currency } = useCampaigns(platform, dateRange, customStart, customEnd);
+  const { campaigns, platformErrors, startDate, endDate, metaCurrency, dv360Currency, snapchatCurrency, spotifyCurrency } = useCampaigns(platform, dateRange, customStart, customEnd);
   // Single-platform views format in that platform's currency; the "both" view
   // formats each PlatformBlock in its own currency (passed explicitly below).
   const gadsCurrency = currencyFor(campaigns, "google_ads");
-  const currency = platform === "dv360" ? dv360Currency : platform === "google_ads" ? gadsCurrency : metaCurrency;
+  const currency = platform === "dv360" ? dv360Currency : platform === "google_ads" ? gadsCurrency : platform === "snapchat" ? snapchatCurrency : platform === "spotify" ? spotifyCurrency : metaCurrency;
+
+  // For "both" mode Combined Overview, pick the best display currency:
+  // use the first detected non-"USD" currency (since the account is INR-based),
+  // falling back to "INR" to avoid showing $ for Indian accounts.
+  const combinedDisplayCurrency = useMemo(() => {
+    const candidates = [dv360Currency, gadsCurrency, metaCurrency, snapchatCurrency, spotifyCurrency];
+    const nonUSD = candidates.find(c => c && c !== "USD");
+    return nonUSD || "INR";
+  }, [dv360Currency, gadsCurrency, metaCurrency, snapchatCurrency, spotifyCurrency]);
   const { current, previous, byPlatform, loading, prevStartDate, prevEndDate } = useMetaDailyVsPrev(platform, dateRange, customStart, customEnd);
   const { adsets } = useAdSetInsights(platform, dateRange, customStart, customEnd);
 
@@ -663,6 +733,8 @@ export default function ReportingOverview({ platform, dateRange, customStart, cu
             ...(platform === "meta" || platform === "both" ? { meta: { spend: Math.round(totalsOf(byPlatform.meta.current).spend), impressions: totalsOf(byPlatform.meta.current).impressions } } : {}),
             ...(platform === "dv360" || platform === "both" ? { dv360: { spend: Math.round(totalsOf(byPlatform.dv360.current).spend), impressions: totalsOf(byPlatform.dv360.current).impressions } } : {}),
             ...(platform === "google_ads" || platform === "both" ? { google_ads: { spend: Math.round(totalsOf(byPlatform.google_ads.current).spend), impressions: totalsOf(byPlatform.google_ads.current).impressions } } : {}),
+            ...(platform === "snapchat" || platform === "both" ? { snapchat: { spend: Math.round(totalsOf(byPlatform.snapchat.current).spend), impressions: totalsOf(byPlatform.snapchat.current).impressions } } : {}),
+            ...(platform === "spotify" || platform === "both" ? { spotify: { spend: Math.round(totalsOf(byPlatform.spotify.current).spend), impressions: totalsOf(byPlatform.spotify.current).impressions } } : {}),
           }}
           platform={platform}
           inline
@@ -670,9 +742,16 @@ export default function ReportingOverview({ platform, dateRange, customStart, cu
       </div>
 
       {platformErrors.dv360 && platform !== "meta" && (
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
-          <span className="font-semibold">DV360 data unavailable:</span> {platformErrors.dv360}
-        </div>
+        platformErrors.dv360.includes("cached data") ? (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-800 flex items-center gap-2">
+            <svg className="w-4 h-4 shrink-0 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2v4m0 12v4m-7.07-3.93l2.83-2.83m8.49-8.49l2.83-2.83M2 12h4m12 0h4M4.93 4.93l2.83 2.83m8.49 8.49l2.83 2.83"/></svg>
+            <span><span className="font-semibold">DV360:</span> Showing cached data while live refresh completes. DV360 reports use async generation and may take 30–60s — data displayed is from the last successful fetch.</span>
+          </div>
+        ) : (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
+            <span className="font-semibold">DV360 data unavailable:</span> {platformErrors.dv360}
+          </div>
+        )
       )}
       {platformErrors.meta && platform !== "dv360" && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
@@ -684,6 +763,16 @@ export default function ReportingOverview({ platform, dateRange, customStart, cu
           <span className="font-semibold">Google Ads data unavailable:</span> {platformErrors.google_ads}
         </div>
       )}
+      {platformErrors.snapchat && (platform === "snapchat" || platform === "both") && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
+          <span className="font-semibold">Snapchat data unavailable:</span> {platformErrors.snapchat}
+        </div>
+      )}
+      {platformErrors.spotify && (platform === "spotify" || platform === "both") && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
+          <span className="font-semibold">Spotify data unavailable:</span> {platformErrors.spotify}
+        </div>
+      )}
 
       {/* ── Both mode: combined overview + two separate platform blocks ── */}
       {platform === "both" ? (
@@ -693,10 +782,8 @@ export default function ReportingOverview({ platform, dateRange, customStart, cu
           ) : (
             <>
               <CombinedOverview
-                meta={byPlatform.meta}
-                dv360={byPlatform.dv360}
-                googleAds={byPlatform.google_ads}
-                metaCurrency={metaCurrency}
+                byPlatform={byPlatform}
+                displayCurrency={combinedDisplayCurrency}
               />
               <PlatformBlock
                 name="Meta"
@@ -722,6 +809,24 @@ export default function ReportingOverview({ platform, dateRange, customStart, cu
                   currency={gadsCurrency}
                 />
               )}
+              {byPlatform.snapchat.current.length > 0 && (
+                <PlatformBlock
+                  name="Snapchat"
+                  accent="emerald"
+                  cur={byPlatform.snapchat.current}
+                  prev={byPlatform.snapchat.previous}
+                  currency={snapchatCurrency}
+                />
+              )}
+              {byPlatform.spotify.current.length > 0 && (
+                <PlatformBlock
+                  name="Spotify"
+                  accent="emerald"
+                  cur={byPlatform.spotify.current}
+                  prev={byPlatform.spotify.previous}
+                  currency={spotifyCurrency}
+                />
+              )}
             </>
           )}
         </div>
@@ -736,6 +841,16 @@ export default function ReportingOverview({ platform, dateRange, customStart, cu
           {platform === "google_ads" && (
             <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs text-blue-800">
               Reach and frequency aren&apos;t available via the Google Ads API — those cards show 0.
+            </div>
+          )}
+          {platform === "snapchat" && (
+            <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs text-blue-800">
+              Reach and frequency aren&apos;t available via the Snapchat API — those cards show 0.
+            </div>
+          )}
+          {platform === "spotify" && (
+            <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs text-blue-800">
+              Reach and frequency aren&apos;t available via the Spotify Ads API — those cards show 0.
             </div>
           )}
 
@@ -807,28 +922,45 @@ export default function ReportingOverview({ platform, dateRange, customStart, cu
 
       <TabSummaryFooter
         lines={(() => {
-          const showMeta  = platform === "meta"  || platform === "both";
-          const showDV360 = platform === "dv360" || platform === "both";
+          const isBoth = platform === "both";
+          const showMeta  = platform === "meta"  || isBoth;
+          const showDV360 = platform === "dv360" || isBoth;
+          const showGads  = platform === "google_ads" || isBoth;
+          const showSnap  = platform === "snapchat" || isBoth;
+          const showSpotify = platform === "spotify" || isBoth;
           const dv360T = totalsOf(byPlatform.dv360.current);
           const metaT  = totalsOf(byPlatform.meta.current);
+          const gadsT  = totalsOf(byPlatform.google_ads.current);
+          const snapT  = totalsOf(byPlatform.snapchat.current);
+          const spotT  = totalsOf(byPlatform.spotify.current);
           const dv360Cpm = dv360T.impressions > 0 ? (dv360T.spend / dv360T.impressions) * 1000 : 0;
           const metaCpm  = metaT.impressions  > 0 ? (metaT.spend  / metaT.impressions)  * 1000 : 0;
+          const dispCur = isBoth ? combinedDisplayCurrency : currency;
           const lines: string[] = [
             `Period: ${startDate} → ${endDate}.`,
           ];
-          if (showMeta) {
+          if (showMeta && metaT.spend > 0) {
             lines.push(
-              `Meta — ${metaT.impressions.toLocaleString("en-IN")} impressions · ${reachPeriod > 0 ? reachPeriod.toLocaleString("en-IN") + " reach" : "reach loading"} · ${frequencyCur > 0 ? frequencyCur.toFixed(2) + "× freq" : "—"} · CPM: ${metaCpm > 0 ? formatMoney(metaCpm, currency, 2) : "—"} · Spend: ${formatMoney(metaT.spend, currency, 0)}.`
+              `Meta — ${metaT.impressions.toLocaleString("en-IN")} impressions · ${reachPeriod > 0 ? reachPeriod.toLocaleString("en-IN") + " reach" : "reach loading"} · ${frequencyCur > 0 ? frequencyCur.toFixed(2) + "× freq" : "—"} · CPM: ${metaCpm > 0 ? formatMoney(metaCpm, dispCur, 2) : "—"} · Spend: ${formatMoney(metaT.spend, dispCur, 0)}.`
             );
           }
-          if (showDV360) {
+          if (showDV360 && dv360T.spend > 0) {
             lines.push(
-              `DV360 — ${dv360T.impressions.toLocaleString("en-IN")} impressions · CPM: ${dv360Cpm > 0 ? formatMoney(dv360Cpm, currency, 2) : "—"} · Spend: ${formatMoney(dv360T.spend, currency, 0)}.`
+              `DV360 — ${dv360T.impressions.toLocaleString("en-IN")} impressions · CPM: ${dv360Cpm > 0 ? formatMoney(dv360Cpm, dispCur, 2) : "—"} · Spend: ${formatMoney(dv360T.spend, dispCur, 0)}.`
             );
           }
-          if (showMeta && showDV360) {
+          if (showGads && gadsT.spend > 0) {
+            lines.push(`Google Ads — ${gadsT.impressions.toLocaleString("en-IN")} impressions · Spend: ${formatMoney(gadsT.spend, dispCur, 0)}.`);
+          }
+          if (showSnap && snapT.spend > 0) {
+            lines.push(`Snapchat — ${snapT.impressions.toLocaleString("en-IN")} impressions · Spend: ${formatMoney(snapT.spend, dispCur, 0)}.`);
+          }
+          if (showSpotify && spotT.spend > 0) {
+            lines.push(`Spotify — ${spotT.impressions.toLocaleString("en-IN")} impressions · Spend: ${formatMoney(spotT.spend, dispCur, 0)}.`);
+          }
+          if (isBoth) {
             lines.push(
-              `Combined — ${totalsCur.impressions.toLocaleString("en-IN")} impressions · Spend: ${formatMoney(totalsCur.spend, currency, 0)}.`
+              `Combined — ${totalsCur.impressions.toLocaleString("en-IN")} impressions · Spend: ${formatMoney(totalsCur.spend, dispCur, 0)}.`
             );
           }
           return lines;
