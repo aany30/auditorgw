@@ -54,7 +54,7 @@ export function useDV360Attribution(enabled: boolean) {
         if (data.error) setState({ loading: false, error: data.error });
         else setState({ loading: false, ...data });
       })
-      .catch(() => { if (!cancelled) setState({ loading: false, error: "Network error" }); });
+      .catch((err) => { if (!cancelled) setState({ loading: false, error: err?.message === "Failed to fetch" ? "Network error — the DV360 attribution API request timed out or failed to connect. This can happen when Bid Manager reports take too long to generate. Try reloading the page." : (err?.message || "Network error") }); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, demoMode, dv360RefreshToken, dv360AdvertiserId]);
