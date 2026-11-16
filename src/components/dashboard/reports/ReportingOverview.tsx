@@ -689,14 +689,15 @@ export default function ReportingOverview({ platform, dateRange, customStart, cu
     ["reach", "frequency", "impressions", "spend", "cpm"]
   );
 
-  function valueFor(id: MetricId): string {
+  function valueFor(id: MetricId, cur?: string): string {
     const def = METRICS.find(m => m.id === id)!;
     const v = totalsCurMap[id];
+    const c = cur || currency;
     if (id === "frequency") return v > 0 ? v.toFixed(2) : "—";
-    if (id === "cpm")       return v > 0 ? formatMoney(v, currency, 2) : "—";
-    if (def.fmt === "money") return fmt(v, "money", currency);
-    if (def.fmt === "int")   return fmt(v, "k", currency);
-    return fmt(v, def.fmt, currency);
+    if (id === "cpm")       return v > 0 ? formatMoney(v, c, 2) : "—";
+    if (def.fmt === "money") return fmt(v, "money", c);
+    if (def.fmt === "int")   return fmt(v, "k", c);
+    return fmt(v, def.fmt, c);
   }
 
   const chartData = useMemo(() => sortedCur.map(r => ({ date: r.label.slice(5), ...deriveRow(r) })), [sortedCur]);
@@ -780,6 +781,72 @@ export default function ReportingOverview({ platform, dateRange, customStart, cu
             <LoadingState message="Loading reporting data…" height="h-40" />
           ) : (
             <>
+              {/* ── Overall: aggregated KPIs + trend across all platforms ── */}
+              <div>
+                <h2 className="text-lg font-bold text-gray-900 mb-3">Overall</h2>
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+                  {slotMetrics.map((m, i) => (
+                    <KpiCard
+                      key={`overall-${m}-${i}`}
+                      metric={m}
+                      value={valueFor(m, combinedDisplayCurrency)}
+                      delta={pctDelta(totalsCurMap[m], totalsPrevMap[m])}
+                      spark={sparkSeries[m]}
+                      onSwap={(next) => setSlotMetrics(prev => prev.map((x, j) => j === i ? next : x))}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
+                <div className="px-5 py-4 border-b border-gray-100">
+                  <h3 className="text-sm font-bold text-gray-900">Performance Trend</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">Aggregated across all connected platforms. Pick any metric for Y primary + secondary.</p>
+                </div>
+                <div className="px-5 py-3 border-b border-gray-100 flex items-center gap-4 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-500">X axis:</span>
+                    <span className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold bg-gray-100 text-gray-600">Date (frozen)</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-500">Primary Y:</span>
+                    <MetricPicker value={primary}   onChange={setPrimary}   label="Primary metric" />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-500">Secondary Y:</span>
+                    <MetricPicker value={secondary} onChange={setSecondary} label="Secondary metric" />
+                  </div>
+                </div>
+                <div className="px-3 py-4">
+                  {chartData.length === 0 ? (
+                    <div className="h-80 flex items-center justify-center text-sm text-gray-500">No daily data for this window.</div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height={360}>
+                      <ComposedChart data={chartData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
+                        <XAxis dataKey="date" stroke="#6b7280" fontSize={11} tickLine={false} />
+                        <YAxis yAxisId="left"  stroke="#6366f1" fontSize={11} tickLine={false}
+                          tickFormatter={(v) => fmt(v, primaryDef.fmt === "int" ? "k" : primaryDef.fmt, combinedDisplayCurrency)} />
+                        <YAxis yAxisId="right" orientation="right" stroke="#10b981" fontSize={11} tickLine={false}
+                          tickFormatter={(v) => fmt(v, secondaryDef.fmt === "int" ? "k" : secondaryDef.fmt, combinedDisplayCurrency)} />
+                        <Tooltip
+                          contentStyle={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 8, fontSize: 12 }}
+                          formatter={(value: number, _name: string, item: { dataKey?: string | number }) => {
+                            const k = typeof item?.dataKey === "string" ? item.dataKey : "";
+                            if (k === primary)   return [fmt(value, primaryDef.fmt,   combinedDisplayCurrency), primaryDef.label] as [string, string];
+                            if (k === secondary) return [fmt(value, secondaryDef.fmt, combinedDisplayCurrency), secondaryDef.label] as [string, string];
+                            return [String(value), k] as [string, string];
+                          }}
+                        />
+                        <Legend wrapperStyle={{ fontSize: 12 }} />
+                        <Bar  yAxisId="left"  dataKey={primary}   name={primaryDef.label}   fill="#6366f1" radius={[3, 3, 0, 0]} animationDuration={600} animationEasing="ease-out" />
+                        <Line yAxisId="right" dataKey={secondary} name={secondaryDef.label} stroke="#10b981" strokeWidth={2} dot={false} animationDuration={700} animationEasing="ease-out" />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  )}
+                </div>
+              </div>
+
               <CombinedOverview
                 byPlatform={byPlatform}
                 displayCurrency={combinedDisplayCurrency}
