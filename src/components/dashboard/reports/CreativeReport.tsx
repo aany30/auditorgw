@@ -772,6 +772,7 @@ export default function CreativeReport({ platform, dateRange, customStart, custo
   const { campaigns, metaCurrency, dv360Currency } = useCampaigns(platform, dateRange, customStart, customEnd);
   const gadsCurrency = currencyFor(campaigns, "google_ads");
   const snapCurrency = currencyFor(campaigns, "snapchat");
+  const spotCurrency = currencyFor(campaigns, "spotify");
   const { startDate, endDate } = rangeToDates(dateRange, customStart, customEnd);
 
   const [rawAds, setRawAds] = useState<AdInsightRow[]>([]);
@@ -896,7 +897,7 @@ export default function CreativeReport({ platform, dateRange, customStart, custo
   const dv360Enriched: EnrichedAd[] = useMemo(() => enrichAds(dv360Ads, "dv360"), [dv360Ads]);
 
   // Combined counts for the page header / AI summary / footer only.
-  const totalAdCount = metaAds.length + dv360Enriched.length;
+  const totalAdCount = metaAds.length + dv360Enriched.length + gadsEnriched.length + snapEnriched.length + spotifyEnriched.length;
   const metaFormatRows = useMemo(() => computeFormatRows(metaAds), [metaAds]);
   const dvFormatRows   = useMemo(() => computeFormatRows(dv360Enriched), [dv360Enriched]);
 
@@ -992,15 +993,29 @@ export default function CreativeReport({ platform, dateRange, customStart, custo
         </div>
       )}
 
+      {/* ── Spotify section ── */}
+      {showSpotify && (
+        <div className="space-y-5">
+          {platform === "both" && <SectionHeader label="Spotify" sub="Spotify Ads" />}
+          <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-xs text-green-800">
+            Ad-level delivery from the Spotify Ads API (impressions, clicks, spend, conversions). Format is inferred from each ad&apos;s type. Reach/frequency aren&apos;t available per-creative via the API and show &quot;—&quot;.
+          </div>
+          <CreativeSections ads={spotifyEnriched} currency={spotCurrency} />
+        </div>
+      )}
+
       <TabSummaryFooter
         tabName="Creative Intelligence"
         lines={[
-          `${totalAdCount} ad creative${totalAdCount !== 1 ? "s" : ""} analysed${showMeta && showDv ? ` — ${metaAds.length} Meta · ${dv360Enriched.length} DV360` : ""}.`,
-          showMeta ? `Meta — ${metaFormatRows.length} format${metaFormatRows.length !== 1 ? "s" : ""} detected.` : "",
-          showDv ? `DV360 — ${dvFormatRows.length} format${dvFormatRows.length !== 1 ? "s" : ""} detected.` : "",
+          `${totalAdCount} ad creative${totalAdCount !== 1 ? "s" : ""} analysed.`,
+          showMeta ? `Meta — ${metaAds.length} ads · ${metaFormatRows.length} format${metaFormatRows.length !== 1 ? "s" : ""}.` : "",
+          showDv ? `DV360 — ${dv360Enriched.length} ads · ${dvFormatRows.length} format${dvFormatRows.length !== 1 ? "s" : ""}.` : "",
+          showGads ? `Google Ads — ${gadsEnriched.length} ads.` : "",
+          showSnap ? `Snapchat — ${snapEnriched.length} ads.` : "",
+          showSpotify ? `Spotify — ${spotifyEnriched.length} ads.` : "",
           `Date window: ${startDate} → ${endDate}.`,
         ].filter(Boolean)}
-        context={{ adCount: totalAdCount, metaCount: metaAds.length, dv360Count: dv360Enriched.length, startDate, endDate }}
+        context={{ adCount: totalAdCount, metaCount: metaAds.length, dv360Count: dv360Enriched.length, gadsCount: gadsEnriched.length, snapCount: snapEnriched.length, spotifyCount: spotifyEnriched.length, startDate, endDate }}
         platform={platform}
         dateRange={String(dateRange)}
       />

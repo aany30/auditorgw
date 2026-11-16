@@ -443,8 +443,11 @@ interface Props {
 }
 
 export default function PlacementReport({ platform, dateRange, customStart, customEnd }: Props) {
-  const showMeta = platform !== "dv360";
+  const showMeta = platform === "meta" || platform === "both";
   const showDv   = platform === "dv360" || platform === "both";
+  const showGads = platform === "google_ads" || platform === "both";
+  const showSnap = platform === "snapchat" || platform === "both";
+  const showSpot = platform === "spotify"  || platform === "both";
 
   // ── Meta breakdowns ─────────────────────────────────────────────────────────
   const { rows: metaPositions, loading: metaPosL, error: metaPosErr } =
@@ -612,12 +615,72 @@ export default function PlacementReport({ platform, dateRange, customStart, cust
         </div>
       )}
 
+      {/* ── Google Ads section ── */}
+      {showGads && (
+        <div className="space-y-5">
+          {platform === "both" && <SectionHeader label="Google Ads" sub="Google Ads" />}
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-sm text-gray-700 flex items-start gap-3">
+            <Info className="w-4 h-4 mt-0.5 shrink-0 text-gray-400" />
+            <div>
+              <p className="font-medium mb-1">Placement breakdowns are not available via the Google Ads API</p>
+              <p className="text-xs text-gray-500">
+                The Google Ads API does not expose placement-level delivery data (position, publisher, environment) through its standard reporting endpoints. Placement reports are only available in the Google Ads UI.
+              </p>
+              <p className="text-xs text-gray-500 mt-1">
+                Campaign-level performance data is available in the Key Metrics and Overview tabs.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Snapchat section ── */}
+      {showSnap && (
+        <div className="space-y-5">
+          {platform === "both" && <SectionHeader label="Snapchat" sub="Snapchat Ads" />}
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-sm text-gray-700 flex items-start gap-3">
+            <Info className="w-4 h-4 mt-0.5 shrink-0 text-gray-400" />
+            <div>
+              <p className="font-medium mb-1">Placement breakdowns are not available via the Snapchat Ads API</p>
+              <p className="text-xs text-gray-500">
+                The Snapchat Marketing API does not expose placement-level delivery data through its reporting endpoints. Placement performance is only visible in the Snapchat Ads Manager UI.
+              </p>
+              <p className="text-xs text-gray-500 mt-1">
+                Campaign-level performance data is available in the Key Metrics and Overview tabs.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Spotify section ── */}
+      {showSpot && (
+        <div className="space-y-5">
+          {platform === "both" && <SectionHeader label="Spotify" sub="Spotify Ads" />}
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-sm text-gray-700 flex items-start gap-3">
+            <Info className="w-4 h-4 mt-0.5 shrink-0 text-gray-400" />
+            <div>
+              <p className="font-medium mb-1">Placement breakdowns are not available via the Spotify Ads API</p>
+              <p className="text-xs text-gray-500">
+                The Spotify Ads API does not expose placement-level delivery data through its reporting endpoints. Placement performance is only visible in the Spotify Ad Studio dashboard.
+              </p>
+              <p className="text-xs text-gray-500 mt-1">
+                Campaign-level performance data is available in the Key Metrics and Overview tabs.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       <TabSummaryFooter
         tabName="Placement Report"
         lines={(() => {
           const lines: string[] = [];
           if (showMeta) lines.push(`Meta — ${metaPositions.length} placement positions · ${metaPub.length} publishers.`);
           if (showDv && !dvExchangeErr) lines.push(`DV360 — ${dvEnv.length} environment types · ${dvExchange.length} exchanges.`);
+          if (showGads) lines.push(`Google Ads — placement breakdowns not available via API.`);
+          if (showSnap) lines.push(`Snapchat — placement breakdowns not available via API.`);
+          if (showSpot) lines.push(`Spotify — placement breakdowns not available via API.`);
           lines.push(`Date window: ${startDate} → ${endDate}.`);
           return lines;
         })()}
@@ -627,7 +690,7 @@ export default function PlacementReport({ platform, dateRange, customStart, cust
           dvExchanges:   dvExchange.map(r => ({ label: r.label, spend: r.spend, impressions: r.impressions })),
           dvEnvironments: dvEnv.map(r => ({ label: r.label, impressions: r.impressions })),
         }}
-        platform={showMeta ? "meta" : "dv360"}
+        platform={platform}
         dateRange={String(dateRange)}
       />
     </div>
