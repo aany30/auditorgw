@@ -875,24 +875,20 @@ export default function ReportingOverview({ platform, dateRange, customStart, cu
                   currency={gadsCurrency}
                 />
               )}
-              {byPlatform.snapchat.current.length > 0 && (
-                <PlatformBlock
-                  name="Snapchat"
-                  accent="emerald"
-                  cur={byPlatform.snapchat.current}
-                  prev={byPlatform.snapchat.previous}
-                  currency={snapchatCurrency}
-                />
-              )}
-              {byPlatform.spotify.current.length > 0 && (
-                <PlatformBlock
-                  name="Spotify"
-                  accent="emerald"
-                  cur={byPlatform.spotify.current}
-                  prev={byPlatform.spotify.previous}
-                  currency={spotifyCurrency}
-                />
-              )}
+              <PlatformBlock
+                name="Snapchat"
+                accent="emerald"
+                cur={byPlatform.snapchat.current}
+                prev={byPlatform.snapchat.previous}
+                currency={snapchatCurrency}
+              />
+              <PlatformBlock
+                name="Spotify"
+                accent="emerald"
+                cur={byPlatform.spotify.current}
+                prev={byPlatform.spotify.previous}
+                currency={spotifyCurrency}
+              />
             </>
           )}
         </div>
