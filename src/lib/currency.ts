@@ -10,9 +10,9 @@
 
 import type { CampaignData } from "@/types";
 
-/** Detect the account currency from a campaign list. Defaults to "USD". */
+/** Detect the account currency from a campaign list. Defaults to "INR". */
 export function detectCurrency(campaigns: CampaignData[]): string {
-  return campaigns.find((c) => c.currency)?.currency ?? "USD";
+  return campaigns.find((c) => c.currency)?.currency ?? "INR";
 }
 
 /**

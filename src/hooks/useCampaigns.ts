@@ -521,11 +521,13 @@ export function useCampaigns(
   const detectedSnap = campaigns.find((c) => c.platform === "snapchat" && c.currency)?.currency;
   const detectedSpotify = campaigns.find((c) => c.platform === "spotify" && c.currency)?.currency;
 
-  const metaCurrency = detectedMeta || storedMetaCurrency || "USD";
-  const dv360Currency = detectedDv360 || storedDv360Currency || "USD";
-  const googleAdsCurrency = detectedGads || storedGoogleAdsCurrency || "USD";
-  const snapchatCurrency = detectedSnap || storedSnapchatCurrency || "USD";
-  const spotifyCurrency = detectedSpotify || storedSpotifyCurrency || "USD";
+  const allDetected = [detectedMeta, storedMetaCurrency, detectedDv360, storedDv360Currency, detectedGads, storedGoogleAdsCurrency, detectedSnap, storedSnapchatCurrency, detectedSpotify, storedSpotifyCurrency];
+  const fallbackCurrency = allDetected.find(c => c && c !== "USD") || "INR";
+  const metaCurrency = detectedMeta || storedMetaCurrency || fallbackCurrency;
+  const dv360Currency = detectedDv360 || storedDv360Currency || fallbackCurrency;
+  const googleAdsCurrency = detectedGads || storedGoogleAdsCurrency || fallbackCurrency;
+  const snapchatCurrency = detectedSnap || storedSnapchatCurrency || fallbackCurrency;
+  const spotifyCurrency = detectedSpotify || storedSpotifyCurrency || fallbackCurrency;
 
   return { campaigns, loading, dv360Repolling, dv360Loading, error, platformErrors, startDate, endDate, metaCurrency, dv360Currency, googleAdsCurrency, snapchatCurrency, spotifyCurrency };
 }
