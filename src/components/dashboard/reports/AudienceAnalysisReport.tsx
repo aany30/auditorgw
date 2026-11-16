@@ -1147,9 +1147,13 @@ export default function AudienceAnalysisReport({ platform, dateRange, customStar
   const { startDate, endDate } = rangeToDates(dateRange, customStart, customEnd);
 
   const isGadsConnected = useAuthStore((s) => s.isGoogleAdsConnected());
+  const isSnapConnected = useAuthStore((s) => s.isSnapchatConnected());
+  const isSpotConnected = useAuthStore((s) => s.isSpotifyConnected());
   const showMeta = platform === "meta" || platform === "both";
   const showDv   = platform === "dv360" || platform === "both";
   const showGads = platform === "google_ads" || (platform === "both" && isGadsConnected);
+  const showSnap = platform === "snapchat" || (platform === "both" && isSnapConnected);
+  const showSpot = platform === "spotify"  || (platform === "both" && isSpotConnected);
 
   // ── Meta breakdowns ──────────────────────────────────────────────────────
   const { rows: metaAge,     loading: metaAgeL     } = useMetaBreakdown("age",               dateRange, customStart, customEnd, showMeta);
@@ -1413,6 +1417,44 @@ export default function AudienceAnalysisReport({ platform, dateRange, customStar
         </div>
       )}
 
+      {/* ── Snapchat section ── */}
+      {showSnap && (
+        <div className="space-y-5">
+          <SectionHeader label="Snapchat" sub="Snapchat Ads" />
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-sm text-gray-700 flex items-start gap-3">
+            <Info className="w-4 h-4 mt-0.5 shrink-0 text-gray-400" />
+            <div>
+              <p className="font-medium mb-1">Audience demographic breakdowns are not available via the Snapchat Ads API</p>
+              <p className="text-xs text-gray-500">
+                The Snapchat Marketing API does not expose age, gender, country, or device breakdowns at the account/campaign level through its reporting endpoints. These demographics are only visible in the Snapchat Ads Manager UI.
+              </p>
+              <p className="text-xs text-gray-500 mt-1">
+                Campaign-level performance data (spend, impressions, clicks) is available in the Key Metrics and Overview tabs.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Spotify section ── */}
+      {showSpot && (
+        <div className="space-y-5">
+          <SectionHeader label="Spotify" sub="Spotify Ads" />
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-sm text-gray-700 flex items-start gap-3">
+            <Info className="w-4 h-4 mt-0.5 shrink-0 text-gray-400" />
+            <div>
+              <p className="font-medium mb-1">Audience demographic breakdowns are not available via the Spotify Ads API</p>
+              <p className="text-xs text-gray-500">
+                The Spotify Ads API does not expose age, gender, country, or device breakdowns through its reporting endpoints. Audience targeting is defined at campaign creation but delivery demographics are only visible in the Spotify Ad Studio dashboard.
+              </p>
+              <p className="text-xs text-gray-500 mt-1">
+                Campaign-level performance data (spend, impressions, clicks) is available in the Key Metrics and Overview tabs.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       <TabSummaryFooter
         tabName="Audience Analysis"
         lines={(() => {
@@ -1420,6 +1462,8 @@ export default function AudienceAnalysisReport({ platform, dateRange, customStar
           if (showMeta) lines.push(`Meta — ${metaAge.length} age groups · ${metaCountry.length} countries · ${metaGender.length} gender segments.`);
           if (showDv && !dv360Error) lines.push(`DV360 — ${dvAge.length} age groups · ${dvCountry.length} countries · ${dvGender.length} gender segments.`);
           if (showGads) lines.push(`Google Ads — ${gadsAge.length} age groups · ${gadsCountry.length} countries · ${gadsGender.length} gender segments.`);
+          if (showSnap) lines.push(`Snapchat — demographic breakdowns not available via API.`);
+          if (showSpot) lines.push(`Spotify — demographic breakdowns not available via API.`);
           lines.push(`Date window: ${startDate} → ${endDate}.`);
           return lines;
         })()}
@@ -1433,7 +1477,7 @@ export default function AudienceAnalysisReport({ platform, dateRange, customStar
           countryBreakdown: [...metaCountry, ...dvCountry, ...gadsCountry].map(r => ({ label: r.label, impressions: r.impressions, clicks: r.clicks, spend: r.spend, conversions: r.conversions })),
           cohortBreakdown: cohortRows.map(r => ({ segment: r.segment, impressions: r.impressions, clicks: r.clicks, spend: r.spend, conversions: r.conversions, ctr: r.ctr, convRate: r.convRate, cpm: r.cpm })),
         }}
-        platform={showGads ? "google_ads" : "meta"}
+        platform={platform}
         dateRange={String(dateRange)}
       />
     </div>
