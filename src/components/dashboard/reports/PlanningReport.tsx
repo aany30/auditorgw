@@ -1357,8 +1357,8 @@ export function PlanningSection({ campaigns, loading, currency, storageSuffix, d
                               />
                           </td>
                           <td className="px-3 py-2 text-right text-gray-900 font-semibold tabular-nums">
-                            {m.deliveredStr === "—" && DASH_REASON[m.field]
-                              ? <Tip text={DASH_REASON[m.field]}><span className="text-gray-400 cursor-help">—</span></Tip>
+                            {m.deliveredStr === "—" && dashReason(m.field, aiPlatform)
+                              ? <Tip text={dashReason(m.field, aiPlatform)!}><span className="text-gray-400 cursor-help">—</span></Tip>
                               : m.deliveredStr}
                           </td>
                           <td className="px-3 py-2 text-right">
@@ -1711,12 +1711,18 @@ function fmtMetric(kind: MetricKind, n: number, currency: string): string {
   if (kind === "decimal") return n.toFixed(1);
   return Math.round(n).toLocaleString("en-IN");
 }
-const DASH_REASON: Record<string, string> = {
-  reach: "DV360 unique reach is only available at account or campaign level — not per exchange/objective",
-  frequency: "Frequency = impressions ÷ reach — unavailable when reach isn't reported",
-  views: "Only reported for video/YouTube line items — display campaigns have no view data",
-  vtr: "VTR requires video views — unavailable for non-video campaigns",
-};
+function dashReason(key: string, plat?: string): string | undefined {
+  if (key === "views") return "Only reported for video/YouTube line items — display campaigns have no view data";
+  if (key === "vtr") return "VTR requires video views — unavailable for non-video campaigns";
+  if (key === "reach") {
+    if (plat === "dv360") return "DV360 unique reach is not available via the Bid Manager reporting API at this aggregation level — it requires the separate Reach & Frequency API.";
+    if (plat === "spotify") return "Spotify reporting may not return reach for the selected date range. Reach is only available when the Spotify Ads API includes it in aggregate stats.";
+    if (plat === "google_ads") return "Google Ads does not report unique reach at campaign level via the standard reporting API.";
+    return "Unique reach is not available at this aggregation level for one or more connected platforms.";
+  }
+  if (key === "frequency") return "Frequency = impressions ÷ reach — unavailable when reach isn't reported.";
+  return undefined;
+}
 function Tip({ text, children }: { text: string; children: React.ReactNode }) {
   return (
     <span className="relative group/tip inline-flex items-center">
@@ -1972,13 +1978,22 @@ export function DailyTrendCharts({ dateRange: parentRange, customStart, customEn
 
 // Shared metric table used by both the main Aggregate rows and the extra combo
 // panels below — one place to keep planned/delivered/pacing rendering in sync.
+const ZERO_DELIVERY_REASON: Record<string, string> = {
+  dv360: "DV360 delivery data comes from async Bid Manager reports which can take a few minutes to generate. If data doesn't appear after waiting, the selected date range may have no active delivery for this campaign.",
+  spotify: "Spotify Ads reporting has a 90-day lookback limit. If campaigns ran outside the selected date range or the Spotify reporting API returned no stats, delivery will show as empty.",
+  google_ads: "Google Ads campaigns may have no delivery in the selected date range, or the Google Ads API may not have returned stats for this window.",
+  snapchat: "Snapchat campaigns may have no delivery in the selected date range.",
+  meta: "Meta campaigns may have no delivery in the selected date range.",
+};
+
 function AggMetricsTable({
-  title, sub, gcur, delivered, planned, onPlanChange, headerRight, countLabel,
+  title, sub, gcur, delivered, planned, onPlanChange, headerRight, countLabel, platform,
 }: {
   title: string; sub?: string; gcur: string; delivered: Delivered;
   planned: Record<string, number>; onPlanChange: (metric: string, value: number) => void;
-  headerRight?: React.ReactNode; countLabel?: string;
+  headerRight?: React.ReactNode; countLabel?: string; platform?: string;
 }) {
+  const allZero = delivered.spend === 0 && delivered.impressions === 0 && delivered.clicks === 0;
   return (
     <div className="rounded-lg border border-gray-200">
       <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100 flex items-center justify-between gap-3 flex-wrap">
@@ -1991,6 +2006,12 @@ function AggMetricsTable({
           {countLabel && <span className="text-[11px] text-gray-400">{countLabel}</span>}
         </div>
       </div>
+      {allZero && platform && ZERO_DELIVERY_REASON[platform] && (
+        <div className="mx-4 mt-3 mb-1 bg-gray-50 border border-gray-200 rounded-lg p-2.5 text-[11px] text-gray-600 flex items-start gap-2">
+          <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-gray-400" />
+          <span>No delivery data in the selected date range. {ZERO_DELIVERY_REASON[platform]}</span>
+        </div>
+      )}
       <table className="w-full text-sm">
         <thead className="bg-white sticky top-0 z-20 shadow-sm">
           <tr className="border-b border-gray-100 bg-white">
@@ -2022,8 +2043,8 @@ function AggMetricsTable({
                   />
                 </td>
                 <td className="px-3 py-2 text-right font-semibold text-gray-900 whitespace-nowrap">
-                  {fmtMetric(m.kind, dv, gcur) === "—" && DASH_REASON[m.key]
-                    ? <Tip text={DASH_REASON[m.key]}><span className="text-gray-400 cursor-help">—</span></Tip>
+                  {fmtMetric(m.kind, dv, gcur) === "—" && dashReason(m.key, platform)
+                    ? <Tip text={dashReason(m.key, platform)!}><span className="text-gray-400 cursor-help">—</span></Tip>
                     : fmtMetric(m.kind, dv, gcur)}
                 </td>
                 <td className={`px-3 py-2 text-right font-semibold whitespace-nowrap ${pace.cls}`}>{pace.text}</td>
@@ -2179,6 +2200,7 @@ function AggComboPanel({
             delivered={metaDelivered}
             planned={plannedMeta}
             onPlanChange={(metric, value) => setPlannedMeta((prev) => ({ ...prev, [metric]: value }))}
+            platform="meta"
             headerRight={
               useHier && metaTree ? (
                 <HierarchicalDimensionPicker
@@ -2211,6 +2233,7 @@ function AggComboPanel({
             delivered={dv360Delivered}
             planned={plannedDv360}
             onPlanChange={(metric, value) => setPlannedDv360((prev) => ({ ...prev, [metric]: value }))}
+            platform="dv360"
             headerRight={
               useHier && dv360Tree ? (
                 <HierarchicalDimensionPicker
@@ -3993,6 +4016,7 @@ ${deepDivePlanPagesAll}
         }
         return `${t.count} campaign${t.count === 1 ? "" : "s"}`;
       })()}
+      platform={t.platform}
       headerRight={<>
         {groupBy === "channel" && t.platform && channelDropdown(t.platform)}
         {groupBy === "objective" && t.platform && objectiveDropdown(t.platform)}
