@@ -1663,6 +1663,58 @@ export default function KeyMetricAnalysisReport({ platform, dateRange, customSta
     `key-metrics-gads-perfcols:${objectiveIds[0]}`, ["impressions", "cpm", "spend", "clicks", "ctr"]
   );
 
+  // ── Snapchat filter + data ───────────────────────────────────────────
+  const snapCurrency = currencyFor(campaignsCur, "snapchat");
+  const [snapCampaignFilter, setSnapCampaignFilter] = useState<string[]>([]);
+  const snapCampaignsCur = useMemo(() => campaignsCur.filter(c => c.platform === "snapchat"), [campaignsCur]);
+  const filteredSnapCampaigns = useMemo(
+    () => snapCampaignFilter.length === 0 ? snapCampaignsCur : snapCampaignsCur.filter(c => snapCampaignFilter.includes(c.id)),
+    [snapCampaignsCur, snapCampaignFilter]
+  );
+  const snapRowsCur    = useMemo(() => buildGroupRows([], filteredSnapCampaigns, groupBy), [filteredSnapCampaigns, groupBy]);
+  const snapTotalsCur  = useMemo(() => totalsOf(snapRowsCur), [snapRowsCur]);
+  const snapTotalsPrev = useMemo(() => totalsFromDailyPoints(byPlatform.snapchat.previous), [byPlatform.snapchat.previous]);
+  const snapPerfRows     = useMemo(() => bucketDaily(byPlatform.snapchat.current,  granularity, [], false), [byPlatform.snapchat.current, granularity]);
+  const snapPrevPerfRows = useMemo(() => bucketDaily(byPlatform.snapchat.previous, granularity, [], false), [byPlatform.snapchat.previous, granularity]);
+  const [snapHighlightMetrics, setSnapHighlightMetrics] = usePersistentColumns<MetricId>(
+    `key-metrics-snap-highlights:${objectiveIds[0]}`, ["impressions", "clicks", "cpm", "spend"]
+  );
+  const [snapTemplates, setSnapTemplates] = usePersistentJSON<GraphTemplate[]>(
+    `key-metrics-snap-templates:${objectiveIds[0]}`, primaryObjective.templates
+  );
+  function setSnapSlot(idx: number, t: GraphTemplate) {
+    setSnapTemplates(prev => prev.map((cur, i) => i === idx ? t : cur));
+  }
+  const [snapPerfCols, setSnapPerfCols] = usePersistentColumns<PerfCol>(
+    `key-metrics-snap-perfcols:${objectiveIds[0]}`, ["impressions", "cpm", "spend", "clicks", "ctr"]
+  );
+
+  // ── Spotify filter + data ────────────────────────────────────────────
+  const spotCurrency = currencyFor(campaignsCur, "spotify");
+  const [spotCampaignFilter, setSpotCampaignFilter] = useState<string[]>([]);
+  const spotCampaignsCur = useMemo(() => campaignsCur.filter(c => c.platform === "spotify"), [campaignsCur]);
+  const filteredSpotCampaigns = useMemo(
+    () => spotCampaignFilter.length === 0 ? spotCampaignsCur : spotCampaignsCur.filter(c => spotCampaignFilter.includes(c.id)),
+    [spotCampaignsCur, spotCampaignFilter]
+  );
+  const spotRowsCur    = useMemo(() => buildGroupRows([], filteredSpotCampaigns, groupBy), [filteredSpotCampaigns, groupBy]);
+  const spotTotalsCur  = useMemo(() => totalsOf(spotRowsCur), [spotRowsCur]);
+  const spotTotalsPrev = useMemo(() => totalsFromDailyPoints(byPlatform.spotify.previous), [byPlatform.spotify.previous]);
+  const spotPerfRows     = useMemo(() => bucketDaily(byPlatform.spotify.current,  granularity, [], false), [byPlatform.spotify.current, granularity]);
+  const spotPrevPerfRows = useMemo(() => bucketDaily(byPlatform.spotify.previous, granularity, [], false), [byPlatform.spotify.previous, granularity]);
+  const [spotHighlightMetrics, setSpotHighlightMetrics] = usePersistentColumns<MetricId>(
+    `key-metrics-spot-highlights:${objectiveIds[0]}`, ["impressions", "clicks", "cpm", "spend"]
+  );
+  const [spotTemplates, setSpotTemplates] = usePersistentJSON<GraphTemplate[]>(
+    `key-metrics-spot-templates:${objectiveIds[0]}`, primaryObjective.templates
+  );
+  function setSpotSlot(idx: number, t: GraphTemplate) {
+    setSpotTemplates(prev => prev.map((cur, i) => i === idx ? t : cur));
+  }
+  const [spotPerfCols, setSpotPerfCols] = usePersistentColumns<PerfCol>(
+    `key-metrics-spot-perfcols:${objectiveIds[0]}`, ["impressions", "cpm", "spend", "clicks", "ctr"]
+  );
+
   // ── Highlight metrics (persisted per objective, per platform) ────────
   const [highlightMetrics, setHighlightMetrics] = usePersistentColumns<MetricId>(
     `key-metrics-highlights:${objectiveIds[0]}`, primaryObjective.highlights
@@ -1707,7 +1759,11 @@ export default function KeyMetricAnalysisReport({ platform, dateRange, customSta
   const showMeta  = platform === "meta"  || platform === "both";
   const showDV360 = platform === "dv360" || platform === "both";
   const showGads  = platform === "google_ads" || platform === "both";
+  const showSnap  = platform === "snapchat" || platform === "both";
+  const showSpot  = platform === "spotify"  || platform === "both";
   const gadsLoading = loadingCamp || loadingDaily;
+  const snapLoading = loadingCamp || loadingDaily;
+  const spotLoading = loadingCamp || loadingDaily;
 
   return (
     <div className="space-y-5 section-enter">
@@ -1994,6 +2050,136 @@ export default function KeyMetricAnalysisReport({ platform, dateRange, customSta
         </div>
       )}
 
+      {/* ══ SNAPCHAT SECTION ═══════════════════════════════════════════════ */}
+      {showSnap && (
+        <div className="space-y-5">
+          <div className={`flex items-center gap-3 ${platform === "both" ? "pt-4 border-t border-gray-200" : "pt-2"}`}>
+            <div className="w-1 h-8 rounded-full bg-yellow-400" />
+            <h2 className="text-xl font-bold text-gray-900">Snapchat</h2>
+            <span className="text-xs bg-yellow-50 border border-yellow-200 text-yellow-700 px-2.5 py-0.5 rounded-full font-semibold">Snapchat Ads</span>
+            {platform === "snapchat" && snapCampaignsCur.length === 0 && !snapLoading && (
+              <span className="text-xs text-gray-400">No campaigns in this date range</span>
+            )}
+          </div>
+
+          {snapLoading ? <SectionSkeleton label="Snapchat" /> : (
+            <>
+              <CampaignMultiPicker
+                options={snapCampaignsCur.map(c => ({ id: c.id, name: c.name }))}
+                values={snapCampaignFilter}
+                onChange={setSnapCampaignFilter}
+              />
+
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Highlights</h3>
+                  <KpiSlotPicker
+                    metrics={snapHighlightMetrics}
+                    onChange={(idx, next) => setSnapHighlightMetrics(prev => prev.map((x, j) => j === idx ? next : x))}
+                  />
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {snapHighlightMetrics.map((m, i) => (
+                    <div key={`snap-${m}-${i}`} className={`animate-fade-in-up stagger-${Math.min(i + 1, 9)}`}>
+                      <KpiCard metric={m} totals={snapTotalsCur} prevTotals={snapTotalsPrev} currency={snapCurrency} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <h2 className="text-lg font-bold text-gray-900 mb-3">Performance Reports</h2>
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                  {snapTemplates.map((t, idx) => (
+                    <GraphCard key={idx} template={t} onChangeTemplate={(next) => setSnapSlot(idx, next)}
+                      rows={snapRowsCur} groupBy={groupBy} currency={snapCurrency} loading={false} />
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <h2 className="text-lg font-bold text-gray-900">Performance</h2>
+                <PerformanceTable rows={snapPerfRows} prevRows={snapPrevPerfRows} granularity={granularity}
+                  currency={snapCurrency} columns={snapPerfCols} onColumnsChange={setSnapPerfCols} />
+              </div>
+
+              <p className="text-[11px] text-gray-400 px-1">Reach and frequency aren&apos;t available via the Snapchat API.</p>
+
+              {platformErrors.snapchat && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
+                  <span className="font-semibold">Snapchat data unavailable:</span> {platformErrors.snapchat}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ══ SPOTIFY SECTION ════════════════════════════════════════════════ */}
+      {showSpot && (
+        <div className="space-y-5">
+          <div className={`flex items-center gap-3 ${platform === "both" ? "pt-4 border-t border-gray-200" : "pt-2"}`}>
+            <div className="w-1 h-8 rounded-full bg-green-500" />
+            <h2 className="text-xl font-bold text-gray-900">Spotify</h2>
+            <span className="text-xs bg-green-50 border border-green-200 text-green-700 px-2.5 py-0.5 rounded-full font-semibold">Spotify Ads</span>
+            {platform === "spotify" && spotCampaignsCur.length === 0 && !spotLoading && (
+              <span className="text-xs text-gray-400">No campaigns in this date range</span>
+            )}
+          </div>
+
+          {spotLoading ? <SectionSkeleton label="Spotify" /> : (
+            <>
+              <CampaignMultiPicker
+                options={spotCampaignsCur.map(c => ({ id: c.id, name: c.name }))}
+                values={spotCampaignFilter}
+                onChange={setSpotCampaignFilter}
+              />
+
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Highlights</h3>
+                  <KpiSlotPicker
+                    metrics={spotHighlightMetrics}
+                    onChange={(idx, next) => setSpotHighlightMetrics(prev => prev.map((x, j) => j === idx ? next : x))}
+                  />
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {spotHighlightMetrics.map((m, i) => (
+                    <div key={`spot-${m}-${i}`} className={`animate-fade-in-up stagger-${Math.min(i + 1, 9)}`}>
+                      <KpiCard metric={m} totals={spotTotalsCur} prevTotals={spotTotalsPrev} currency={spotCurrency} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <h2 className="text-lg font-bold text-gray-900 mb-3">Performance Reports</h2>
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                  {spotTemplates.map((t, idx) => (
+                    <GraphCard key={idx} template={t} onChangeTemplate={(next) => setSpotSlot(idx, next)}
+                      rows={spotRowsCur} groupBy={groupBy} currency={spotCurrency} loading={false} />
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <h2 className="text-lg font-bold text-gray-900">Performance</h2>
+                <PerformanceTable rows={spotPerfRows} prevRows={spotPrevPerfRows} granularity={granularity}
+                  currency={spotCurrency} columns={spotPerfCols} onColumnsChange={setSpotPerfCols} />
+              </div>
+
+              <p className="text-[11px] text-gray-400 px-1">Reach and frequency aren&apos;t available via the Spotify Ads API.</p>
+
+              {platformErrors.spotify && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
+                  <span className="font-semibold">Spotify data unavailable:</span> {platformErrors.spotify}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
       <TabSummaryFooter
         tabName="Key Metric Analysis"
         lines={[
@@ -2003,12 +2189,21 @@ export default function KeyMetricAnalysisReport({ platform, dateRange, customSta
           ...(showDV360 ? [
             `DV360 — ${filteredDv360Campaigns.length} campaign${filteredDv360Campaigns.length !== 1 ? "s" : ""} (${dv360CampaignFilter.length > 0 ? `${dv360CampaignFilter.length} filtered` : "all"}) · ${fmt(dv360TotalsCur.impressions, "int", currency)} impr · ${fmt(dv360TotalsCur.spend, "money", currency)} spend · CPM ${fmt(dv360TotalsCur.cpm, "money", currency)}.`,
           ] : []),
+          ...(showGads ? [
+            `Google Ads — ${filteredGadsCampaigns.length} campaign${filteredGadsCampaigns.length !== 1 ? "s" : ""} (${gadsCampaignFilter.length > 0 ? `${gadsCampaignFilter.length} filtered` : "all"}) · ${fmt(gadsTotalsCur.impressions, "int", gadsCurrency)} impr · ${fmt(gadsTotalsCur.spend, "money", gadsCurrency)} spend · CPM ${fmt(gadsTotalsCur.cpm, "money", gadsCurrency)}.`,
+          ] : []),
+          ...(showSnap ? [
+            `Snapchat — ${filteredSnapCampaigns.length} campaign${filteredSnapCampaigns.length !== 1 ? "s" : ""} (${snapCampaignFilter.length > 0 ? `${snapCampaignFilter.length} filtered` : "all"}) · ${fmt(snapTotalsCur.impressions, "int", snapCurrency)} impr · ${fmt(snapTotalsCur.spend, "money", snapCurrency)} spend · CPM ${fmt(snapTotalsCur.cpm, "money", snapCurrency)}.`,
+          ] : []),
+          ...(showSpot ? [
+            `Spotify — ${filteredSpotCampaigns.length} campaign${filteredSpotCampaigns.length !== 1 ? "s" : ""} (${spotCampaignFilter.length > 0 ? `${spotCampaignFilter.length} filtered` : "all"}) · ${fmt(spotTotalsCur.impressions, "int", spotCurrency)} impr · ${fmt(spotTotalsCur.spend, "money", spotCurrency)} spend · CPM ${fmt(spotTotalsCur.cpm, "money", spotCurrency)}.`,
+          ] : []),
           `Date window: ${startDate} → ${endDate} · ${GROUPBY_LABEL[groupBy]} grouping.`,
         ]}
         context={{
-          campaignCount: filteredMetaCampaigns.length + filteredDv360Campaigns.length,
-          totalSpend: metaTotalsCur.spend + dv360TotalsCur.spend,
-          totalImpressions: metaTotalsCur.impressions + dv360TotalsCur.impressions,
+          campaignCount: filteredMetaCampaigns.length + filteredDv360Campaigns.length + filteredGadsCampaigns.length + filteredSnapCampaigns.length + filteredSpotCampaigns.length,
+          totalSpend: metaTotalsCur.spend + dv360TotalsCur.spend + gadsTotalsCur.spend + snapTotalsCur.spend + spotTotalsCur.spend,
+          totalImpressions: metaTotalsCur.impressions + dv360TotalsCur.impressions + gadsTotalsCur.impressions + snapTotalsCur.impressions + spotTotalsCur.impressions,
           groupBy,
           startDate,
           endDate,
